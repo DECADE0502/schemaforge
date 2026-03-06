@@ -1,0 +1,60 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg-info/
+dist/
+build/
+*.egg
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# Project specific
+schemaforge/store/library.db
+schemaforge/output/*.svg
+schemaforge/output/*.png
+*.svg
+!schemaforge/store/devices/*.json
+
+# Pytest
+.pytest_cache/
+htmlcov/
+.coverage
+
+# Ruff
+.ruff_cache/
+
+# OpenCode / Agent state
+.opencode/
+.omc/
+
+# Output artifacts
+schemaforge/output/
+
+# Temp files
+.tmp/
+%TEMP%/
+nul
+
+# Screenshots (dev-only)
+*.png
+
+# Old GUI files
+gui_pyside6_old.py
+web_gui.py

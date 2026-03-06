@@ -1,0 +1,17 @@
+{
+  "design_name": "12V-3.3V分压采样",
+  "description": "使用电阻分压器将12V输入分压为3.3V采样电压。",
+  "modules": [
+    {
+      "template": "voltage_divider",
+      "instance_name": "adc_divider",
+      "parameters": {
+        "v_in": "12",
+        "v_out": "3.3",
+        "r_total": "20"
+      }
+    }
+  ],
+  "connections": [],
+  "notes": "分压电阻功耗约7.2mW，适合ADC采样。建议在VMID点加100nF滤波电容。"
+}
