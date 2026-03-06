@@ -50,6 +50,8 @@ class ModuleResult:
     retrieval: RetrievalResult | None = None
     device: DeviceModel | None = None
     rationality: RationalityReport | None = None
+    solver_result: Any | None = None  # SolverResult — 多候选方案求解结果
+    review_result: Any | None = None  # ModuleReview (from DesignReviewEngine)
     svg_path: str = ""
     bom_text: str = ""
     spice_text: str = ""
@@ -71,6 +73,14 @@ class ModuleResult:
             "rationality_ok": (
                 self.rationality.is_acceptable if self.rationality else None
             ),
+            "solver_candidates": (
+                len(self.solver_result.candidates)
+                if self.solver_result is not None
+                else 0
+            ),
+            "review_passed": (
+                self.review_result.passed if self.review_result is not None else None
+            ),
             "error": self.error,
         }
 
@@ -86,8 +96,10 @@ class DesignSessionResult:
     bom_text: str = ""
     spice_text: str = ""
     design_spec: dict[str, Any] = field(default_factory=dict)
+    reference_design: Any | None = None  # ReferenceDesign — 匹配的参考设计
+    design_review: Any | None = None  # DesignReview (from DesignReviewEngine)
     error: str = ""
-    stage: str = ""  # 失败阶段
+    stage: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -96,6 +108,12 @@ class DesignSessionResult:
             "module_count": len(self.modules),
             "svg_count": len(self.svg_paths),
             "modules": [m.to_dict() for m in self.modules],
+            "has_reference_design": self.reference_design is not None,
+            "design_review_passed": (
+                self.design_review.overall_passed
+                if self.design_review is not None
+                else None
+            ),
             "error": self.error,
             "stage": self.stage,
         }
@@ -195,19 +213,24 @@ class DesignSession:
         clarifier = RequirementClarifier(use_mock=self._planner.use_mock)
         self._clarification = clarifier.clarify(user_input, plan)
 
-        # === 阶段2: planning — 检索匹配 ===
+        # === 阶段2: planning — 检索匹配 + 候选方案求解 ===
         self._emit("正在从器件库检索匹配器件...", 20)
         self._sm.transition("planning", reason="开始检索")
         result.stage = "planning"
 
+        from schemaforge.design.candidate_solver import CandidateSolver
+
+        solver = CandidateSolver(self._store, use_mock=self._planner.use_mock)
+
         module_results: list[ModuleResult] = []
         for mod_req in plan.modules:
             mr = self._search_and_match(mod_req)
+            if mr.device is not None:
+                mr.solver_result = solver.solve(mod_req, max_candidates=3)
             module_results.append(mr)
 
         result.modules = module_results
 
-        # 检查是否有任何模块匹配到器件
         matched = [m for m in module_results if m.device is not None]
         if not matched:
             result.error = "器件库中没有找到匹配的器件"
@@ -235,8 +258,27 @@ class DesignSession:
                 self._emit(f"⚠️ {mr.device.part_number}: {report.summary()}", 45)
 
         if has_blocking_error:
-            # 有 error 级别问题，但不完全阻断（尝试渲染成功的模块）
             self._emit("部分模块存在合理性问题", 48)
+
+        # --- 设计审查引擎（深度工程审查） ---
+        from schemaforge.design.review import DesignReviewEngine, ModuleReviewInput
+
+        review_engine = DesignReviewEngine()
+        review_inputs: list[ModuleReviewInput] = []
+        for mr in matched:
+            assert mr.device is not None
+            review_input = ModuleReviewInput(
+                role=mr.requirement.role,
+                category=mr.requirement.category,
+                device=mr.device,
+                parameters=mr.requirement.parameters,
+            )
+            review_inputs.append(review_input)
+            mr.review_result = review_engine.review_module(review_input)
+
+        if review_inputs:
+            result.design_review = review_engine.review_design(review_inputs)
+            self._emit("设计审查完成", 52)
 
         # === 阶段4: compiling — 拓扑适配 ===
         self._emit("正在适配拓扑...", 55)
@@ -327,6 +369,16 @@ class DesignSession:
         else:
             result.error = "没有成功渲染的模块"
             self._sm.transition("error", reason="渲染全失败")
+
+        # --- 参考设计匹配 ---
+        from schemaforge.library.reference_models import ReferenceDesignStore
+
+        ref_store_dir = Path(self._store.store_dir) / "reference_designs"
+        if ref_store_dir.exists():
+            ref_store = ReferenceDesignStore(ref_store_dir)
+            categories = [m.requirement.category for m in module_results if m.device]
+            roles = [m.requirement.role for m in module_results if m.device]
+            result.reference_design = ref_store.find_best_match(categories, roles)
 
         # === 构建 Design IR ===
         self._ir = self._build_ir(user_input, result, plan)
@@ -423,20 +475,38 @@ class DesignSession:
             )
 
             if mr.device is not None:
-                candidates = [
-                    CandidateDevice(
-                        part_number=mr.device.part_number,
-                        manufacturer=mr.device.manufacturer,
-                        score=mr.retrieval.score if mr.retrieval else 0.0,
-                        match_reasons=(
-                            mr.retrieval.match_reasons if mr.retrieval else []
+                if mr.solver_result is not None and mr.solver_result.candidates:
+                    candidates = [
+                        CandidateDevice(
+                            part_number=c.device.part_number,
+                            manufacturer=c.device.manufacturer,
+                            score=c.total_score,
+                            match_reasons=[
+                                f"{s.name}: {s.score:.2f}" for s in c.scores
+                            ],
+                            tradeoff_notes=c.tradeoff_notes,
+                        )
+                        for c in mr.solver_result.candidates
+                    ]
+                    selection_reason = (
+                        mr.solver_result.recommendation_reason or "多候选方案评分推荐"
+                    )
+                else:
+                    candidates = [
+                        CandidateDevice(
+                            part_number=mr.device.part_number,
+                            manufacturer=mr.device.manufacturer,
+                            score=mr.retrieval.score if mr.retrieval else 0.0,
+                            match_reasons=(
+                                mr.retrieval.match_reasons if mr.retrieval else []
+                            ),
                         ),
-                    ),
-                ]
+                    ]
+                    selection_reason = "最佳匹配"
                 module_ir.selection = DeviceSelection(
                     selected=candidates[0],
                     candidates=candidates,
-                    selection_reason="最佳匹配",
+                    selection_reason=selection_reason,
                 )
 
             if mr.device is not None:
@@ -445,7 +515,9 @@ class DesignSession:
                     render_params=mr.requirement.parameters,
                 )
 
-            if mr.rationality is not None:
+            if mr.review_result is not None:
+                module_ir.review = mr.review_result
+            elif mr.rationality is not None:
                 review_issues = [
                     ReviewIssue(
                         severity=(
@@ -478,13 +550,16 @@ class DesignSession:
             spice_text=result.spice_text,
         )
 
-        all_review_issues: list[ReviewIssue] = []
-        for m in ir.modules:
-            all_review_issues.extend(m.review.issues)
-        ir.review = DesignReview(
-            issues=all_review_issues,
-            overall_passed=result.success,
-        )
+        if result.design_review is not None:
+            ir.review = result.design_review
+        else:
+            all_review_issues: list[ReviewIssue] = []
+            for m in ir.modules:
+                all_review_issues.extend(m.review.issues)
+            ir.review = DesignReview(
+                issues=all_review_issues,
+                overall_passed=result.success,
+            )
 
         return ir
 
