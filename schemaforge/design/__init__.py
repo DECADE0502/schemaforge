@@ -16,6 +16,9 @@ Phase 6: 需求澄清
 
 Phase 7: 候选方案求解
 - candidate_solver: 多候选方案生成+评分+排名
+
+Phase 8: 设计审查引擎
+- review: 工程级设计审查（阻断/警告/建议/布局/调试注意事项）
 """
 
 from schemaforge.design.candidate_solver import (
@@ -42,6 +45,7 @@ from schemaforge.design.topology_adapter import (
     AdaptedModule,
     TopologyAdapter,
 )
+from schemaforge.design.review import DesignReviewEngine, ModuleReviewInput
 from schemaforge.design.topology_draft import (
     NetDraft,
     TopologyDraft,
@@ -56,9 +60,11 @@ __all__ = [
     "ClarificationResult",
     "DesignPlan",
     "DesignPlanner",
+    "DesignReviewEngine",
     "DeviceRequirement",
     "DeviceRetriever",
     "ModuleRequirement",
+    "ModuleReviewInput",
     "NetDraft",
     "PatchEngine",
     "PatchResult",
