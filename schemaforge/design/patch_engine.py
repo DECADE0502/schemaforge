@@ -22,10 +22,12 @@ from __future__ import annotations
 import copy
 import re
 from dataclasses import dataclass, field
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from schemaforge.agent.protocol import PatchOp
-from schemaforge.workflows.design_session import DesignSessionResult
+
+if TYPE_CHECKING:
+    from schemaforge.workflows.design_session import DesignSessionResult
 
 
 # ============================================================

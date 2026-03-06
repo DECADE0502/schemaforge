@@ -48,11 +48,13 @@ from schemaforge.gui.widgets.chat_panel import ChatPanel
 from schemaforge.gui.widgets.progress_header import ProgressHeader
 from schemaforge.gui.pages.library_page import LibraryPage
 from schemaforge.common.events import ProgressEvent
+from schemaforge.workflows.design_session import DesignSession, DesignSessionResult
 
 
 # ============================================================
 # 工作线程 — 防止 LLM 调用阻塞 UI
 # ============================================================
+
 
 class EngineWorker(QThread):
     """在后台线程运行引擎处理"""
@@ -77,9 +79,30 @@ class EngineWorker(QThread):
             self.error.emit(str(e))
 
 
+class DesignSessionWorker(QThread):
+    """在后台线程运行新主链 DesignSession"""
+
+    finished = Signal(object)  # DesignSessionResult
+    error = Signal(str)
+    progress = Signal(str, int)  # (message, percentage)
+
+    def __init__(self, session: DesignSession, user_input: str) -> None:
+        super().__init__()
+        self.session = session
+        self.user_input = user_input
+
+    def run(self) -> None:
+        try:
+            result = self.session.run(self.user_input)
+            self.finished.emit(result)
+        except Exception as e:
+            self.error.emit(str(e))
+
+
 # ============================================================
 # SVG 预览组件
 # ============================================================
+
 
 class SvgView(QGraphicsView):
     """自适应缩放的 SVG 视图
@@ -91,9 +114,9 @@ class SvgView(QGraphicsView):
     def __init__(self, svg_path: str, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         from PySide6.QtGui import QPainter
+
         self.setRenderHints(
-            QPainter.RenderHint.Antialiasing
-            | QPainter.RenderHint.SmoothPixmapTransform
+            QPainter.RenderHint.Antialiasing | QPainter.RenderHint.SmoothPixmapTransform
         )
         self.setBackgroundBrush(QColor("#ffffff"))
         self.setFrameShape(QFrame.Shape.NoFrame)
@@ -164,6 +187,7 @@ class SvgPreviewWidget(QWidget):
 # ============================================================
 # 运行日志面板
 # ============================================================
+
 
 class LogPanel(QWidget):
     """实时运行日志面板"""
@@ -239,6 +263,7 @@ class LogPanel(QWidget):
 # 主窗口
 # ============================================================
 
+
 class MainWindow(QMainWindow):
     """SchemaForge 主窗口"""
 
@@ -250,7 +275,10 @@ class MainWindow(QMainWindow):
         # 引擎（默认离线模式）
         self.engine = SchemaForgeEngine(use_mock=True)
         self.worker: EngineWorker | None = None
+        self.session_worker: DesignSessionWorker | None = None
         self.last_result: EngineResult | None = None
+        self.last_session_result: DesignSessionResult | None = None
+        self._design_session: DesignSession | None = None
 
         self._setup_ui()
         self._setup_toolbar()
@@ -394,13 +422,20 @@ class MainWindow(QMainWindow):
 
         # 模式选择
         mode_group = QGroupBox("运行模式")
-        mode_layout = QHBoxLayout(mode_group)
+        mode_layout = QVBoxLayout(mode_group)
 
         self.mode_combo = QComboBox()
         self.mode_combo.addItem("离线Mock（无需网络）", "mock")
         self.mode_combo.addItem("在线LLM（kimi-k2.5）", "online")
         self.mode_combo.currentIndexChanged.connect(self._on_mode_changed)
         mode_layout.addWidget(self.mode_combo)
+
+        # 后端链路选择
+        self.chain_combo = QComboBox()
+        self.chain_combo.addItem("经典链（模板驱动）", "classic")
+        self.chain_combo.addItem("新主链（库驱动+IR+审查）", "new")
+        self.chain_combo.currentIndexChanged.connect(self._on_chain_changed)
+        mode_layout.addWidget(self.chain_combo)
 
         layout.addWidget(mode_group)
 
@@ -511,8 +546,27 @@ class MainWindow(QMainWindow):
         mode = self.mode_combo.currentData()
         use_mock = mode == "mock"
         self.engine = SchemaForgeEngine(use_mock=use_mock)
+        self._design_session = None  # 重建 session
         mode_text = "离线Mock" if use_mock else "在线LLM (kimi-k2.5)"
         self.statusbar.showMessage(f"已切换至: {mode_text}")
+
+    def _on_chain_changed(self, index: int) -> None:
+        """切换后端链路"""
+        chain = self.chain_combo.currentData()
+        if chain == "new":
+            self._ensure_design_session()
+            self.statusbar.showMessage("已切换至: 新主链（库驱动+IR+审查）")
+        else:
+            self.statusbar.showMessage("已切换至: 经典链（模板驱动）")
+
+    def _ensure_design_session(self) -> None:
+        """确保 DesignSession 已初始化"""
+        if self._design_session is None:
+            use_mock = self.mode_combo.currentData() == "mock"
+            self._design_session = DesignSession(
+                store_dir=Path("schemaforge/store"),
+                use_mock=use_mock,
+            )
 
     def _on_generate(self) -> None:
         """点击生成"""
@@ -548,21 +602,39 @@ class MainWindow(QMainWindow):
         # 在对话面板显示用户输入
         self.chat_panel.add_message("user", user_input)
 
-        self.worker = EngineWorker(self.engine, user_input)
-        self.worker.finished.connect(self._on_result)
-        self.worker.error.connect(self._on_error)
-        self.worker.progress.connect(self._on_progress)
-        self.worker.start()
+        use_new_chain = self.chain_combo.currentData() == "new"
+
+        if use_new_chain:
+            self._ensure_design_session()
+            assert self._design_session is not None
+            self.log_panel.append_log("后端: 新主链（库驱动+IR+审查）")
+            self.session_worker = DesignSessionWorker(
+                self._design_session,
+                user_input,
+            )
+            self.session_worker.finished.connect(self._on_session_result)
+            self.session_worker.error.connect(self._on_error)
+            self.session_worker.progress.connect(self._on_progress)
+            self.session_worker.start()
+        else:
+            self.log_panel.append_log("后端: 经典链（模板驱动）")
+            self.worker = EngineWorker(self.engine, user_input)
+            self.worker.finished.connect(self._on_result)
+            self.worker.error.connect(self._on_error)
+            self.worker.progress.connect(self._on_progress)
+            self.worker.start()
 
     def _on_progress(self, message: str, percentage: int) -> None:
         """处理引擎进度回调"""
         self.log_panel.append_log(message)
         self.log_panel.update_step(percentage)
-        self.progress_header.handle_event(ProgressEvent(
-            message=message,
-            percentage=percentage,
-            stage=message,
-        ))
+        self.progress_header.handle_event(
+            ProgressEvent(
+                message=message,
+                percentage=percentage,
+                stage=message,
+            )
+        )
 
     def _on_result(self, result: EngineResult) -> None:
         """处理引擎返回结果"""
@@ -575,15 +647,21 @@ class MainWindow(QMainWindow):
         if not result.success:
             self.statusbar.showMessage(f"失败 — 阶段: {result.stage}")
             self.quick_status.setText(f"错误: {result.error}")
-            self.quick_status.setStyleSheet("color: #DC2626; font-size: 11px; padding: 4px;")
+            self.quick_status.setStyleSheet(
+                "color: #DC2626; font-size: 11px; padding: 4px;"
+            )
             self.log_panel.append_log(f"❌ 失败: {result.error}")
             self.chat_panel.add_message("system", f"生成失败: {result.error}")
-            QMessageBox.critical(self, "生成失败", f"阶段: {result.stage}\n\n{result.error}")
+            QMessageBox.critical(
+                self, "生成失败", f"阶段: {result.stage}\n\n{result.error}"
+            )
             return
 
         # 成功 — 更新所有面板
         self.statusbar.showMessage(f"完成 — {result.design_name}")
-        self.quick_status.setStyleSheet("color: #16A34A; font-size: 11px; padding: 4px;")
+        self.quick_status.setStyleSheet(
+            "color: #16A34A; font-size: 11px; padding: 4px;"
+        )
         self.log_panel.append_log(f"✅ 完成: {result.design_name}")
         self.chat_panel.add_message(
             "assistant",
@@ -646,6 +724,100 @@ class MainWindow(QMainWindow):
         # 自动切换到 BOM 标签
         self.result_tabs.setCurrentIndex(0)
 
+    def _on_session_result(self, result: DesignSessionResult) -> None:
+        """处理新主链 DesignSession 返回结果"""
+        self.generate_btn.setEnabled(True)
+        self.demo_btn.setEnabled(True)
+        self.progress.hide()
+        self.progress_header.set_busy(False)
+        self.last_session_result = result
+
+        if not result.success:
+            self.statusbar.showMessage(f"失败 — 阶段: {result.stage}")
+            self.quick_status.setText(f"错误: {result.error}")
+            self.quick_status.setStyleSheet(
+                "color: #DC2626; font-size: 11px; padding: 4px;"
+            )
+            self.log_panel.append_log(f"[X] 失败: {result.error}")
+            self.chat_panel.add_message("system", f"生成失败: {result.error}")
+            QMessageBox.critical(
+                self,
+                "生成失败",
+                f"阶段: {result.stage}\n\n{result.error}",
+            )
+            return
+
+        design_name = result.plan.name if result.plan else "未命名"
+        self.statusbar.showMessage(f"完成 — {design_name}")
+        self.quick_status.setStyleSheet(
+            "color: #16A34A; font-size: 11px; padding: 4px;"
+        )
+        self.log_panel.append_log(f"[OK] 完成: {design_name}")
+        self.chat_panel.add_message(
+            "assistant",
+            f"原理图已生成：{design_name}\n"
+            f"模块: {len(result.modules)} 个 | SVG: {len(result.svg_paths)} 个",
+        )
+
+        # SVG 预览
+        self.svg_preview.load_svgs(result.svg_paths)
+
+        # BOM
+        self.bom_text.setPlainText(result.bom_text.strip())
+
+        # SPICE
+        self.spice_text.setPlainText(result.spice_text.strip())
+
+        # ERC — 新主链通过 design_review 显示
+        if result.design_review is not None:
+            review = result.design_review
+            blocking = [i for i in review.issues if i.severity.value == "blocking"]
+            warnings = [i for i in review.issues if i.severity.value != "blocking"]
+            erc_lines = ["=== 设计审查 (新主链) ===\n"]
+            if blocking:
+                erc_lines.append(f"阻断: {len(blocking)}")
+                for b in blocking:
+                    erc_lines.append(f"  [X] [{b.rule_id}] {b.message}")
+            if warnings:
+                erc_lines.append(f"\n警告: {len(warnings)}")
+                for w in warnings:
+                    erc_lines.append(f"  [!] [{w.rule_id}] {w.message}")
+            self.erc_text.setPlainText("\n".join(erc_lines))
+            self.quick_status.setText(
+                f"生成成功 | SVG: {len(result.svg_paths)} 个 | "
+                f"审查: {len(blocking)} 阻断, {len(warnings)} 警告"
+            )
+        else:
+            self.erc_text.setPlainText("设计审查通过，无问题。")
+            self.quick_status.setText(
+                f"生成成功 | SVG: {len(result.svg_paths)} 个 | 审查: 全部通过"
+            )
+
+        # 设计概要
+        summary_lines = [
+            f"设计名称: {design_name}",
+            "后端: 新主链（库驱动+IR+审查）",
+            f"模块数量: {len(result.modules)}",
+            f"SVG文件: {len(result.svg_paths)} 个",
+        ]
+        for mr in result.modules:
+            d = mr.to_dict()
+            status = "OK" if d.get("review_passed") else "待审"
+            summary_lines.append(
+                f"  {d['role']}: {d['device'] or '未匹配'} "
+                f"({d.get('solver_candidates', 0)} 候选, {status})"
+            )
+        if result.reference_design is not None:
+            summary_lines.append(f"\n参考设计: {result.reference_design.name}")
+        if result.svg_paths:
+            summary_lines.append("\nSVG文件路径:")
+            for p in result.svg_paths:
+                summary_lines.append(f"  {p}")
+        self.summary_text.setPlainText("\n".join(summary_lines))
+
+        # 自动切换到 BOM 标签
+        self.result_tabs.setCurrentIndex(0)
+
     def _on_error(self, error_msg: str) -> None:
         """处理引擎异常"""
         self.generate_btn.setEnabled(True)
@@ -654,7 +826,9 @@ class MainWindow(QMainWindow):
         self.progress_header.set_busy(False)
         self.statusbar.showMessage("引擎异常")
         self.quick_status.setText(f"异常: {error_msg}")
-        self.quick_status.setStyleSheet("color: #DC2626; font-size: 11px; padding: 4px;")
+        self.quick_status.setStyleSheet(
+            "color: #DC2626; font-size: 11px; padding: 4px;"
+        )
         self.log_panel.append_log(f"❌ 异常: {error_msg}")
         self.chat_panel.add_message("system", f"引擎异常: {error_msg}")
         QMessageBox.critical(self, "引擎异常", error_msg)
@@ -674,11 +848,14 @@ class MainWindow(QMainWindow):
         self.template_combo.setCurrentIndex(0)
         self.statusbar.showMessage("已清空")
         self.last_result = None
+        self.last_session_result = None
 
     def _on_export_svg(self) -> None:
         """导出SVG文件"""
         if not self.last_result or not self.last_result.svg_paths:
-            QMessageBox.information(self, "提示", "没有可导出的SVG文件，请先生成原理图。")
+            QMessageBox.information(
+                self, "提示", "没有可导出的SVG文件，请先生成原理图。"
+            )
             return
 
         dir_path = QFileDialog.getExistingDirectory(self, "选择导出目录")
@@ -686,6 +863,7 @@ class MainWindow(QMainWindow):
             return
 
         import shutil
+
         count = 0
         for src in self.last_result.svg_paths:
             if os.path.exists(src):
@@ -693,7 +871,9 @@ class MainWindow(QMainWindow):
                 shutil.copy2(src, dst)
                 count += 1
 
-        QMessageBox.information(self, "导出完成", f"已导出 {count} 个SVG文件到:\n{dir_path}")
+        QMessageBox.information(
+            self, "导出完成", f"已导出 {count} 个SVG文件到:\n{dir_path}"
+        )
 
     def _on_export_bom(self) -> None:
         """导出BOM"""
@@ -712,7 +892,9 @@ class MainWindow(QMainWindow):
     def _on_export_spice(self) -> None:
         """导出SPICE网表"""
         if not self.last_result or not self.last_result.spice_text:
-            QMessageBox.information(self, "提示", "没有可导出的SPICE网表，请先生成原理图。")
+            QMessageBox.information(
+                self, "提示", "没有可导出的SPICE网表，请先生成原理图。"
+            )
             return
 
         file_path, _ = QFileDialog.getSaveFileName(
@@ -721,12 +903,15 @@ class MainWindow(QMainWindow):
         if file_path:
             with open(file_path, "w", encoding="utf-8") as f:
                 f.write(self.last_result.spice_text)
-            QMessageBox.information(self, "导出完成", f"SPICE网表已导出到:\n{file_path}")
+            QMessageBox.information(
+                self, "导出完成", f"SPICE网表已导出到:\n{file_path}"
+            )
 
 
 # ============================================================
 # 入口
 # ============================================================
+
 
 def main() -> None:
     app = QApplication(sys.argv)

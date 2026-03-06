@@ -31,6 +31,7 @@ from rich.text import Text
 from schemaforge.core.engine import SchemaForgeEngine
 from schemaforge.core.templates import list_templates, get_template
 from schemaforge.render.composite import render_composite
+from schemaforge.workflows.design_session import DesignSession
 
 console = Console(force_terminal=True)
 
@@ -40,7 +41,9 @@ def print_banner() -> None:
     banner = Text()
     banner.append("SchemaForge", style="bold cyan")
     banner.append(" -- 约束驱动的AI原理图生成器\n", style="dim")
-    banner.append("输入自然语言电路需求，自动生成原理图SVG + BOM清单 + SPICE网表", style="dim")
+    banner.append(
+        "输入自然语言电路需求，自动生成原理图SVG + BOM清单 + SPICE网表", style="dim"
+    )
     console.print(Panel(banner, border_style="cyan"))
 
 
@@ -73,13 +76,15 @@ def process_and_display(user_input: str, engine: SchemaForgeEngine) -> None:
         return
 
     # 成功 -- 显示结果
-    console.print(Panel(
-        f"[bold green][PASS] 设计完成[/bold green]\n"
-        f"[bold]{result.design_name}[/bold]\n"
-        f"{result.description}",
-        title="设计概要",
-        border_style="green",
-    ))
+    console.print(
+        Panel(
+            f"[bold green][PASS] 设计完成[/bold green]\n"
+            f"[bold]{result.design_name}[/bold]\n"
+            f"{result.description}",
+            title="设计概要",
+            border_style="green",
+        )
+    )
 
     # SVG路径
     if result.svg_paths:
@@ -118,6 +123,79 @@ def process_and_display(user_input: str, engine: SchemaForgeEngine) -> None:
     console.print()
 
 
+def process_and_display_session(user_input: str, session: DesignSession) -> None:
+    console.print(
+        f"\n[bold yellow]处理中 (新主链)...[/bold yellow] 输入: {user_input}\n"
+    )
+
+    result = session.run(user_input)
+
+    if not result.success:
+        console.print(f"[bold red][ERROR][/bold red] 阶段: {result.stage}")
+        console.print(f"  {result.error}")
+        return
+
+    design_name = result.plan.name if result.plan else "未命名"
+    console.print(
+        Panel(
+            f"[bold green][PASS] 设计完成[/bold green]\n[bold]{design_name}[/bold]",
+            title="设计概要 (新主链)",
+            border_style="green",
+        )
+    )
+
+    if result.svg_paths:
+        console.print("\n[bold cyan][SVG] 原理图:[/bold cyan]")
+        for p in result.svg_paths:
+            console.print(f"  -> {p}")
+
+    if result.bom_text:
+        console.print("\n[bold cyan][BOM] 清单:[/bold cyan]")
+        console.print(Markdown(result.bom_text))
+
+    if result.spice_text:
+        console.print("\n[bold cyan][SPICE] 网表:[/bold cyan]")
+        console.print(Panel(result.spice_text, title="SPICE", border_style="dim"))
+
+    for mr in result.modules:
+        d = mr.to_dict()
+        if d.get("solver_candidates", 0) > 0:
+            console.print(
+                f"  [dim]{d['role']}[/dim]: "
+                f"{d['device']} ({d['solver_candidates']} 候选方案, "
+                f"审查{'通过' if d.get('review_passed') else '未通过'})"
+            )
+
+    if result.design_review is not None:
+        review = result.design_review
+        blocking = [i for i in review.issues if i.severity.value == "blocking"]
+        warnings = [i for i in review.issues if i.severity.value == "warning"]
+        console.print(
+            f"\n[bold cyan][REVIEW][/bold cyan] "
+            f"阻断: {len(blocking)}, 警告: {len(warnings)}, "
+            f"总计: {len(review.issues)} 条审查意见"
+        )
+
+    if result.reference_design is not None:
+        console.print(
+            f"\n[bold cyan][REF][/bold cyan] "
+            f"匹配参考设计: {result.reference_design.name}"
+        )
+
+    ir = session.ir
+    if ir is not None:
+        summary = ir.to_summary()
+        console.print(
+            f"\n[dim]IR: v{summary['version']}, "
+            f"{summary['module_count']} 模块, "
+            f"{summary['svg_count']} SVG, "
+            f"{summary['review_blocking']} 阻断, "
+            f"{summary['review_warnings']} 警告[/dim]"
+        )
+
+    console.print()
+
+
 def run_demo(engine: SchemaForgeEngine) -> None:
     """运行预设Demo"""
     console.print("[bold magenta][DEMO] 运行Demo模式[/bold magenta]\n")
@@ -137,16 +215,22 @@ def run_demo(engine: SchemaForgeEngine) -> None:
     path = render_composite()
     console.print(f"[green][PASS] 组合电路SVG: {path}[/green]\n")
 
-    console.print("[bold green][DONE] Demo完成! 所有SVG文件在 schemaforge/output/ 目录下。[/bold green]")
+    console.print(
+        "[bold green][DONE] Demo完成! 所有SVG文件在 schemaforge/output/ 目录下。[/bold green]"
+    )
 
 
-def run_interactive(engine: SchemaForgeEngine) -> None:
-    """交互模式"""
+def run_interactive(
+    engine: SchemaForgeEngine,
+    session: DesignSession | None = None,
+) -> None:
     console.print("[bold]进入交互模式[/bold] (输入 'quit' 退出, 'help' 查看帮助)\n")
 
     while True:
         try:
-            user_input = console.input("[bold cyan]请输入电路需求 > [/bold cyan]").strip()
+            user_input = console.input(
+                "[bold cyan]请输入电路需求 > [/bold cyan]"
+            ).strip()
         except (KeyboardInterrupt, EOFError):
             console.print("\n[dim]再见![/dim]")
             break
@@ -168,7 +252,10 @@ def run_interactive(engine: SchemaForgeEngine) -> None:
             run_demo(engine)
             continue
 
-        process_and_display(user_input, engine)
+        if session is not None:
+            process_and_display_session(user_input, session)
+        else:
+            process_and_display(user_input, engine)
 
 
 def main() -> None:
@@ -187,7 +274,8 @@ def main() -> None:
         help="使用真实LLM(需要API Key)",
     )
     parser.add_argument(
-        "--input", "-i",
+        "--input",
+        "-i",
         type=str,
         default="",
         help="直接传入电路需求(单次模式)",
@@ -196,6 +284,17 @@ def main() -> None:
         "--templates",
         action="store_true",
         help="列出所有可用模板",
+    )
+    parser.add_argument(
+        "--new-chain",
+        action="store_true",
+        help="使用新主链(DesignSession: 库驱动+IR+审查+多候选)",
+    )
+    parser.add_argument(
+        "--store",
+        type=str,
+        default="",
+        help="器件库路径(默认: schemaforge/store)",
     )
 
     args = parser.parse_args()
@@ -209,15 +308,30 @@ def main() -> None:
     use_mock = not args.online
     engine = SchemaForgeEngine(use_mock=use_mock)
 
+    session: DesignSession | None = None
+    if args.new_chain:
+        store_dir = Path(args.store) if args.store else Path("schemaforge/store")
+        session = DesignSession(
+            store_dir=store_dir,
+            use_mock=use_mock,
+            progress_callback=lambda msg, pct: console.print(
+                f"  [dim][{pct}%] {msg}[/dim]"
+            ),
+        )
+
+    chain_label = "新主链" if args.new_chain else "经典链"
     mode = "离线Mock" if use_mock else "在线LLM"
-    console.print(f"[dim]模式: {mode}[/dim]\n")
+    console.print(f"[dim]模式: {mode} | 后端: {chain_label}[/dim]\n")
 
     if args.demo:
         run_demo(engine)
     elif args.input:
-        process_and_display(args.input, engine)
+        if session is not None:
+            process_and_display_session(args.input, session)
+        else:
+            process_and_display(args.input, engine)
     else:
-        run_interactive(engine)
+        run_interactive(engine, session)
 
 
 if __name__ == "__main__":
