@@ -19,7 +19,6 @@ import pytest
 
 from schemaforge.library.models import (
     DeviceModel,
-    ExternalComponent,
     PinSide,
     SymbolDef,
     SymbolPin,

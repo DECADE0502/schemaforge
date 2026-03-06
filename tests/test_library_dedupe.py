@@ -7,7 +7,6 @@ from pathlib import Path
 
 from schemaforge.library.dedupe import (
     DuplicateCheckResult,
-    DuplicateMatch,
     check_duplicate,
     _normalize_part_number,
     _part_number_similarity,

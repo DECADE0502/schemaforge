@@ -1,20 +1,16 @@
 """测试核心数据模型"""
 
-import pytest
 from schemaforge.core.models import (
     CircuitInstance,
-    CircuitTemplate,
     ComponentDef,
     ComponentInstance,
     ConnectionSpec,
     DesignSpec,
     ERCError,
     ERCSeverity,
-    LayoutHint,
     ModuleSpec,
     Net,
     NetConnection,
-    ParameterDef,
     PinDef,
     PinType,
 )

@@ -6,8 +6,7 @@ import pytest
 from pathlib import Path
 
 from schemaforge.ingest.easyeda_provider import EasyEDAHit, EasyEDASymbolResult, EasyEDAPinInfo
-from schemaforge.library.models import DeviceModel
-from schemaforge.library.service import AddDeviceResult, LibraryService
+from schemaforge.library.service import LibraryService
 from schemaforge.library.validator import DeviceDraft, PinDraft
 
 

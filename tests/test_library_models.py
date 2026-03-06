@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import json
 
-import pytest
 
 from schemaforge.core.models import ParameterDef, PinType
 from schemaforge.library.models import (

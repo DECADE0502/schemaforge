@@ -112,7 +112,7 @@ def process_and_display(user_input: str, engine: SchemaForgeEngine) -> None:
 
     # 设计备注
     if result.notes:
-        console.print(f"\n[bold cyan][NOTE] 设计备注:[/bold cyan]")
+        console.print("\n[bold cyan][NOTE] 设计备注:[/bold cyan]")
         console.print(f"  {result.notes}")
 
     console.print()

@@ -1,4 +1,12 @@
+# 核心依赖
 schemdraw>=0.18
 pydantic>=2.0
 openai>=1.0
 rich>=13.0
+
+# GUI（桌面端运行时需要）
+PySide6>=6.5
+
+# 开发/测试
+pytest>=7.0
+ruff>=0.4

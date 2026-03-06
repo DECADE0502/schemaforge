@@ -1,6 +1,5 @@
 """测试AI输出验证器"""
 
-import pytest
 from schemaforge.ai.validator import validate_design_spec
 
 

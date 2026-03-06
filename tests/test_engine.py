@@ -161,7 +161,7 @@ class TestEngineERC:
         result = engine.process("5V转3.3V稳压带LED")
         assert result.success
         # 可能有warning，但不应有阻断性error
-        fatal_errors = [e for e in result.erc_errors if e.severity.value == "error"]
+        _fatal_errors = [e for e in result.erc_errors if e.severity.value == "error"]
         # 当前模板设计允许某些ERC warning
         # 确保引擎不因ERC而失败
         assert result.stage == "done"

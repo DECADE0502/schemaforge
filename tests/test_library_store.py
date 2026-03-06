@@ -8,9 +8,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import pytest
 
-from schemaforge.core.models import ParameterDef, PinType
+from schemaforge.core.models import PinType
 from schemaforge.library.models import (
     DeviceModel,
     ExternalComponent,

@@ -4,7 +4,6 @@ import pytest
 from schemaforge.core.erc import ERCChecker
 from schemaforge.core.models import (
     CircuitInstance,
-    ComponentInstance,
     Net,
     NetConnection,
 )

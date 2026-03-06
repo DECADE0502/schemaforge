@@ -3,7 +3,7 @@
 覆盖: ToolRegistry 注册、执行、异常处理、工具描述生成
 """
 
-from schemaforge.agent.tool_registry import ToolDef, ToolRegistry, ToolResult
+from schemaforge.agent.tool_registry import ToolRegistry, ToolResult
 from schemaforge.common.errors import ErrorCode, ToolError
 
 
