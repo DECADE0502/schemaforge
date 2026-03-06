@@ -51,6 +51,11 @@ schemaforge/output/
 .tmp/
 %TEMP%/
 nul
+.test-runtime/
+.codex-cache/
+.codex-tmp/
+.manual-tmp/
+PROMPT.md
 
 # Screenshots (dev-only)
 *.png

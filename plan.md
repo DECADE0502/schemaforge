@@ -1,107 +1,95 @@
-# SchemaForge — 开发计划（Plan）
+# SchemaForge — 重构执行计划
 
-> 版本: v1.0  
-> 日期: 2026-03-05  
-> 总预期: 6个阶段
+> 日期：2026-03-07  
+> 目标：把项目从“模板驱动 + 局部 AI 辅助”推进到“自然语言 → 器件识别 / 导入 / 计算 / 原理图输出 / 多轮修改”的统一主链。
 
----
+## 现状判断
 
-## 阶段总览
+- 现有仓库已经具备四块基础：器件库、datasheet 导入、Design IR / Patch、原理图渲染。
+- `core/*` 仍是旧模板主链，`design/* + workflows/*` 是未来主链，但二者尚未真正统一。
+- `ingest/*` 已能提取器件基础信息，`agent/*` 已有工具注册与编排协议，但缺少“面向设计合成”的工具接口。
+- 当前最关键缺口不是渲染，而是：
+  - 精确型号约束不能贯穿全链路
+  - 缺器件时没有会话级“导入后继续”闭环
+  - 外围元件计算缺少 datasheet 依据与工程解释
+  - 多轮修改已具备 IR Patch 能力，但没有自然语言入口
 
-| 阶段 | 内容 | 状态 | 验收 |
-|------|------|------|------|
-| Phase 0 | 项目初始化、文档骨架 | ✅ 完成 | 目录存在、文档创建 |
-| Phase 1 | 核心骨架：数据模型 + 分压器模板 + 渲染 | ✅ 完成 | F-01, F-02 |
-| Phase 2 | 模板系统：LDO/LED/RC + calculator + 注册表 | ✅ 完成 | F-03, F-04, F-05 |
-| Phase 3 | AI集成：LLM client + prompts + validator + engine | ✅ 完成 | F-10 |
-| Phase 4 | ERC验证 + BOM/SPICE导出 | ✅ 完成 | F-07, F-08, F-09 |
-| Phase 5 | CLI界面 + 组合模板 + 端到端演示 | ✅ 完成 | F-06, F-11 |
+## 重构原则
 
----
+- **新能力只落新主链**：新增复杂能力优先进入 `design/*`、`workflows/*`、`agent/*`。
+- **AI 只做理解和决策**：所有执行动作必须经过本地工具层。
+- **精确型号优先**：用户显式点名器件时，禁止自动降级为近似型号。
+- **Design IR 保持唯一真值**：设计推导、审查、修改、历史记录统一落到 IR。
+- **所有用户可见文本使用中文**。
 
-## Phase 0 — 项目初始化
+## 阶段拆分
 
-**目标**: 创建完整目录结构、规格文档、计划文档、日志文件
+| 阶段 | 目标 | 交付物 | 验收方式 |
+|------|------|--------|----------|
+| Phase 0 | 稳定开发基线 | `pytest` 临时目录修复、忽略规则整理、计划更新 | `python -m pytest -q` 不再因 `tmp_path` 权限崩溃 |
+| Phase 1 | 建立统一设计工作台 | 会话级状态模型、精确型号解析、缺器件导入闭环 | 可以区分“命中库 / 等待上传资料 / 可继续设计” |
+| Phase 2 | 建立可调用本地工具层 | 精确检索、资料导入、recipe 合成、外围计算、导出、Patch 工具 | 工具接口清晰，可被 agent 注册表直接调用 |
+| Phase 3 | 建立 datasheet 驱动合成链 | recipe / 证据 / 计算依据模型，Buck/LDO/通用 fallback 合成策略 | 已知器件可生成完整外围与解释 |
+| Phase 4 | 打通多轮修改 | 自然语言修改 → IR Patch → 重渲染 / 重导出 | 可在已有设计上改参数/加模块 |
+| Phase 5 | UI 与入口收口 | CLI / Web 入口接统一主链，中文状态反馈 | 入口不再分裂，缺器件与修改流程可视化 |
+| Phase 6 | 质量门与文档 | 新增测试、README/架构文档更新、ruff 收口 | `pytest` + `ruff` 全绿 |
 
-**产出物**:
-- [x] 目录结构: schemaforge/{core,render,ai,output}
-- [x] spec.md — 验收标准
-- [x] plan.md — 本文件
-- [x] devlog.md — 开发日志
-- [x] ai_interaction.md — AI交互记录
-- [x] prompts/agent_system_v001.md — 初始系统prompt
-- [x] prompts/agent_user_template_v001.md — 用户prompt模板
-- [x] requirements.txt — 依赖声明
+## 本轮优先实现
 
----
+### P0：先把基线修平
 
-## Phase 1 — 核心骨架
+- 覆盖 `tmp_path` 夹具，避开当前环境对 pytest 默认临时目录的权限问题。
+- 关闭不必要的 pytest cache provider，避免 `.pytest_cache` 访问报错。
+- 把临时目录加入 `.gitignore`，保证提交干净。
 
-**目标**: 实现所有Pydantic数据模型 + 最简单的分压器模板 + schemdraw渲染验证
+### P1：建立新的设计工作台主线
 
-**产出物**:
-- [x] core/models.py — PinType, PinDef, ComponentDef, Net, NetConnection, CircuitInstance, CircuitTemplate, ParameterDef
-- [x] core/templates.py — 模板注册表骨架 + 分压器模板
-- [x] render/base.py — 渲染基类
-- [x] render/divider.py — 分压器渲染函数
-- [x] tests/test_models.py — 模型单元测试（10个测试全部PASS）
+- 新增会话级工作流对象，负责：
+  - 分析用户请求
+  - 精确解析显式料号
+  - 本地库精确命中
+  - 缺器件时返回“等待上传 datasheet / 图片”状态
+  - 导入确认后继续完成设计
+- 对“显式料号 + 电路目标”场景做专门支持，例如：
+  - “用 TPS54202 做 20V 转 5V”
+  - “把输出电容换成 22μF”
 
-**验收**: `python -c "from schemaforge.core.models import *"` → OK  
-**验收**: 分压器SVG生成到 output/
+### P2：把执行能力沉到工具层
 
----
+- 新增面向设计链的本地工具：
+  - `resolve_exact_part`
+  - `ingest_datasheet_asset`
+  - `build_design_recipe`
+  - `calculate_supporting_parts`
+  - `synthesize_schematic_bundle`
+  - `apply_design_revision`
+- 这些工具只做本地执行，不做自由文本推理。
 
-## Phase 2 — 模板系统
+### P3：用 recipe 统一“拓扑 + 计算 + 证据”
 
-**目标**: 实现全部4个基础模板 + 参数计算器
+- 为器件新增更高维的设计知识模型：
+  - 典型应用拓扑
+  - 引脚角色映射
+  - 外围件角色列表
+  - 计算公式与默认设计假设
+  - 证据 / 依据引用
+- 先落 Buck 与 LDO 两类高价值策略；同时提供 pin-role 驱动的通用 fallback，避免完全硬编码。
 
-**产出物**:
-- [x] LDO模板 + render/ldo.py — AMS1117 IC渲染
-- [x] LED模板 + render/led.py — 带限流电阻
-- [x] RC滤波器模板 + render/rc_filter.py
-- [x] core/calculator.py — E24标准阻值、分压计算、LED限流电阻、RC滤波器（16个测试全PASS）
-- [x] 每个模板的SVG渲染验证 — 全部4模板SVG生成正常
+### P4：把多轮修改接到 IR Patch
 
-**验收**: 每个模板独立渲染SVG无异常
+- 把用户自然语言修改翻译成 IR Patch 操作。
+- 局部变更后只重算受影响模块，不整单推倒重来。
+- 保留 patch 历史与修改理由。
 
----
+## 提交策略
 
-## Phase 3 — AI集成
+- 提交 1：基线修复 + 新计划文档
+- 提交 2：会话级工作台 + 工具层接口
+- 提交 3：recipe 合成 / 多轮修改 / 测试与文档收口
 
-**目标**: LLM调用封装 + 系统prompt + JSON验证 + 引擎串联
+## 质量门
 
-**产出物**:
-- [x] ai/client.py — LLM API调用（kimi-k2.5硬编码，含离线mock + 在线模式）
-- [x] ai/prompts.py — 系统prompt + few-shot（从prompts/目录加载）
-- [x] ai/validator.py — AI输出JSON Schema验证（8个测试全PASS）
-- [x] core/engine.py — 核心引擎：AI输出 → 验证 → 实例化 → ERC → 渲染 → 导出
-
-**验收**: 给定合法JSON → 能走通全流程
-
----
-
-## Phase 4 — ERC验证 + 导出
-
-**目标**: 6条ERC规则 + BOM/SPICE导出
-
-**产出物**:
-- [x] core/erc.py — ERCChecker类（6条规则，9个测试全PASS，修复了floating pin cross-product bug）
-- [x] core/exporter.py — BOM + SPICE导出（修复了SPICE单位后缀bug: 110Ω→110）
-- [x] tests/test_erc.py — 9个测试全PASS
-- [x] tests/test_exporter.py — 17个测试全PASS（含SPICE值格式化验证）
-
-**验收**: ERC能拦截错误参数，导出格式正确
-
----
-
-## Phase 5 — CLI + 组合模板 + 演示
-
-**目标**: 中文CLI界面、组合模板、端到端完整演示
-
-**产出物**:
-- [x] render/composite.py — LDO+LED组合渲染
-- [x] main.py — CLI入口（rich TUI，支持 --demo / --online / --input / --templates）
-- [ ] examples/ — 示例输入输出（待完成）
-- [x] 完整端到端演示 — `python main.py --demo` 全流程无异常
-
-**验收**: `python main.py --demo` 无异常完成
+- 每次提交前执行：
+  - `python -m pytest -q`
+  - `python -m ruff check schemaforge gui.py tests main.py`
+- 若发现问题，先修到绿再提交。
