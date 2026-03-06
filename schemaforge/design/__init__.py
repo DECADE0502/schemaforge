@@ -13,8 +13,17 @@ Phase 5: PatchEngine
 
 Phase 6: 需求澄清
 - clarifier: 需求澄清器（约束检测/假设生成/问题产出）
+
+Phase 7: 候选方案求解
+- candidate_solver: 多候选方案生成+评分+排名
 """
 
+from schemaforge.design.candidate_solver import (
+    CandidateSolution,
+    CandidateSolver,
+    ScoreDimension,
+    SolverResult,
+)
 from schemaforge.design.clarifier import ClarificationResult, RequirementClarifier
 from schemaforge.design.patch_engine import PatchEngine, PatchResult
 from schemaforge.design.planner import DesignPlan, DesignPlanner, ModuleRequirement
@@ -42,6 +51,8 @@ from schemaforge.design.topology_draft import (
 __all__ = [
     "AdaptationResult",
     "AdaptedModule",
+    "CandidateSolution",
+    "CandidateSolver",
     "ClarificationResult",
     "DesignPlan",
     "DesignPlanner",
@@ -56,6 +67,8 @@ __all__ = [
     "RationalityReport",
     "RequirementClarifier",
     "RetrievalResult",
+    "ScoreDimension",
+    "SolverResult",
     "TopologyAdapter",
     "TopologyDraft",
     "TopologyDraftGenerator",
