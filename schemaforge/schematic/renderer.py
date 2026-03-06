@@ -6,11 +6,11 @@
 
 from __future__ import annotations
 
-from io import BytesIO
 from typing import Any, Callable
 
 import schemdraw
 import schemdraw.elements as elm
+from schemdraw.types import ImageFormat
 
 from schemaforge.library.models import DeviceModel, SymbolDef
 
@@ -112,13 +112,11 @@ class TopologyRenderer:
         dpi: int = 120,
     ) -> bytes:
         """将 SymbolDef 渲染为 PNG 字节流（用于 GUI 预览）"""
-        buf = BytesIO()
-        with schemdraw.Drawing(show=False) as d:
+        with schemdraw.Drawing(show=False, dpi=dpi) as d:
             d.config(fontsize=11)
             ic = TopologyRenderer.build_ic_element(symbol, label)
             d.add(ic)
-            d.save(buf, fmt="png", dpi=dpi)
-        return buf.getvalue()
+        return d.get_imagedata(ImageFormat.PNG)
 
 
 # 导入布局策略模块（触发装饰器注册）
