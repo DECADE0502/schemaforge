@@ -1,0 +1,16 @@
+{
+  "design_name": "1kHz低通滤波器",
+  "description": "一阶RC低通滤波器，截止频率1kHz。",
+  "modules": [
+    {
+      "template": "rc_lowpass",
+      "instance_name": "input_filter",
+      "parameters": {
+        "f_cutoff": "1000",
+        "r_value": "10"
+      }
+    }
+  ],
+  "connections": [],
+  "notes": "一阶RC滤波器衰减率为-20dB/decade。如需更陡峭的滚降，可级联多级。"
+}
