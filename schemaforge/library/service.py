@@ -21,7 +21,7 @@ from schemaforge.ingest.easyeda_provider import (
     EasyEDASymbolResult,
 )
 from schemaforge.library.dedupe import DuplicateCheckResult, check_duplicate
-from schemaforge.library.models import DeviceModel
+from schemaforge.library.models import DeviceModel, SymbolDef
 from schemaforge.library.store import ComponentStore
 from schemaforge.library.validator import (
     DeviceDraft,
@@ -35,6 +35,7 @@ from schemaforge.library.validator import (
 # ============================================================
 # 入库结果
 # ============================================================
+
 
 @dataclass
 class AddDeviceResult:
@@ -55,13 +56,16 @@ class AddDeviceResult:
             "duplicates": {
                 "has_exact": self.duplicate_check.has_exact,
                 "matches": len(self.duplicate_check.matches),
-            } if self.duplicate_check else None,
+            }
+            if self.duplicate_check
+            else None,
         }
 
 
 # ============================================================
 # 器件库服务
 # ============================================================
+
 
 class LibraryService:
     """器件库服务层
@@ -125,9 +129,8 @@ class LibraryService:
                 return AddDeviceResult(
                     success=False,
                     validation=validation,
-                    error_message="校验未通过: " + "; ".join(
-                        e.message for e in validation.errors
-                    ),
+                    error_message="校验未通过: "
+                    + "; ".join(e.message for e in validation.errors),
                 )
 
         # 2. 去重
@@ -177,6 +180,18 @@ class LibraryService:
             duplicate_check=dup_result,
         )
 
+    def update_device_symbol(
+        self,
+        part_number: str,
+        symbol: SymbolDef,
+    ) -> bool:
+        device = self._store.get_device(part_number)
+        if device is None:
+            return False
+        device.symbol = symbol
+        self._store.save_device(device)
+        return True
+
     # ----------------------------------------------------------
     # EasyEDA 导入
     # ----------------------------------------------------------
@@ -214,12 +229,14 @@ class LibraryService:
         """
         pins: list[PinDraft] = []
         for pin_info in symbol.pins:
-            pins.append(PinDraft(
-                name=pin_info.name or "",
-                number=pin_info.number or "",
-                pin_type=pin_info.pin_type or "",
-                description=pin_info.description or "",
-            ))
+            pins.append(
+                PinDraft(
+                    name=pin_info.name or "",
+                    number=pin_info.number or "",
+                    pin_type=pin_info.pin_type or "",
+                    description=pin_info.description or "",
+                )
+            )
 
         return DeviceDraft(
             part_number=symbol.title or "",

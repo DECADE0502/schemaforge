@@ -30,6 +30,7 @@ from PySide6.QtWidgets import (
 
 from schemaforge.library.service import LibraryService
 from schemaforge.library.validator import DeviceDraft
+from schemaforge.gui.widgets.device_detail_panel import DeviceDetailPanel
 from schemaforge.gui.widgets.device_form import DeviceForm
 from schemaforge.gui.widgets.device_search_panel import DeviceSearchPanel
 from schemaforge.gui.widgets.import_wizard import ImportWizard
@@ -114,6 +115,11 @@ class LibraryPage(QWidget):
         self.import_wizard.draft_ready.connect(self._on_import_wizard_submit)
         self.operation_tabs.addTab(self.import_wizard, "📄 PDF/图片导入")
 
+        # 器件详情 + Symbol 编辑标签
+        self.detail_panel = DeviceDetailPanel()
+        self.detail_panel.symbol_saved.connect(self._on_symbol_saved)
+        self.operation_tabs.addTab(self.detail_panel, "📋 器件详情")
+
         splitter.addWidget(self.operation_tabs)
 
         splitter.setStretchFactor(0, 2)
@@ -161,6 +167,7 @@ class LibraryPage(QWidget):
             QTableWidget.SelectionBehavior.SelectRows
         )
         self.device_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        self.device_table.itemSelectionChanged.connect(self._on_device_selected)
         layout.addWidget(self.device_table)
 
         # 操作按钮
@@ -248,6 +255,43 @@ class LibraryPage(QWidget):
 
         self._refresh_device_list(self.list_search.text().strip())
         QMessageBox.information(self, "删除完成", f"已删除 {deleted} 个器件")
+
+    def _on_device_selected(self) -> None:
+        selected_rows = self.device_table.selectionModel().selectedRows()
+        if not selected_rows:
+            self.detail_panel.clear()
+            return
+
+        item = self.device_table.item(selected_rows[0].row(), 0)
+        if item is None:
+            return
+
+        device = self._service.get(item.text())
+        if device is None:
+            return
+
+        self.detail_panel.load_device(device)
+        self.operation_tabs.setCurrentWidget(self.detail_panel)
+
+    def _on_symbol_saved(self, part_number: str, symbol: object) -> None:
+        from schemaforge.library.models import SymbolDef as _SymbolDef
+
+        if not isinstance(symbol, _SymbolDef):
+            return
+
+        ok = self._service.update_device_symbol(part_number, symbol)
+        if ok:
+            QMessageBox.information(
+                self,
+                "保存成功",
+                f"器件 {part_number} 的 Symbol 已更新。",
+            )
+        else:
+            QMessageBox.warning(
+                self,
+                "保存失败",
+                f"器件 {part_number} 未找到。",
+            )
 
     def _on_manual_submit(self, draft: DeviceDraft) -> None:
         """手动录入提交"""
