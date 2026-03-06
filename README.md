@@ -39,7 +39,7 @@ python -m pytest -q
 python -m ruff check schemaforge gui.py tests main.py
 ```
 
-## 当前状态：776 tests passed, ruff 全绿
+## 当前状态：799 tests passed, ruff 全绿
 
 ### 已完成阶段
 
@@ -144,7 +144,7 @@ schemaforge/
 
 ```bash
 # 以下命令必须全部通过才算质量合格
-python -m pytest -q                                        # 776 passed
+python -m pytest -q                                        # 799 passed
 python -m ruff check schemaforge gui.py tests main.py     # All checks passed
 ```
 
