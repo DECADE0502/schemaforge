@@ -1,0 +1,119 @@
+{
+  "part_number": "VOLTAGE_DIVIDER",
+  "manufacturer": "",
+  "description": "电压分压器电路（两个电阻组成）",
+  "category": "passive_circuit",
+  "specs": {},
+  "symbol": null,
+  "topology": {
+    "circuit_type": "voltage_divider",
+    "external_components": [
+      {
+        "role": "r_upper",
+        "ref_prefix": "R",
+        "required": true,
+        "default_value": "10k",
+        "value_expression": "{r1_value}",
+        "constraints": {},
+        "schemdraw_element": "Resistor"
+      },
+      {
+        "role": "r_lower",
+        "ref_prefix": "R",
+        "required": true,
+        "default_value": "10k",
+        "value_expression": "{r2_value}",
+        "constraints": {},
+        "schemdraw_element": "Resistor"
+      }
+    ],
+    "connections": [
+      {
+        "net_name": "VIN",
+        "device_pin": "",
+        "external_refs": [
+          "r_upper.1"
+        ],
+        "is_power": true,
+        "is_ground": false
+      },
+      {
+        "net_name": "VMID",
+        "device_pin": "",
+        "external_refs": [
+          "r_upper.2",
+          "r_lower.1"
+        ],
+        "is_power": false,
+        "is_ground": false
+      },
+      {
+        "net_name": "GND",
+        "device_pin": "",
+        "external_refs": [
+          "r_lower.2"
+        ],
+        "is_power": false,
+        "is_ground": true
+      }
+    ],
+    "parameters": {
+      "v_in": {
+        "name": "v_in",
+        "display_name": "输入电压",
+        "type": "float",
+        "unit": "V",
+        "default": "5",
+        "min_val": 0.1,
+        "max_val": 100.0,
+        "choices": [],
+        "description": ""
+      },
+      "v_out": {
+        "name": "v_out",
+        "display_name": "期望输出电压",
+        "type": "float",
+        "unit": "V",
+        "default": "2.5",
+        "min_val": 0.01,
+        "max_val": 99.0,
+        "choices": [],
+        "description": ""
+      },
+      "r_total": {
+        "name": "r_total",
+        "display_name": "总阻值预算",
+        "type": "float",
+        "unit": "kOhm",
+        "default": "20",
+        "min_val": 1.0,
+        "max_val": 1000.0,
+        "choices": [],
+        "description": ""
+      }
+    },
+    "calculations": {
+      "ratio": "v_out / v_in",
+      "r2_value": "r_total * 1000 * ratio",
+      "r1_value": "r_total * 1000 - r2_value"
+    },
+    "design_rules": []
+  },
+  "spice_model": "",
+  "spice_model_ref": "",
+  "lcsc_part": "",
+  "datasheet_url": "",
+  "easyeda_id": "",
+  "package": "",
+  "source": "migrated",
+  "confidence": 1.0,
+  "notes": "从 voltage_divider 模板迁移",
+  "design_roles": ["voltage_sampler", "feedback_network", "level_shifter"],
+  "selection_hints": ["ADC输入分压", "反馈采样", "电平适配"],
+  "anti_patterns": ["大电流负载（分压器输出阻抗高）", "高精度要求（需考虑电阻精度和温漂）"],
+  "required_companions": [],
+  "operating_constraints": {"max_input_voltage": "depends_on_resistor_rating"},
+  "layout_hints": ["分压电阻靠近被采样点", "走线避开大电流路径"],
+  "failure_modes": ["下游阻抗过低拉偏分压比", "电阻精度不足导致偏差"],
+  "review_rules": ["check_divider_ratio", "check_load_effect"]
+}

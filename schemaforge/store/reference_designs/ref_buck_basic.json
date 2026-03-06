@@ -1,0 +1,62 @@
+{
+  "ref_id": "ref_buck_basic",
+  "name": "基础Buck降压电路",
+  "description": "使用异步Buck转换器的基础降压电路，适用于中等功率场景，从12V降至3.3V/1A",
+  "applicable_categories": ["buck"],
+  "applicable_roles": ["main_regulator", "step_down", "dc_dc"],
+  "applicable_scenarios": ["宽输入降压", "高效率稳压", "替代LDO降低功耗", "工业电源", "DC-DC转换"],
+  "constraints": {"v_in_range": "5.5V-36V", "v_out_range": "1.22V-33V", "i_out_max": "3A"},
+  "module_roles": ["main_regulator"],
+  "topology_template": {
+    "modules": [{"role": "main_regulator", "category": "buck"}],
+    "connections": [
+      {"from": "VIN", "to": "main_regulator.VIN"},
+      {"from": "main_regulator.SW", "to": "L1"},
+      {"from": "L1", "to": "VOUT"},
+      {"from": "main_regulator.FB", "to": "FB_DIVIDER"},
+      {"from": "main_regulator.GND", "to": "GND"}
+    ]
+  },
+  "required_components": [
+    "功率电感22uH（饱和电流≥1.3×I_out）",
+    "输入电容10uF/50V（低ESR陶瓷电容）",
+    "输出电容47uF（低ESR，建议聚合物或陶瓷）",
+    "续流二极管SS34（V_RRM≥V_in_max）",
+    "自举电容100nF",
+    "反馈电阻分压网络（R_upper+R_lower，精度1%）"
+  ],
+  "optional_components": [
+    "输入TVS二极管（过压保护）",
+    "输出LC滤波器（降低纹波）",
+    "软启动电容（控制上电浪涌）",
+    "EN分压电阻（欠压锁定）"
+  ],
+  "replaceable_devices": {
+    "main_regulator": ["TPS5430", "LM2596", "MP2307", "AOZ1282"]
+  },
+  "design_notes": [
+    "输入电压需在器件额定范围内（5.5V~36V）",
+    "输出电压由反馈电阻分压比决定：V_out = V_ref × (1 + R_upper/R_lower)",
+    "电感值影响纹波电流：较大电感纹波小但体积大、响应慢",
+    "续流二极管选Schottky降低导通损耗",
+    "输入输出压差越大，占空比越小，效率可能下降"
+  ],
+  "layout_tips": [
+    "输入电容尽量靠近IC的VIN和GND引脚",
+    "SW走线短粗，减小寄生电感",
+    "电感放在SW引脚附近",
+    "反馈走线远离SW和电感（高噪声区域）",
+    "GND使用大面积铺铜，所有地连接到统一地平面",
+    "自举电容靠近BST和SW引脚"
+  ],
+  "bringup_tips": [
+    "先不接负载，检查输出电压是否正确",
+    "用示波器观察SW节点波形，确认占空比合理",
+    "逐步加载测试，观察输出电压跌落和纹波",
+    "测量效率：P_out/P_in，对比datasheet曲线",
+    "检查器件温度是否在安全范围内"
+  ],
+  "confidence": 1.0,
+  "source": "manual",
+  "tags": ["电源", "Buck", "降压", "DC-DC", "开关电源", "高效率"]
+}

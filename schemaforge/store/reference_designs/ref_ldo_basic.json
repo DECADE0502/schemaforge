@@ -1,0 +1,27 @@
+{
+  "ref_id": "ref_ldo_basic",
+  "name": "基础LDO稳压电路",
+  "description": "使用LDO线性稳压器的基础直流稳压电路，适用于低功耗场景",
+  "applicable_categories": ["ldo"],
+  "applicable_roles": ["main_regulator", "aux_regulator"],
+  "applicable_scenarios": ["低压差稳压", "电池供电", "简单稳压", "低噪声电源"],
+  "constraints": {"v_in_range": "3.5V-15V", "v_out_range": "1.2V-5V", "i_out_max": "1A"},
+  "module_roles": ["main_regulator"],
+  "topology_template": {
+    "modules": [{"role": "main_regulator", "category": "ldo"}],
+    "connections": [
+      {"from": "VIN", "to": "main_regulator.VIN"},
+      {"from": "main_regulator.VOUT", "to": "VOUT"},
+      {"from": "main_regulator.GND", "to": "GND"}
+    ]
+  },
+  "required_components": ["输入电容10uF（陶瓷或钽）", "输出电容22uF（低ESR）"],
+  "optional_components": ["TVS二极管（输入保护）", "反馈电阻（可调输出型）"],
+  "replaceable_devices": {"main_regulator": ["AMS1117-3.3", "LM1117-3.3", "ME6211", "HT7333"]},
+  "design_notes": ["输入输出压差需大于LDO最低压差", "高压差时注意功耗与散热", "输出电容ESR影响稳定性"],
+  "layout_tips": ["输入输出电容紧贴IC引脚", "GND走线尽量宽短", "SOT-223散热焊盘连接大面积铜"],
+  "bringup_tips": ["上电后检查输出电压稳定性", "测量纹波确认电容选型合理", "负载突变测试"],
+  "confidence": 1.0,
+  "source": "manual",
+  "tags": ["电源", "LDO", "稳压", "低功耗"]
+}

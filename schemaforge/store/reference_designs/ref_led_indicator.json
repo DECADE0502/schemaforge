@@ -1,0 +1,27 @@
+{
+  "ref_id": "ref_led_indicator",
+  "name": "LED电源指示灯",
+  "description": "简单限流电阻驱动的LED指示灯电路",
+  "applicable_categories": ["led"],
+  "applicable_roles": ["power_led", "status_led", "indicator"],
+  "applicable_scenarios": ["电源指示", "状态显示", "工作状态指示"],
+  "constraints": {"v_supply_range": "2.5V-24V", "led_current_range": "2mA-20mA"},
+  "module_roles": ["power_led"],
+  "topology_template": {
+    "modules": [{"role": "power_led", "category": "led"}],
+    "connections": [
+      {"from": "V_SUPPLY", "to": "R_LIMIT.1"},
+      {"from": "R_LIMIT.2", "to": "LED.A"},
+      {"from": "LED.K", "to": "GND"}
+    ]
+  },
+  "required_components": ["限流电阻"],
+  "optional_components": [],
+  "replaceable_devices": {},
+  "design_notes": ["限流电阻值 = (V_supply - V_f) / I_led", "注意电阻功耗不超额定值", "选择合适的LED正向压降"],
+  "layout_tips": ["限流电阻靠近LED放置", "注意LED极性标识"],
+  "bringup_tips": ["确认LED极性正确", "测量实际LED电流"],
+  "confidence": 1.0,
+  "source": "manual",
+  "tags": ["LED", "指示灯", "简单"]
+}

@@ -1,0 +1,162 @@
+{
+  "part_number": "AMS1117-3.3",
+  "manufacturer": "AMS",
+  "description": "LDO线性稳压器 3.3V 1A SOT-223",
+  "category": "ldo",
+  "specs": {
+    "v_out": "3.3V",
+    "v_dropout": "1.1V",
+    "i_out_max": "1A",
+    "v_in_max": "15V"
+  },
+  "symbol": {
+    "pins": [
+      {
+        "name": "VIN",
+        "pin_number": "3",
+        "side": "left",
+        "pin_type": "power_in",
+        "slot": "1/3",
+        "inverted": false,
+        "anchor_name": "",
+        "description": "输入电压"
+      },
+      {
+        "name": "VOUT",
+        "pin_number": "2",
+        "side": "right",
+        "pin_type": "power_out",
+        "slot": "1/3",
+        "inverted": false,
+        "anchor_name": "",
+        "description": "输出电压"
+      },
+      {
+        "name": "GND",
+        "pin_number": "1",
+        "side": "bottom",
+        "pin_type": "ground",
+        "slot": "1/1",
+        "inverted": false,
+        "anchor_name": "",
+        "description": "接地"
+      }
+    ],
+    "size": [
+      4.0,
+      3.0
+    ],
+    "edge_pad_w": 0.5,
+    "edge_pad_h": 0.5,
+    "pin_spacing": 1.0,
+    "lead_len": 0.5,
+    "label_position": "top"
+  },
+  "topology": {
+    "circuit_type": "ldo",
+    "external_components": [
+      {
+        "role": "input_cap",
+        "ref_prefix": "C",
+        "required": true,
+        "default_value": "10uF",
+        "value_expression": "{c_in}",
+        "constraints": {},
+        "schemdraw_element": "Capacitor"
+      },
+      {
+        "role": "output_cap",
+        "ref_prefix": "C",
+        "required": true,
+        "default_value": "22uF",
+        "value_expression": "{c_out}",
+        "constraints": {},
+        "schemdraw_element": "Capacitor"
+      }
+    ],
+    "connections": [
+      {
+        "net_name": "VIN",
+        "device_pin": "VIN",
+        "external_refs": [
+          "input_cap.1"
+        ],
+        "is_power": true,
+        "is_ground": false
+      },
+      {
+        "net_name": "VOUT",
+        "device_pin": "VOUT",
+        "external_refs": [
+          "output_cap.1"
+        ],
+        "is_power": true,
+        "is_ground": false
+      },
+      {
+        "net_name": "GND",
+        "device_pin": "GND",
+        "external_refs": [
+          "input_cap.2",
+          "output_cap.2"
+        ],
+        "is_power": false,
+        "is_ground": true
+      }
+    ],
+    "parameters": {
+      "v_in": {
+        "name": "v_in",
+        "display_name": "输入电压",
+        "type": "float",
+        "unit": "V",
+        "default": "5",
+        "min_val": 0.5,
+        "max_val": 100.0,
+        "choices": [],
+        "description": ""
+      },
+      "c_in": {
+        "name": "c_in",
+        "display_name": "输入电容",
+        "type": "string",
+        "unit": "",
+        "default": "10uF",
+        "min_val": null,
+        "max_val": null,
+        "choices": [],
+        "description": ""
+      },
+      "c_out": {
+        "name": "c_out",
+        "display_name": "输出电容",
+        "type": "string",
+        "unit": "",
+        "default": "22uF",
+        "min_val": null,
+        "max_val": null,
+        "choices": [],
+        "description": ""
+      }
+    },
+    "calculations": {},
+    "design_rules": []
+  },
+  "spice_model": "XU{ref} {VIN} {VOUT} {GND} AMS1117",
+  "spice_model_ref": "",
+  "lcsc_part": "C347222",
+  "datasheet_url": "",
+  "easyeda_id": "",
+  "package": "SOT-223",
+  "source": "migrated",
+  "confidence": 1.0,
+  "notes": "从 ldo_regulator 模板迁移",
+  "design_roles": ["main_regulator", "aux_regulator"],
+  "selection_hints": ["低压差应用", "电池供电设备", "简单稳压场景", "输出电流≤1A"],
+  "anti_patterns": ["输入输出压差小于1.1V", "高效率要求场景（>80%）", "宽输入电压范围（>12V建议降压）"],
+  "required_companions": ["输入电容10uF（陶瓷或钽）", "输出电容22uF（建议低ESR）"],
+  "operating_constraints": {"min_v_dropout": "1.1V", "max_i_out": "1A", "max_v_in": "15V", "max_power_dissipation": "1.2W"},
+  "layout_hints": ["输入输出电容紧贴IC引脚", "GND路径尽量短", "SOT-223散热焊盘连接大面积铜"],
+  "failure_modes": ["输入电压不足导致输出掉压", "负载突变引起输出振荡", "散热不良导致热关断", "输出电容ESR过高导致不稳定"],
+  "review_rules": ["check_ldo_dropout", "check_thermal_dissipation", "check_capacitor_presence"]
+}

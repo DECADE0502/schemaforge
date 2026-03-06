@@ -1,0 +1,28 @@
+{
+  "ref_id": "ref_voltage_divider",
+  "name": "ADC分压采样电路",
+  "description": "使用电阻分压器进行电压采样的基础电路",
+  "applicable_categories": ["voltage_divider"],
+  "applicable_roles": ["voltage_sampler", "feedback_network", "level_shifter"],
+  "applicable_scenarios": ["ADC输入分压", "电压采样", "反馈网络"],
+  "constraints": {"max_input_voltage": "50V"},
+  "module_roles": ["voltage_sampler"],
+  "topology_template": {
+    "modules": [{"role": "voltage_sampler", "category": "voltage_divider"}],
+    "connections": [
+      {"from": "V_IN", "to": "R_TOP.1"},
+      {"from": "R_TOP.2", "to": "V_OUT"},
+      {"from": "V_OUT", "to": "R_BOTTOM.1"},
+      {"from": "R_BOTTOM.2", "to": "GND"}
+    ]
+  },
+  "required_components": ["上分压电阻", "下分压电阻"],
+  "optional_components": ["滤波电容（采样点对地）"],
+  "replaceable_devices": {},
+  "design_notes": ["V_out = V_in * R_bottom / (R_top + R_bottom)", "分压电流建议控制在1mA以内", "注意下游输入阻抗的影响"],
+  "layout_tips": ["分压电阻靠近采样点", "信号走线避开大电流路径"],
+  "bringup_tips": ["空载测量分压比", "加载后确认电压偏移"],
+  "confidence": 1.0,
+  "source": "manual",
+  "tags": ["分压", "采样", "ADC"]
+}
