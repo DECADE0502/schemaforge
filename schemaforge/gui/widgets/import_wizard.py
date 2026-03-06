@@ -16,7 +16,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from PySide6.QtCore import Qt, Signal, QThread
-from PySide6.QtGui import QFont
+from PySide6.QtGui import QFont, QPixmap
 from PySide6.QtWidgets import (
     QFileDialog,
     QFormLayout,
@@ -418,6 +418,15 @@ class ImportWizard(QWidget):
             info_group,
         )
 
+        # ── Symbol 预览 ──
+        if draft.pins:
+            sym_preview = self._render_symbol_preview(draft)
+            if sym_preview is not None:
+                self._result_layout.insertWidget(
+                    self._result_layout.count() - 1,
+                    sym_preview,
+                )
+
         # 追问卡片
         if result.needs_user_input and result.questions:
             q_group = QGroupBox(f"需要补全 ({len(result.questions)} 项)")
@@ -455,6 +464,71 @@ class ImportWizard(QWidget):
 
         # 启用确认按钮
         self.confirm_btn.setEnabled(True)
+
+    def _render_symbol_preview(self, draft: DeviceDraft) -> QGroupBox | None:
+        from schemaforge.library.models import PinSide, SymbolDef, SymbolPin
+        from schemaforge.core.models import PinType
+
+        type_map = {
+            "input": PinType.INPUT,
+            "output": PinType.OUTPUT,
+            "power": PinType.POWER,
+            "passive": PinType.PASSIVE,
+            "nc": PinType.NC,
+            "bidirectional": PinType.BIDIRECTIONAL,
+        }
+        side_map = {
+            "left": PinSide.LEFT,
+            "right": PinSide.RIGHT,
+            "top": PinSide.TOP,
+            "bottom": PinSide.BOTTOM,
+        }
+
+        symbol_pins: list[SymbolPin] = []
+        for pin in draft.pins:
+            symbol_pins.append(
+                SymbolPin(
+                    name=pin.name or f"PIN{pin.number}",
+                    pin_number=pin.number,
+                    side=side_map.get(pin.side, PinSide.LEFT),
+                    pin_type=type_map.get(pin.pin_type, PinType.PASSIVE),
+                    description=pin.description,
+                )
+            )
+
+        if not symbol_pins:
+            return None
+
+        symbol = SymbolDef(pins=symbol_pins)
+        label = draft.part_number or "IC"
+
+        try:
+            from schemaforge.schematic.renderer import TopologyRenderer
+
+            png_bytes = TopologyRenderer.render_symbol_preview(symbol, label)
+        except Exception:
+            return None
+
+        pixmap = QPixmap()
+        if not pixmap.loadFromData(png_bytes):
+            return None
+
+        group = QGroupBox("原理图 Symbol 预览")
+        group.setStyleSheet(
+            "QGroupBox { border: 2px solid #0d6efd; border-radius: 6px; "
+            "margin-top: 8px; padding-top: 14px; }"
+        )
+        layout = QVBoxLayout(group)
+        img_label = QLabel()
+        img_label.setPixmap(
+            pixmap.scaledToWidth(
+                min(pixmap.width(), 500),
+                Qt.TransformationMode.SmoothTransformation,
+            )
+        )
+        img_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(img_label)
+        return group
 
     # ── 确认入库 ──
 
