@@ -95,5 +95,13 @@
   "package": "",
   "source": "migrated",
   "confidence": 1.0,
-  "notes": "从 rc_lowpass 模板迁移"
+  "notes": "从 rc_lowpass 模板迁移",
+  "design_roles": ["input_filter", "noise_filter", "signal_conditioner"],
+  "selection_hints": ["噪声滤波", "信号调理", "ADC前端"],
+  "anti_patterns": ["高频信号处理（需有源滤波器）", "大功率信号滤波"],
+  "required_companions": [],
+  "operating_constraints": {},
+  "layout_hints": ["滤波电容靠近信号输入端"],
+  "failure_modes": ["截止频率计算错误", "负载影响滤波特性"],
+  "review_rules": ["check_cutoff_frequency"]
 }

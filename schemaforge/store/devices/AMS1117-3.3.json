@@ -150,5 +150,13 @@
   "package": "SOT-223",
   "source": "migrated",
   "confidence": 1.0,
-  "notes": "从 ldo_regulator 模板迁移"
+  "notes": "从 ldo_regulator 模板迁移",
+  "design_roles": ["main_regulator", "aux_regulator"],
+  "selection_hints": ["低压差应用", "电池供电设备", "简单稳压场景", "输出电流≤1A"],
+  "anti_patterns": ["输入输出压差小于1.1V", "高效率要求场景（>80%）", "宽输入电压范围（>12V建议降压）"],
+  "required_companions": ["输入电容10uF（陶瓷或钽）", "输出电容22uF（建议低ESR）"],
+  "operating_constraints": {"min_v_dropout": "1.1V", "max_i_out": "1A", "max_v_in": "15V", "max_power_dissipation": "1.2W"},
+  "layout_hints": ["输入输出电容紧贴IC引脚", "GND路径尽量短", "SOT-223散热焊盘连接大面积铜"],
+  "failure_modes": ["输入电压不足导致输出掉压", "负载突变引起输出振荡", "散热不良导致热关断", "输出电容ESR过高导致不稳定"],
+  "review_rules": ["check_ldo_dropout", "check_thermal_dissipation", "check_capacitor_presence"]
 }

@@ -104,5 +104,13 @@
   "package": "0805",
   "source": "migrated",
   "confidence": 1.0,
-  "notes": "从 led_indicator 模板迁移"
+  "notes": "从 led_indicator 模板迁移",
+  "design_roles": ["power_led", "status_led", "indicator"],
+  "selection_hints": ["电源指示", "状态显示", "简单视觉反馈"],
+  "anti_patterns": ["高亮度照明（应使用LED驱动器）", "精确电流控制（需恒流源）"],
+  "required_companions": ["限流电阻"],
+  "operating_constraints": {"typical_vf": "2.0V", "typical_current": "10mA"},
+  "layout_hints": ["限流电阻靠近LED", "注意LED正负极方向"],
+  "failure_modes": ["限流电阻过小导致LED烧毁", "供电电压不足LED不亮", "限流电阻功耗超额定"],
+  "review_rules": ["check_led_current", "check_resistor_power"]
 }

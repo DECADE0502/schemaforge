@@ -107,5 +107,13 @@
   "package": "",
   "source": "migrated",
   "confidence": 1.0,
-  "notes": "从 voltage_divider 模板迁移"
+  "notes": "从 voltage_divider 模板迁移",
+  "design_roles": ["voltage_sampler", "feedback_network", "level_shifter"],
+  "selection_hints": ["ADC输入分压", "反馈采样", "电平适配"],
+  "anti_patterns": ["大电流负载（分压器输出阻抗高）", "高精度要求（需考虑电阻精度和温漂）"],
+  "required_companions": [],
+  "operating_constraints": {"max_input_voltage": "depends_on_resistor_rating"},
+  "layout_hints": ["分压电阻靠近被采样点", "走线避开大电流路径"],
+  "failure_modes": ["下游阻抗过低拉偏分压比", "电阻精度不足导致偏差"],
+  "review_rules": ["check_divider_ratio", "check_load_effect"]
 }

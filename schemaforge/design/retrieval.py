@@ -34,12 +34,13 @@ from schemaforge.library.store import ComponentStore
 # 检索结果
 # ============================================================
 
+
 @dataclass
 class RetrievalResult:
     """检索结果条目"""
 
     device: DeviceModel
-    score: float = 0.0          # 综合匹配得分 (0~1)
+    score: float = 0.0  # 综合匹配得分 (0~1)
     match_reasons: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
@@ -59,6 +60,7 @@ class RetrievalResult:
 # 需求描述
 # ============================================================
 
+
 @dataclass
 class DeviceRequirement:
     """单个器件需求描述
@@ -66,10 +68,10 @@ class DeviceRequirement:
     由规划器 (planner) 生成，传入检索器匹配。
     """
 
-    role: str = ""              # 角色标识 ("main_regulator", "power_led", ...)
-    category: str = ""          # 期望分类 ("ldo", "buck", "led", ...)
-    query: str = ""             # 关键字搜索词
-    part_number: str = ""       # 精确料号（优先级最高）
+    role: str = ""  # 角色标识 ("main_regulator", "power_led", ...)
+    category: str = ""  # 期望分类 ("ldo", "buck", "led", ...)
+    query: str = ""  # 关键字搜索词
+    part_number: str = ""  # 精确料号（优先级最高）
     specs: dict[str, str] = field(default_factory=dict)  # 期望规格
     must_have_topology: bool = False  # 是否必须有拓扑定义
 
@@ -87,6 +89,7 @@ class DeviceRequirement:
 # ============================================================
 # 器件检索器
 # ============================================================
+
 
 class DeviceRetriever:
     """器件库检索器
@@ -132,6 +135,7 @@ class DeviceRetriever:
         part_number: str = "",
         specs: dict[str, str] | None = None,
         must_have_topology: bool = False,
+        role: str = "",
         limit: int = 10,
     ) -> list[RetrievalResult]:
         """搜索器件库并返回评分排序的结果
@@ -142,6 +146,7 @@ class DeviceRetriever:
             part_number: 精确料号匹配（优先级最高）
             specs: 规格过滤
             must_have_topology: 是否必须有拓扑定义
+            role: 设计角色过滤（匹配 design_roles）
             limit: 最大返回数
 
         Returns:
@@ -157,6 +162,7 @@ class DeviceRetriever:
                     category=category,
                     specs=specs or {},
                     exact_pn=True,
+                    role=role,
                 )
                 return [result]
             # 料号不精确，降级到搜索
@@ -176,6 +182,7 @@ class DeviceRetriever:
                 query=query,
                 category=resolved_category,
                 specs=specs or {},
+                role=role,
             )
             if must_have_topology and device.topology is None:
                 continue
@@ -205,6 +212,7 @@ class DeviceRetriever:
             part_number=requirement.part_number,
             specs=requirement.specs,
             must_have_topology=requirement.must_have_topology,
+            role=requirement.role,
             limit=limit,
         )
 
@@ -273,6 +281,7 @@ class DeviceRetriever:
         category: str = "",
         specs: dict[str, str] | None = None,
         exact_pn: bool = False,
+        role: str = "",
     ) -> RetrievalResult:
         """对单个器件评分"""
         score = 0.0
@@ -307,6 +316,11 @@ class DeviceRetriever:
             if device_spec and self._spec_matches(device_spec, spec_val):
                 score += 0.15
                 reasons.append(f"规格匹配: {spec_key}={spec_val}")
+
+        # 设计角色匹配
+        if role and role in device.design_roles:
+            score += 0.15
+            reasons.append(f"设计角色匹配: {role}")
 
         # 拓扑加分
         if device.topology is not None:

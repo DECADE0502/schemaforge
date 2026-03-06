@@ -44,10 +44,18 @@ class ComponentStore:
                     package      TEXT NOT NULL DEFAULT '',
                     lcsc_part    TEXT NOT NULL DEFAULT '',
                     json_path    TEXT NOT NULL,
-                    source       TEXT NOT NULL DEFAULT 'manual'
+                    source       TEXT NOT NULL DEFAULT 'manual',
+                    design_roles TEXT NOT NULL DEFAULT ''
                 )
                 """
             )
+            existing_cols = {
+                row[1] for row in con.execute("PRAGMA table_info(devices)").fetchall()
+            }
+            if "design_roles" not in existing_cols:
+                con.execute(
+                    "ALTER TABLE devices ADD COLUMN design_roles TEXT NOT NULL DEFAULT ''"
+                )
             con.commit()
         finally:
             con.close()
@@ -216,10 +224,34 @@ class ComponentStore:
     # 内部方法
     # ----------------------------------------------------------
 
+    def search_by_role(self, role: str) -> list[DeviceModel]:
+        """按设计角色搜索器件"""
+        con = sqlite3.connect(str(self.db_path))
+        try:
+            rows = con.execute(
+                "SELECT json_path FROM devices WHERE design_roles LIKE ?",
+                (f"%{role}%",),
+            ).fetchall()
+        finally:
+            con.close()
+
+        results: list[DeviceModel] = []
+        for (json_path,) in rows:
+            fp = Path(json_path)
+            if not fp.is_absolute():
+                fp = self.store_dir / fp
+            if fp.exists():
+                raw = fp.read_text(encoding="utf-8")
+                device = DeviceModel.model_validate_json(raw)
+                if role in device.design_roles:
+                    results.append(device)
+        return results
+
     def _index_device(self, device: DeviceModel) -> None:
         """在 SQLite 索引中插入或更新器件记录"""
         filename = self._sanitize_filename(device.part_number) + ".json"
         json_path = str(Path("devices") / filename)
+        design_roles = ",".join(device.design_roles) if device.design_roles else ""
 
         con = sqlite3.connect(str(self.db_path))
         try:
@@ -227,8 +259,8 @@ class ComponentStore:
                 """
                 INSERT OR REPLACE INTO devices
                     (part_number, manufacturer, category, description,
-                     package, lcsc_part, json_path, source)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                     package, lcsc_part, json_path, source, design_roles)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     device.part_number,
@@ -239,6 +271,7 @@ class ComponentStore:
                     device.lcsc_part,
                     json_path,
                     device.source,
+                    design_roles,
                 ),
             )
             con.commit()

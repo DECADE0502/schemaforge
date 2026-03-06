@@ -20,8 +20,10 @@ from schemaforge.core.models import ParameterDef, PinType
 # 符号引脚方位
 # ============================================================
 
+
 class PinSide(str, Enum):
     """引脚在IC符号上的方位"""
+
     LEFT = "left"
     RIGHT = "right"
     TOP = "top"
@@ -32,15 +34,17 @@ class PinSide(str, Enum):
 # 符号引脚定义
 # ============================================================
 
+
 class SymbolPin(BaseModel):
     """符号引脚定义 -- 用于 schemdraw Ic/IcPin 重建"""
-    name: str                          # "VIN", "VOUT", "GND"
-    pin_number: str = ""               # 物理引脚编号
+
+    name: str  # "VIN", "VOUT", "GND"
+    pin_number: str = ""  # 物理引脚编号
     side: PinSide = PinSide.LEFT
     pin_type: PinType = PinType.PASSIVE
-    slot: str = ""                     # "2/3" 位置格式
+    slot: str = ""  # "2/3" 位置格式
     inverted: bool = False
-    anchor_name: str = ""              # 覆盖锚点名（用于特殊字符）
+    anchor_name: str = ""  # 覆盖锚点名（用于特殊字符）
     description: str = ""
 
 
@@ -48,40 +52,46 @@ class SymbolPin(BaseModel):
 # 符号定义
 # ============================================================
 
+
 class SymbolDef(BaseModel):
     """符号定义 -- 序列化后可重建 elm.Ic()"""
+
     pins: list[SymbolPin]
     size: tuple[float, float] | None = None
     edge_pad_w: float = 0.5
     edge_pad_h: float = 0.5
     pin_spacing: float = 1.0
     lead_len: float = 0.5
-    label_position: str = "top"        # IC名称标签位置
+    label_position: str = "top"  # IC名称标签位置
 
 
 # ============================================================
 # 外部器件
 # ============================================================
 
+
 class ExternalComponent(BaseModel):
     """拓扑中的外部器件"""
-    role: str                          # "input_cap", "output_cap", "inductor" 等
-    ref_prefix: str                    # "C", "R", "L"
+
+    role: str  # "input_cap", "output_cap", "inductor" 等
+    ref_prefix: str  # "C", "R", "L"
     required: bool = True
-    default_value: str = ""            # "10uF", "4.7uH"
-    value_expression: str = ""         # "{c_out}" -- 从参数解析
+    default_value: str = ""  # "10uF", "4.7uH"
+    value_expression: str = ""  # "{c_out}" -- 从参数解析
     constraints: dict[str, str] = Field(default_factory=dict)
-    schemdraw_element: str = ""        # "Capacitor", "Resistor", "Inductor", "LED"
+    schemdraw_element: str = ""  # "Capacitor", "Resistor", "Inductor", "LED"
 
 
 # ============================================================
 # 拓扑连接
 # ============================================================
 
+
 class TopologyConnection(BaseModel):
     """拓扑连接 -- 一根导线"""
-    net_name: str                      # "VIN", "VOUT", "SW", "GND"
-    device_pin: str = ""               # 主IC上的引脚名（无源专用网络为空）
+
+    net_name: str  # "VIN", "VOUT", "SW", "GND"
+    device_pin: str = ""  # 主IC上的引脚名（无源专用网络为空）
     external_refs: list[str] = Field(default_factory=list)  # ["input_cap.1", "L1.1"]
     is_power: bool = False
     is_ground: bool = False
@@ -91,9 +101,11 @@ class TopologyConnection(BaseModel):
 # 拓扑定义
 # ============================================================
 
+
 class TopologyDef(BaseModel):
     """推荐应用电路拓扑"""
-    circuit_type: str                  # "ldo", "buck", "voltage_divider", "led_driver", "rc_filter"
+
+    circuit_type: str  # "ldo", "buck", "voltage_divider", "led_driver", "rc_filter"
     external_components: list[ExternalComponent] = Field(default_factory=list)
     connections: list[TopologyConnection] = Field(default_factory=list)
     parameters: dict[str, ParameterDef] = Field(default_factory=dict)
@@ -105,6 +117,7 @@ class TopologyDef(BaseModel):
 # 完整器件模型
 # ============================================================
 
+
 class DeviceModel(BaseModel):
     """完整器件模型 -- 器件库的核心"""
 
@@ -112,13 +125,15 @@ class DeviceModel(BaseModel):
     part_number: str
     manufacturer: str = ""
     description: str = ""
-    category: str = ""                 # "ldo", "buck", "mcu", "passive", "led", "resistor", "capacitor"
+    category: str = (
+        ""  # "ldo", "buck", "mcu", "passive", "led", "resistor", "capacitor"
+    )
 
     # --- 电气参数 ---
     specs: dict[str, str] = Field(default_factory=dict)
 
     # --- 符号 ---
-    symbol: SymbolDef | None = None    # None 表示基础无源器件（使用 schemdraw 内置）
+    symbol: SymbolDef | None = None  # None 表示基础无源器件（使用 schemdraw 内置）
 
     # --- 推荐电路 ---
     topology: TopologyDef | None = None  # None 表示独立无源器件
@@ -134,6 +149,31 @@ class DeviceModel(BaseModel):
     package: str = ""
 
     # --- 元数据 ---
-    source: str = "manual"             # "manual", "pdf_parsed", "easyeda", "digikey", "migrated"
+    source: str = "manual"  # "manual", "pdf_parsed", "easyeda", "digikey", "migrated"
     confidence: float = 1.0
     notes: str = ""
+
+    # --- 设计知识 ---
+    design_roles: list[str] = Field(default_factory=list)
+    """可扮演的设计角色列表 (e.g. ["main_regulator", "aux_regulator"])"""
+
+    selection_hints: list[str] = Field(default_factory=list)
+    """适用场景描述 (e.g. ["低压差应用", "电池供电设备"])"""
+
+    anti_patterns: list[str] = Field(default_factory=list)
+    """不适用场景 (e.g. ["输入输出压差小于1.1V", "高效率要求场景"])"""
+
+    required_companions: list[str] = Field(default_factory=list)
+    """必需外围件描述 (e.g. ["输入电容10uF", "输出电容22uF"])"""
+
+    operating_constraints: dict[str, str] = Field(default_factory=dict)
+    """关键工作约束 (e.g. {"min_v_dropout": "1.1V", "max_power_dissipation": "1W"})"""
+
+    layout_hints: list[str] = Field(default_factory=list)
+    """布局注意事项 (e.g. ["输入输出电容紧贴IC", "散热焊盘需要过孔"])"""
+
+    failure_modes: list[str] = Field(default_factory=list)
+    """常见误用模式 (e.g. ["输入电压过低导致掉压", "输出电容ESR过高导致振荡"])"""
+
+    review_rules: list[str] = Field(default_factory=list)
+    """该器件的审查规则引用 (e.g. ["check_ldo_dropout", "check_thermal_dissipation"])"""
