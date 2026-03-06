@@ -19,6 +19,9 @@ Phase 7: 候选方案求解
 
 Phase 8: 设计审查引擎
 - review: 工程级设计审查（阻断/警告/建议/布局/调试注意事项）
+
+Phase 9: 参考设计库
+- reference_models: 参考设计模型与存储（经过验证的成熟电路骨架）
 """
 
 from schemaforge.design.candidate_solver import (
@@ -51,6 +54,7 @@ from schemaforge.design.topology_draft import (
     TopologyDraft,
     TopologyDraftGenerator,
 )
+from schemaforge.library.reference_models import ReferenceDesign, ReferenceDesignStore
 
 __all__ = [
     "AdaptationResult",
@@ -71,6 +75,8 @@ __all__ = [
     "RationalityChecker",
     "RationalityIssue",
     "RationalityReport",
+    "ReferenceDesign",
+    "ReferenceDesignStore",
     "RequirementClarifier",
     "RetrievalResult",
     "ScoreDimension",

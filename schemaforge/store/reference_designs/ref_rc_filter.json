@@ -1,0 +1,28 @@
+{
+  "ref_id": "ref_rc_filter",
+  "name": "RC低通滤波器",
+  "description": "一阶RC低通滤波电路，用于简单噪声滤除和信号调理",
+  "applicable_categories": ["rc_filter"],
+  "applicable_roles": ["input_filter", "noise_filter", "signal_conditioner"],
+  "applicable_scenarios": ["噪声滤波", "信号调理", "ADC前端"],
+  "constraints": {},
+  "module_roles": ["input_filter"],
+  "topology_template": {
+    "modules": [{"role": "input_filter", "category": "rc_filter"}],
+    "connections": [
+      {"from": "V_IN", "to": "R.1"},
+      {"from": "R.2", "to": "V_OUT"},
+      {"from": "V_OUT", "to": "C.1"},
+      {"from": "C.2", "to": "GND"}
+    ]
+  },
+  "required_components": ["滤波电阻", "滤波电容"],
+  "optional_components": [],
+  "replaceable_devices": {},
+  "design_notes": ["截止频率 f_c = 1 / (2π * R * C)", "输出阻抗等于R值", "大R值增加噪声"],
+  "layout_tips": ["滤波电容靠近信号端"],
+  "bringup_tips": ["用示波器确认截止频率"],
+  "confidence": 1.0,
+  "source": "manual",
+  "tags": ["滤波", "RC", "低通"]
+}

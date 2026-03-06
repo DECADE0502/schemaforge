@@ -1,0 +1,32 @@
+{
+  "ref_id": "ref_ldo_led_combo",
+  "name": "LDO稳压 + LED指示组合电路",
+  "description": "常见的前端电源方案：LDO稳压输出 + 电源指示LED",
+  "applicable_categories": ["ldo", "led"],
+  "applicable_roles": ["main_regulator", "power_led"],
+  "applicable_scenarios": ["带指示灯的稳压电源", "嵌入式前端电源", "开发板电源"],
+  "constraints": {"v_in_range": "4V-12V", "v_out": "3.3V"},
+  "module_roles": ["main_regulator", "power_led"],
+  "topology_template": {
+    "modules": [
+      {"role": "main_regulator", "category": "ldo"},
+      {"role": "power_led", "category": "led"}
+    ],
+    "connections": [
+      {"from": "VIN", "to": "main_regulator.VIN"},
+      {"from": "main_regulator.VOUT", "to": "VOUT"},
+      {"from": "main_regulator.VOUT", "to": "power_led.V_SUPPLY"},
+      {"from": "main_regulator.GND", "to": "GND"},
+      {"from": "power_led.GND", "to": "GND"}
+    ]
+  },
+  "required_components": ["输入电容10uF", "输出电容22uF", "LED限流电阻"],
+  "optional_components": ["输入TVS保护", "输出指示LED（可选多色）"],
+  "replaceable_devices": {"main_regulator": ["AMS1117-3.3", "LM1117-3.3"]},
+  "design_notes": ["LED从稳压输出取电，不影响主电源负载", "限流电阻按输出电压计算", "组合电路共享接地路径"],
+  "layout_tips": ["LDO部分按标准电源布局", "LED部分紧凑靠近主电路"],
+  "bringup_tips": ["先验证LDO输出正常", "再确认LED点亮", "测量LED实际电流"],
+  "confidence": 1.0,
+  "source": "manual",
+  "tags": ["电源", "LDO", "LED", "组合", "前端"]
+}
