@@ -136,6 +136,7 @@ class DesignSession:
         self._sm: WorkflowStateMachine | None = None
         self._ir: Any = None
         self._ir_history: Any = None
+        self._clarification: Any = None
 
     @property
     def ir(self) -> Any:
@@ -188,6 +189,11 @@ class DesignSession:
             return result
 
         self._emit(f"识别出 {len(plan.modules)} 个模块需求", 15)
+
+        from schemaforge.design.clarifier import RequirementClarifier
+
+        clarifier = RequirementClarifier(use_mock=self._planner.use_mock)
+        self._clarification = clarifier.clarify(user_input, plan)
 
         # === 阶段2: planning — 检索匹配 ===
         self._emit("正在从器件库检索匹配器件...", 20)
@@ -358,28 +364,43 @@ class DesignSession:
             TopologyIR,
         )
 
+        clarification = self._clarification
+        design_mode_assumption = Assumption(
+            field="design_mode",
+            assumed_value="mock" if self._planner.use_mock else "ai",
+            reason="规划器模式",
+            risk="",
+        )
+        if clarification is not None:
+            known_constraints = clarification.known_constraints
+            assumptions = [design_mode_assumption] + clarification.assumptions
+            unresolved_questions = (
+                clarification.missing_required + clarification.optional_preferences
+            )
+            confidence = clarification.confidence
+        else:
+            known_constraints = [
+                Constraint(
+                    name=k,
+                    value=v,
+                    priority=ConstraintPriority.REQUIRED,
+                    source="user",
+                )
+                for mod in plan.modules
+                for k, v in mod.parameters.items()
+            ]
+            assumptions = [design_mode_assumption]
+            unresolved_questions = []
+            confidence = 0.8 if result.success else 0.3
+
         ir = DesignIR(
             intent=DesignIntent(
                 raw_input=user_input,
                 summary=plan.description or plan.name,
-                known_constraints=[
-                    Constraint(
-                        name=k,
-                        value=v,
-                        priority=ConstraintPriority.REQUIRED,
-                        source="user",
-                    )
-                    for mod in plan.modules
-                    for k, v in mod.parameters.items()
-                ],
-                assumptions=[
-                    Assumption(
-                        field="design_mode",
-                        assumed_value="mock" if self._planner.use_mock else "ai",
-                        reason="规划器模式",
-                    ),
-                ],
-                confidence=0.8 if result.success else 0.3,
+                known_constraints=known_constraints,
+                assumptions=assumptions,
+                unresolved_questions=unresolved_questions,
+                confidence=confidence,
             ),
             stage=result.stage,
             success=result.success,

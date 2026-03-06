@@ -10,8 +10,12 @@ Phase 4: 库驱动设计 v1
 
 Phase 5: PatchEngine
 - patch_engine: PatchOp 执行器（set/add/remove/replace）
+
+Phase 6: 需求澄清
+- clarifier: 需求澄清器（约束检测/假设生成/问题产出）
 """
 
+from schemaforge.design.clarifier import ClarificationResult, RequirementClarifier
 from schemaforge.design.patch_engine import PatchEngine, PatchResult
 from schemaforge.design.planner import DesignPlan, DesignPlanner, ModuleRequirement
 from schemaforge.design.rationality import (
@@ -38,6 +42,7 @@ from schemaforge.design.topology_draft import (
 __all__ = [
     "AdaptationResult",
     "AdaptedModule",
+    "ClarificationResult",
     "DesignPlan",
     "DesignPlanner",
     "DeviceRequirement",
@@ -49,6 +54,7 @@ __all__ = [
     "RationalityChecker",
     "RationalityIssue",
     "RationalityReport",
+    "RequirementClarifier",
     "RetrievalResult",
     "TopologyAdapter",
     "TopologyDraft",
