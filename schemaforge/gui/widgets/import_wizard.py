@@ -1,0 +1,429 @@
+"""PDF/图片导入向导
+
+分步导入流程:
+1. 文件选择 (PDF 或图片)
+2. 解析进度展示
+3. AI 分析结果预览
+4. 追问卡片 (用户补全缺失信息)
+5. 最终 DeviceDraft 预览
+6. 确认入库
+
+所有 UI 文案为中文。
+"""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+from PySide6.QtCore import Qt, Signal, QThread
+from PySide6.QtGui import QFont
+from PySide6.QtWidgets import (
+    QFileDialog,
+    QFormLayout,
+    QGroupBox,
+    QHBoxLayout,
+    QLabel,
+    QLineEdit,
+    QMessageBox,
+    QProgressBar,
+    QPushButton,
+    QScrollArea,
+    QVBoxLayout,
+    QWidget,
+)
+
+from schemaforge.ingest.datasheet_extractor import (
+    ExtractionResult,
+    apply_user_answers,
+    extract_from_image,
+    extract_from_pdf,
+)
+from schemaforge.library.validator import DeviceDraft
+
+
+# ============================================================
+# 提取工作线程
+# ============================================================
+
+class ExtractionWorker(QThread):
+    """后台执行提取流程"""
+
+    finished = Signal(object)  # ExtractionResult
+    error = Signal(str)
+    progress = Signal(str, int)  # (message, percentage)
+
+    def __init__(
+        self,
+        filepath: str,
+        hint: str = "",
+        use_mock: bool = True,
+        parent: QWidget | None = None,
+    ) -> None:
+        super().__init__(parent)
+        self.filepath = filepath
+        self.hint = hint
+        self.use_mock = use_mock
+
+    def run(self) -> None:
+        from schemaforge.common.progress import ProgressTracker
+
+        tracker = ProgressTracker(
+            on_event=self._on_event,
+            source="import_wizard",
+        )
+
+        try:
+            ext = Path(self.filepath).suffix.lower()
+            if ext == ".pdf":
+                result = extract_from_pdf(
+                    self.filepath,
+                    hint=self.hint,
+                    use_mock=self.use_mock,
+                    tracker=tracker,
+                )
+            elif ext in (".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp"):
+                result = extract_from_image(
+                    self.filepath,
+                    hint=self.hint,
+                    use_mock=self.use_mock,
+                    tracker=tracker,
+                )
+            else:
+                result = ExtractionResult(
+                    error_message=f"不支持的文件格式: {ext}",
+                )
+
+            self.finished.emit(result)
+        except Exception as exc:
+            self.error.emit(f"提取异常: {exc}")
+
+    def _on_event(self, event: object) -> None:
+        """ProgressTracker 事件回调"""
+        from schemaforge.common.events import ProgressEvent, LogEvent
+        if isinstance(event, ProgressEvent):
+            self.progress.emit(event.message, event.percentage)
+        elif isinstance(event, LogEvent):
+            self.progress.emit(event.message, -1)
+
+
+# ============================================================
+# 导入向导面板
+# ============================================================
+
+class ImportWizard(QWidget):
+    """PDF/图片导入向导
+
+    信号:
+        draft_ready(DeviceDraft): 提取并补全后的草稿，可入库
+    """
+
+    draft_ready = Signal(object)  # DeviceDraft
+
+    def __init__(self, use_mock: bool = True, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.use_mock = use_mock
+        self._worker: ExtractionWorker | None = None
+        self._current_result: ExtractionResult | None = None
+        self._current_draft: DeviceDraft | None = None
+        self._answer_widgets: dict[str, QLineEdit] = {}
+        self._setup_ui()
+
+    def _setup_ui(self) -> None:
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(8, 8, 8, 8)
+
+        # 标题
+        title = QLabel("📄 PDF / 图片导入")
+        title.setFont(QFont("Microsoft YaHei", 13, QFont.Weight.Bold))
+        layout.addWidget(title)
+
+        desc = QLabel(
+            "上传 PDF datasheet 或引脚图截图，AI 自动提取器件信息。\n"
+            "不确定的信息会提示你手动补全。"
+        )
+        desc.setWordWrap(True)
+        desc.setStyleSheet("color: #666; font-size: 11px; margin-bottom: 8px;")
+        layout.addWidget(desc)
+
+        # ── 文件选择区 ──
+        file_group = QGroupBox("文件选择")
+        file_layout = QHBoxLayout(file_group)
+
+        self.file_label = QLabel("未选择文件")
+        self.file_label.setStyleSheet("color: #999;")
+        file_layout.addWidget(self.file_label, 1)
+
+        browse_btn = QPushButton("选择文件")
+        browse_btn.setStyleSheet(
+            "QPushButton { background: #6c757d; color: white; "
+            "border-radius: 4px; padding: 6px 16px; }"
+            "QPushButton:hover { background: #5a6268; }"
+        )
+        browse_btn.clicked.connect(self._on_browse)
+        file_layout.addWidget(browse_btn)
+
+        layout.addWidget(file_group)
+
+        # 提示输入
+        hint_row = QHBoxLayout()
+        hint_row.addWidget(QLabel("器件型号提示 (可选):"))
+        self.hint_edit = QLineEdit()
+        self.hint_edit.setPlaceholderText("如果你知道器件型号，输入可提高识别准确率")
+        hint_row.addWidget(self.hint_edit)
+        layout.addLayout(hint_row)
+
+        # 开始按钮
+        self.start_btn = QPushButton("开始提取")
+        self.start_btn.setFont(QFont("Microsoft YaHei", 11, QFont.Weight.Bold))
+        self.start_btn.setMinimumHeight(40)
+        self.start_btn.setEnabled(False)
+        self.start_btn.setStyleSheet(
+            "QPushButton { background: #0d6efd; color: white; "
+            "border-radius: 6px; padding: 8px 20px; }"
+            "QPushButton:hover { background: #0b5ed7; }"
+            "QPushButton:disabled { background: #6c757d; }"
+        )
+        self.start_btn.clicked.connect(self._on_start)
+        layout.addWidget(self.start_btn)
+
+        # 进度区
+        self.progress_bar = QProgressBar()
+        self.progress_bar.setRange(0, 100)
+        self.progress_bar.hide()
+        layout.addWidget(self.progress_bar)
+
+        self.progress_label = QLabel("")
+        self.progress_label.setStyleSheet("color: #495057; font-size: 11px;")
+        self.progress_label.hide()
+        layout.addWidget(self.progress_label)
+
+        # ── 结果滚动区 ──
+        self._result_scroll = QScrollArea()
+        self._result_scroll.setWidgetResizable(True)
+        self._result_scroll.setHorizontalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAlwaysOff
+        )
+
+        self._result_container = QWidget()
+        self._result_layout = QVBoxLayout(self._result_container)
+        self._result_layout.setContentsMargins(0, 0, 0, 0)
+        self._result_layout.addStretch()
+
+        self._result_scroll.setWidget(self._result_container)
+        layout.addWidget(self._result_scroll, 1)
+
+        # ── 底部按钮 ──
+        btn_row = QHBoxLayout()
+
+        self.confirm_btn = QPushButton("确认入库")
+        self.confirm_btn.setFont(QFont("Microsoft YaHei", 11, QFont.Weight.Bold))
+        self.confirm_btn.setMinimumHeight(40)
+        self.confirm_btn.setEnabled(False)
+        self.confirm_btn.setStyleSheet(
+            "QPushButton { background: #198754; color: white; "
+            "border-radius: 6px; padding: 8px 20px; }"
+            "QPushButton:hover { background: #157347; }"
+            "QPushButton:disabled { background: #6c757d; }"
+        )
+        self.confirm_btn.clicked.connect(self._on_confirm)
+        btn_row.addWidget(self.confirm_btn)
+
+        reset_btn = QPushButton("重置")
+        reset_btn.setMinimumHeight(40)
+        reset_btn.clicked.connect(self._reset)
+        btn_row.addWidget(reset_btn)
+
+        layout.addLayout(btn_row)
+
+    # ── 文件选择 ──
+
+    def _on_browse(self) -> None:
+        filepath, _ = QFileDialog.getOpenFileName(
+            self,
+            "选择 PDF 或图片文件",
+            "",
+            "支持的文件 (*.pdf *.png *.jpg *.jpeg *.webp *.gif *.bmp);;"
+            "PDF 文件 (*.pdf);;"
+            "图片文件 (*.png *.jpg *.jpeg *.webp *.gif *.bmp);;"
+            "所有文件 (*)",
+        )
+        if filepath:
+            self._selected_file = filepath
+            name = Path(filepath).name
+            size = Path(filepath).stat().st_size / 1024
+            self.file_label.setText(f"{name} ({size:.0f}KB)")
+            self.file_label.setStyleSheet("color: #212529; font-weight: bold;")
+            self.start_btn.setEnabled(True)
+
+    # ── 开始提取 ──
+
+    def _on_start(self) -> None:
+        if not hasattr(self, "_selected_file"):
+            return
+
+        self.start_btn.setEnabled(False)
+        self.confirm_btn.setEnabled(False)
+        self.progress_bar.show()
+        self.progress_bar.setValue(0)
+        self.progress_label.show()
+        self.progress_label.setText("正在启动提取...")
+        self._clear_results()
+
+        self._worker = ExtractionWorker(
+            filepath=self._selected_file,
+            hint=self.hint_edit.text().strip(),
+            use_mock=self.use_mock,
+        )
+        self._worker.finished.connect(self._on_extraction_done)
+        self._worker.error.connect(self._on_extraction_error)
+        self._worker.progress.connect(self._on_progress)
+        self._worker.start()
+
+    def _on_progress(self, message: str, percentage: int) -> None:
+        self.progress_label.setText(message)
+        if percentage >= 0:
+            self.progress_bar.setValue(percentage)
+
+    def _on_extraction_done(self, result: ExtractionResult) -> None:
+        self.start_btn.setEnabled(True)
+        self.progress_bar.hide()
+
+        self._current_result = result
+
+        if not result.success:
+            self.progress_label.setText(f"❌ 提取失败: {result.error_message}")
+            self.progress_label.setStyleSheet("color: #dc3545; font-size: 11px;")
+            return
+
+        self.progress_label.setText("✅ 提取完成")
+        self.progress_label.setStyleSheet("color: #198754; font-size: 11px;")
+
+        self._current_draft = result.draft
+        self._show_results(result)
+
+    def _on_extraction_error(self, msg: str) -> None:
+        self.start_btn.setEnabled(True)
+        self.progress_bar.hide()
+        self.progress_label.setText(f"❌ {msg}")
+        self.progress_label.setStyleSheet("color: #dc3545; font-size: 11px;")
+
+    # ── 结果展示 ──
+
+    def _show_results(self, result: ExtractionResult) -> None:
+        """展示提取结果和追问卡片"""
+        self._clear_results()
+
+        if result.draft is None:
+            return
+
+        draft = result.draft
+
+        # 已提取信息概览
+        info_group = QGroupBox("已提取信息")
+        info_layout = QFormLayout(info_group)
+        info_layout.setLabelAlignment(Qt.AlignmentFlag.AlignRight)
+
+        fields = [
+            ("料号", draft.part_number),
+            ("制造商", draft.manufacturer),
+            ("类别", draft.category),
+            ("描述", draft.description),
+            ("封装", draft.package),
+            ("引脚数", str(draft.pin_count) if draft.pin_count else ""),
+            ("来源", draft.source),
+            ("置信度", f"{draft.confidence:.0%}"),
+        ]
+        for label, value in fields:
+            val_label = QLabel(value or "(未识别)")
+            if not value:
+                val_label.setStyleSheet("color: #dc3545; font-style: italic;")
+            info_layout.addRow(f"{label}:", val_label)
+
+        self._result_layout.insertWidget(
+            self._result_layout.count() - 1, info_group,
+        )
+
+        # 追问卡片
+        if result.needs_user_input and result.questions:
+            q_group = QGroupBox(f"需要补全 ({len(result.questions)} 项)")
+            q_group.setStyleSheet(
+                "QGroupBox { border: 2px solid #ffc107; border-radius: 6px; "
+                "margin-top: 8px; padding-top: 12px; }"
+            )
+            q_layout = QVBoxLayout(q_group)
+
+            self._answer_widgets.clear()
+
+            for q in result.questions:
+                q_row = QHBoxLayout()
+                q_label = QLabel(q.get("text", ""))
+                q_label.setWordWrap(True)
+                q_label.setMinimumWidth(200)
+                q_row.addWidget(q_label, 2)
+
+                q_input = QLineEdit()
+                default = q.get("default", "")
+                if default:
+                    q_input.setText(str(default))
+                q_input.setPlaceholderText("请输入...")
+                q_row.addWidget(q_input, 1)
+
+                field_path = q.get("field_path", q.get("question_id", ""))
+                self._answer_widgets[field_path] = q_input
+
+                q_layout.addLayout(q_row)
+
+            self._result_layout.insertWidget(
+                self._result_layout.count() - 1, q_group,
+            )
+
+        # 启用确认按钮
+        self.confirm_btn.setEnabled(True)
+
+    # ── 确认入库 ──
+
+    def _on_confirm(self) -> None:
+        if self._current_draft is None:
+            return
+
+        # 收集用户回答
+        answers: dict[str, str] = {}
+        for field_path, widget in self._answer_widgets.items():
+            val = widget.text().strip()
+            if val:
+                answers[field_path] = val
+
+        # 应用回答
+        if answers:
+            self._current_draft = apply_user_answers(self._current_draft, answers)
+
+        # 检查必填字段
+        if not self._current_draft.part_number:
+            QMessageBox.warning(self, "提示", "料号不能为空！请先填写器件型号。")
+            return
+
+        self.draft_ready.emit(self._current_draft)
+
+    # ── 工具方法 ──
+
+    def _clear_results(self) -> None:
+        while self._result_layout.count() > 1:
+            item = self._result_layout.takeAt(0)
+            w = item.widget()
+            if w:
+                w.deleteLater()
+        self._answer_widgets.clear()
+
+    def _reset(self) -> None:
+        self._current_result = None
+        self._current_draft = None
+        self.file_label.setText("未选择文件")
+        self.file_label.setStyleSheet("color: #999;")
+        self.hint_edit.clear()
+        self.start_btn.setEnabled(False)
+        self.confirm_btn.setEnabled(False)
+        self.progress_bar.hide()
+        self.progress_label.hide()
+        self._clear_results()
+        if hasattr(self, "_selected_file"):
+            del self._selected_file
