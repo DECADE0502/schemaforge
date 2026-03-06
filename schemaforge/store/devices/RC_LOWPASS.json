@@ -1,0 +1,99 @@
+{
+  "part_number": "RC_LOWPASS",
+  "manufacturer": "",
+  "description": "一阶RC低通滤波器",
+  "category": "passive_circuit",
+  "specs": {},
+  "symbol": null,
+  "topology": {
+    "circuit_type": "rc_filter",
+    "external_components": [
+      {
+        "role": "filter_resistor",
+        "ref_prefix": "R",
+        "required": true,
+        "default_value": "10k",
+        "value_expression": "{r_value_ohm}",
+        "constraints": {},
+        "schemdraw_element": "Resistor"
+      },
+      {
+        "role": "filter_capacitor",
+        "ref_prefix": "C",
+        "required": true,
+        "default_value": "15.9nF",
+        "value_expression": "{c_value}",
+        "constraints": {},
+        "schemdraw_element": "Capacitor"
+      }
+    ],
+    "connections": [
+      {
+        "net_name": "IN",
+        "device_pin": "",
+        "external_refs": [
+          "filter_resistor.1"
+        ],
+        "is_power": false,
+        "is_ground": false
+      },
+      {
+        "net_name": "OUT",
+        "device_pin": "",
+        "external_refs": [
+          "filter_resistor.2",
+          "filter_capacitor.1"
+        ],
+        "is_power": false,
+        "is_ground": false
+      },
+      {
+        "net_name": "GND",
+        "device_pin": "",
+        "external_refs": [
+          "filter_capacitor.2"
+        ],
+        "is_power": false,
+        "is_ground": true
+      }
+    ],
+    "parameters": {
+      "f_cutoff": {
+        "name": "f_cutoff",
+        "display_name": "截止频率",
+        "type": "float",
+        "unit": "Hz",
+        "default": "1000",
+        "min_val": 0.1,
+        "max_val": 10000000.0,
+        "choices": [],
+        "description": ""
+      },
+      "r_value": {
+        "name": "r_value",
+        "display_name": "电阻值",
+        "type": "float",
+        "unit": "kOhm",
+        "default": "10",
+        "min_val": 0.001,
+        "max_val": 10000.0,
+        "choices": [],
+        "description": ""
+      }
+    },
+    "calculations": {
+      "r_value_ohm": "r_value * 1000",
+      "c_value": "1 / (2 * 3.14159265 * f_cutoff * r_value * 1000)"
+    },
+    "design_rules": []
+  },
+  "spice_model": "",
+  "spice_model_ref": "",
+  "lcsc_part": "",
+  "datasheet_url": "",
+  "easyeda_id": "",
+  "package": "",
+  "source": "migrated",
+  "confidence": 1.0,
+  "notes": "从 rc_lowpass 模板迁移"
+}

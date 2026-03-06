@@ -1,0 +1,108 @@
+{
+  "part_number": "LED_INDICATOR",
+  "manufacturer": "",
+  "description": "LED指示灯电路（带限流电阻）",
+  "category": "led",
+  "specs": {
+    "v_forward_red": "2.0V",
+    "v_forward_green": "2.2V",
+    "v_forward_blue": "3.0V",
+    "v_forward_white": "3.0V"
+  },
+  "symbol": null,
+  "topology": {
+    "circuit_type": "led_driver",
+    "external_components": [
+      {
+        "role": "current_limit_resistor",
+        "ref_prefix": "R",
+        "required": true,
+        "default_value": "120",
+        "value_expression": "{r_limit_value}",
+        "constraints": {},
+        "schemdraw_element": "Resistor"
+      }
+    ],
+    "connections": [
+      {
+        "net_name": "VCC",
+        "device_pin": "",
+        "external_refs": [
+          "current_limit_resistor.1"
+        ],
+        "is_power": true,
+        "is_ground": false
+      },
+      {
+        "net_name": "LED_ANODE",
+        "device_pin": "",
+        "external_refs": [
+          "current_limit_resistor.2"
+        ],
+        "is_power": false,
+        "is_ground": false
+      },
+      {
+        "net_name": "GND",
+        "device_pin": "",
+        "external_refs": [],
+        "is_power": false,
+        "is_ground": true
+      }
+    ],
+    "parameters": {
+      "v_supply": {
+        "name": "v_supply",
+        "display_name": "电源电压",
+        "type": "float",
+        "unit": "V",
+        "default": "3.3",
+        "min_val": 1.8,
+        "max_val": 24.0,
+        "choices": [],
+        "description": ""
+      },
+      "led_color": {
+        "name": "led_color",
+        "display_name": "LED颜色",
+        "type": "choice",
+        "unit": "",
+        "default": "green",
+        "min_val": null,
+        "max_val": null,
+        "choices": [
+          "red",
+          "green",
+          "blue",
+          "white"
+        ],
+        "description": ""
+      },
+      "led_current": {
+        "name": "led_current",
+        "display_name": "LED电流",
+        "type": "float",
+        "unit": "mA",
+        "default": "10",
+        "min_val": 1.0,
+        "max_val": 30.0,
+        "choices": [],
+        "description": ""
+      }
+    },
+    "calculations": {
+      "v_forward": "{'red': 2.0, 'green': 2.2, 'blue': 3.0, 'white': 3.0}[led_color]",
+      "r_limit_value": "(v_supply - v_forward) / (led_current / 1000)"
+    },
+    "design_rules": []
+  },
+  "spice_model": "",
+  "spice_model_ref": "",
+  "lcsc_part": "C2297",
+  "datasheet_url": "",
+  "easyeda_id": "",
+  "package": "0805",
+  "source": "migrated",
+  "confidence": 1.0,
+  "notes": "从 led_indicator 模板迁移"
+}
