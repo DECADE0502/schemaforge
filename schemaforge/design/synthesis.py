@@ -1,0 +1,847 @@
+"""SchemaForge 设计合成层。"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass, field, replace
+import re
+
+from schemaforge.design.planner import _extract_voltages
+from schemaforge.library.models import (
+    DesignRecipe,
+    DeviceModel,
+    ExternalComponent,
+    RecipeComponent,
+    RecipeEvidence,
+    RecipeFormula,
+    TopologyConnection,
+    TopologyDef,
+)
+from schemaforge.library.store import ComponentStore
+from schemaforge.render.base import find_nearest_e24
+from schemaforge.schematic.renderer import TopologyRenderer
+
+_PART_NUMBER_RE = re.compile(
+    r"\b([A-Z][A-Z0-9.-]{2,}\d[A-Z0-9.-]*)\b",
+    re.IGNORECASE,
+)
+_CURRENT_RE = re.compile(r"(\d+(?:\.\d+)?)\s*(mA|A)\b", re.IGNORECASE)
+_VALUE_RE = re.compile(
+    r"(\d+(?:\.\d+)?)\s*(uF|μF|µF|nF|pF|mF|uH|μH|µH|mH|H|kΩ|Ω|k|V)",
+    re.IGNORECASE,
+)
+_CAP_SERIES = [1.0, 2.2, 4.7, 10.0, 22.0, 47.0, 100.0, 220.0]
+_INDUCTOR_SERIES = [1.0, 1.5, 2.2, 3.3, 4.7, 6.8, 10.0, 15.0, 22.0, 33.0, 47.0]
+
+
+@dataclass(slots=True)
+class UserDesignRequest:
+    raw_text: str
+    part_number: str = ""
+    category: str = ""
+    v_in: str = ""
+    v_out: str = ""
+    i_out: str = ""
+    wants_led: bool = False
+    led_color: str = "green"
+    led_current_ma: str = "2"
+
+
+@dataclass(slots=True)
+class DesignBundle:
+    device: DeviceModel
+    recipe: DesignRecipe
+    parameters: dict[str, str] = field(default_factory=dict)
+    svg_path: str = ""
+    bom_text: str = ""
+    spice_text: str = ""
+    rationale: list[str] = field(default_factory=list)
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "device": self.device.part_number,
+            "topology": self.recipe.topology_family,
+            "parameters": dict(self.parameters),
+            "svg_path": self.svg_path,
+            "bom_text": self.bom_text,
+            "spice_text": self.spice_text,
+            "rationale": list(self.rationale),
+        }
+
+
+def parse_design_request(user_input: str) -> UserDesignRequest:
+    """从自然语言中提取精确型号与关键约束。"""
+    part_number = _extract_part_number(user_input)
+    v_in, v_out = _extract_voltages(user_input)
+    if not v_in or not v_out:
+        fallback = re.search(
+            r"(\d+(?:\.\d+)?)\s*[Vv]\s*(?:转|到|→|->|to)\s*"
+            r"(\d+(?:\.\d+)?)\s*[Vv]?",
+            user_input,
+            re.IGNORECASE,
+        )
+        if fallback:
+            v_in = v_in or fallback.group(1)
+            v_out = v_out or fallback.group(2)
+    text = user_input.lower()
+
+    category = ""
+    if any(token in text for token in ["buck", "降压", "dcdc", "dc-dc"]):
+        category = "buck"
+    elif any(token in text for token in ["ldo", "线性稳压", "稳压器"]):
+        category = "ldo"
+    elif any(token in text for token in ["运放", "opamp", "op-amp"]):
+        category = "opamp"
+    elif any(token in text for token in ["mcu", "单片机", "最小系统"]):
+        category = "mcu"
+
+    wants_led = "led" in text or "指示灯" in text
+    led_color = _extract_led_color(user_input)
+
+    current_match = _CURRENT_RE.search(user_input)
+    i_out = ""
+    if current_match:
+        value = float(current_match.group(1))
+        unit = current_match.group(2).lower()
+        if unit == "ma":
+            value /= 1000.0
+        i_out = _trim_float(value)
+
+    return UserDesignRequest(
+        raw_text=user_input,
+        part_number=part_number,
+        category=category,
+        v_in=_normalize_numeric_string(v_in),
+        v_out=_normalize_numeric_string(v_out),
+        i_out=i_out,
+        wants_led=wants_led,
+        led_color=led_color,
+    )
+
+
+class ExactPartResolver:
+    """精确型号解析器。"""
+
+    def __init__(self, store: ComponentStore) -> None:
+        self._store = store
+
+    @staticmethod
+    def extract(user_input: str) -> str:
+        return _extract_part_number(user_input)
+
+    def resolve(self, part_number: str) -> DeviceModel | None:
+        if not part_number:
+            return None
+
+        exact = self._store.get_device(part_number)
+        if exact is not None:
+            return exact
+
+        target = _normalize_part_number(part_number)
+        for candidate in self._store.list_devices():
+            device = self._store.get_device(candidate)
+            if device is None:
+                continue
+            names = [device.part_number, *device.aliases]
+            if any(_normalize_part_number(name) == target for name in names):
+                return device
+        return None
+
+
+class DesignRecipeSynthesizer:
+    """根据器件和请求生成 recipe / topology / 产物。"""
+
+    def prepare_device(
+        self,
+        device: DeviceModel,
+        request: UserDesignRequest,
+    ) -> tuple[DeviceModel, DesignRecipe]:
+        if device.design_recipe is not None and device.topology is not None:
+            return device, device.design_recipe
+
+        category = (device.category or request.category).lower()
+        if category == "buck":
+            recipe, topology = self._build_buck_recipe(device, request)
+        elif category == "ldo":
+            recipe, topology = self._build_ldo_recipe(device, request)
+        else:
+            recipe, topology = self._build_generic_recipe(device)
+
+        enriched = device.model_copy(
+            update={"topology": topology, "design_recipe": recipe}
+        )
+        return enriched, recipe
+
+    def build_bundle(
+        self,
+        device: DeviceModel,
+        request: UserDesignRequest,
+        *,
+        parameter_overrides: dict[str, str] | None = None,
+    ) -> DesignBundle:
+        enriched, recipe = self.prepare_device(device, request)
+        params = dict(recipe.default_parameters)
+
+        if request.v_in:
+            params["v_in"] = request.v_in
+        if request.v_out:
+            params["v_out"] = request.v_out
+        if request.i_out:
+            params["i_out_max"] = request.i_out
+        if request.wants_led:
+            params["power_led"] = "true"
+            params["led_color"] = request.led_color
+            params["led_current_ma"] = request.led_current_ma
+
+        for key, value in (parameter_overrides or {}).items():
+            params[key] = value
+
+        svg_path = TopologyRenderer().render(
+            enriched,
+            params,
+            filename=_make_svg_filename(enriched, params),
+        )
+        return DesignBundle(
+            device=enriched,
+            recipe=recipe,
+            parameters=params,
+            svg_path=svg_path,
+            bom_text=_render_bom(enriched, params),
+            spice_text=_render_spice(enriched, params),
+            rationale=_build_rationale(recipe),
+        )
+
+    def _build_buck_recipe(
+        self,
+        device: DeviceModel,
+        request: UserDesignRequest,
+    ) -> tuple[DesignRecipe, TopologyDef]:
+        v_in = _coalesce_numeric(
+            request.v_in,
+            device.specs.get("v_in_typ"),
+            device.specs.get("v_in_max"),
+            12.0,
+        )
+        v_out = _coalesce_numeric(
+            request.v_out,
+            device.specs.get("v_out_typ"),
+            device.specs.get("v_out"),
+            5.0,
+        )
+        i_out = _coalesce_numeric(request.i_out, device.specs.get("i_out_max"), 1.0)
+        fsw_hz = _coalesce_numeric(device.specs.get("fsw"), 500000.0)
+        if fsw_hz < 10000:
+            fsw_hz *= 1000.0
+
+        v_ref = _coalesce_numeric(
+            device.operating_constraints.get("v_fb"),
+            device.specs.get("v_ref"),
+            0.8,
+        )
+        duty = min(max(v_out / max(v_in, 0.1), 0.05), 0.95)
+        ripple_current = max(i_out * 0.3, 0.2)
+        l_h = (v_out * (1.0 - duty)) / (fsw_hz * ripple_current)
+        l_h = _nearest_series_value(max(l_h, 1e-6), _INDUCTOR_SERIES, 1e-6)
+
+        ripple_voltage = max(v_out * 0.01, 0.05)
+        c_out_f = ripple_current / (8.0 * fsw_hz * ripple_voltage)
+        c_out_f = max(c_out_f, 22e-6)
+        c_out_f = _nearest_series_value(c_out_f, _CAP_SERIES, 1e-6)
+
+        input_ripple = max(v_in * 0.05, 0.5)
+        c_in_f = (i_out * duty * (1.0 - duty)) / (fsw_hz * input_ripple)
+        c_in_f = max(c_in_f, 10e-6)
+        c_in_f = _nearest_series_value(c_in_f, _CAP_SERIES, 1e-6)
+
+        r_lower = find_nearest_e24(10000.0)
+        r_upper = find_nearest_e24(
+            max(r_lower * (v_out / max(v_ref, 0.1) - 1.0), 1000.0)
+        )
+
+        params = {
+            "v_in": _trim_float(v_in),
+            "v_out": _trim_float(v_out),
+            "i_out_max": _trim_float(i_out),
+            "fsw": _trim_float(fsw_hz / 1000.0),
+            "ic_model": device.part_number,
+            "c_in": _format_cap_ascii(c_in_f),
+            "c_out": _format_cap_ascii(c_out_f),
+            "l_value": _format_inductor_ascii(l_h),
+            "c_boot": "100nF",
+            "v_ref": _trim_float(v_ref),
+            "r_fb_upper": _format_resistor_ascii(r_upper),
+            "r_fb_lower": _format_resistor_ascii(r_lower),
+            "r_fb_total": _trim_float((r_upper + r_lower) / 1000.0),
+            "led_resistor": "1kΩ",
+        }
+
+        topology = device.topology or TopologyDef(
+            circuit_type="buck",
+            external_components=[
+                ExternalComponent(
+                    role="input_cap",
+                    ref_prefix="C",
+                    default_value=params["c_in"],
+                    value_expression="{c_in}",
+                    schemdraw_element="Capacitor",
+                ),
+                ExternalComponent(
+                    role="output_cap",
+                    ref_prefix="C",
+                    default_value=params["c_out"],
+                    value_expression="{c_out}",
+                    schemdraw_element="Capacitor",
+                ),
+                ExternalComponent(
+                    role="inductor",
+                    ref_prefix="L",
+                    default_value=params["l_value"],
+                    value_expression="{l_value}",
+                    schemdraw_element="Inductor2",
+                ),
+                ExternalComponent(
+                    role="boot_cap",
+                    ref_prefix="C",
+                    default_value="100nF",
+                    value_expression="{c_boot}",
+                    schemdraw_element="Capacitor",
+                ),
+                ExternalComponent(
+                    role="fb_upper",
+                    ref_prefix="R",
+                    default_value=params["r_fb_upper"],
+                    value_expression="{r_fb_upper}",
+                    schemdraw_element="Resistor",
+                ),
+                ExternalComponent(
+                    role="fb_lower",
+                    ref_prefix="R",
+                    default_value=params["r_fb_lower"],
+                    value_expression="{r_fb_lower}",
+                    schemdraw_element="Resistor",
+                ),
+            ],
+            connections=[
+                TopologyConnection(
+                    net_name="VIN",
+                    device_pin="VIN",
+                    external_refs=["input_cap.1"],
+                    is_power=True,
+                ),
+                TopologyConnection(
+                    net_name="SW",
+                    device_pin="SW",
+                    external_refs=["inductor.1", "boot_cap.2"],
+                ),
+                TopologyConnection(
+                    net_name="VOUT",
+                    external_refs=["inductor.2", "output_cap.1", "fb_upper.1"],
+                    is_power=True,
+                ),
+                TopologyConnection(
+                    net_name="FB",
+                    device_pin="FB",
+                    external_refs=["fb_upper.2", "fb_lower.1"],
+                ),
+                TopologyConnection(
+                    net_name="BST",
+                    device_pin=_preferred_pin(device, ["BST", "BOOT"]),
+                    external_refs=["boot_cap.1"],
+                ),
+                TopologyConnection(
+                    net_name="GND",
+                    device_pin=_preferred_pin(device, ["GND", "PGND"]),
+                    external_refs=["input_cap.2", "output_cap.2", "fb_lower.2"],
+                    is_ground=True,
+                ),
+            ],
+        )
+
+        recipe = DesignRecipe(
+            topology_family="buck",
+            summary=(
+                f"{device.part_number} 的降压设计 recipe，基于典型 Buck 拓扑自动生成外围参数。"
+            ),
+            pin_roles=_extract_pin_roles(device),
+            default_parameters=params,
+            sizing_components=[
+                RecipeComponent(
+                    role="input_cap",
+                    value=params["c_in"],
+                    formula="Cin = Iout * D * (1 - D) / (fsw * ΔVin)",
+                    rationale="按输入纹波电压估算，并设置 10μF 的工程下限。",
+                ),
+                RecipeComponent(
+                    role="inductor",
+                    value=params["l_value"],
+                    formula="L = Vout * (1 - D) / (fsw * ΔIL)",
+                    rationale="按 30% 输出电流纹波设计，再圆整到常用电感系列。",
+                ),
+                RecipeComponent(
+                    role="output_cap",
+                    value=params["c_out"],
+                    formula="Cout = ΔIL / (8 * fsw * ΔVout)",
+                    rationale="按 1% 输出纹波估算，并设置 22μF 的工程下限。",
+                ),
+                RecipeComponent(
+                    role="fb_upper",
+                    value=params["r_fb_upper"],
+                    formula="Rupper = Rlower * (Vout / Vref - 1)",
+                    rationale="固定下拉电阻 10kΩ，再按反馈参考电压求上拉值。",
+                ),
+                RecipeComponent(
+                    role="fb_lower",
+                    value=params["r_fb_lower"],
+                    formula="Rlower = 10kΩ",
+                    rationale="优先选用稳定、噪声适中的常见阻值作为反馈下拉。",
+                ),
+            ],
+            formulas=[
+                RecipeFormula(
+                    name="占空比",
+                    expression="D = Vout / Vin",
+                    value=_trim_float(duty),
+                    rationale="用于估算电感电流纹波与输入电容 RMS 应力。",
+                )
+            ],
+            evidence=[
+                RecipeEvidence(
+                    source_type="datasheet",
+                    summary="优先沿用典型 Buck 拓扑中的输入电容、电感、输出电容与反馈网络。",
+                    source_ref=device.datasheet_url,
+                    confidence=0.85,
+                )
+            ],
+        )
+        return recipe, topology
+
+    def _build_ldo_recipe(
+        self,
+        device: DeviceModel,
+        request: UserDesignRequest,
+    ) -> tuple[DesignRecipe, TopologyDef]:
+        v_in = _coalesce_numeric(request.v_in, device.specs.get("v_in_typ"), 5.0)
+        v_out = _coalesce_numeric(
+            request.v_out,
+            device.specs.get("v_out"),
+            device.specs.get("v_out_typ"),
+            3.3,
+        )
+        params = {
+            "v_in": _trim_float(v_in),
+            "v_out": _trim_float(v_out),
+            "ic_model": device.part_number,
+            "c_in": "10uF",
+            "c_out": "22uF",
+            "led_resistor": "1kΩ",
+        }
+        topology = device.topology or TopologyDef(
+            circuit_type="ldo",
+            external_components=[
+                ExternalComponent(
+                    role="input_cap",
+                    ref_prefix="C",
+                    default_value="10uF",
+                    value_expression="{c_in}",
+                    schemdraw_element="Capacitor",
+                ),
+                ExternalComponent(
+                    role="output_cap",
+                    ref_prefix="C",
+                    default_value="22uF",
+                    value_expression="{c_out}",
+                    schemdraw_element="Capacitor",
+                ),
+            ],
+            connections=[
+                TopologyConnection(
+                    net_name="VIN",
+                    device_pin=_preferred_pin(device, ["VIN", "IN"]),
+                    external_refs=["input_cap.1"],
+                    is_power=True,
+                ),
+                TopologyConnection(
+                    net_name="VOUT",
+                    device_pin=_preferred_pin(device, ["VOUT", "OUT"]),
+                    external_refs=["output_cap.1"],
+                    is_power=True,
+                ),
+                TopologyConnection(
+                    net_name="GND",
+                    device_pin=_preferred_pin(device, ["GND", "AGND", "PGND"]),
+                    external_refs=["input_cap.2", "output_cap.2"],
+                    is_ground=True,
+                ),
+            ],
+        )
+        recipe = DesignRecipe(
+            topology_family="ldo",
+            summary=f"{device.part_number} 的 LDO 典型输入/输出去耦 recipe。",
+            pin_roles=_extract_pin_roles(device),
+            default_parameters=params,
+            sizing_components=[
+                RecipeComponent(
+                    role="input_cap",
+                    value="10uF",
+                    formula="Cin ≥ 10μF",
+                    rationale="按典型应用建议在输入端放置贴近芯片的去耦电容。",
+                ),
+                RecipeComponent(
+                    role="output_cap",
+                    value="22uF",
+                    formula="Cout ≥ 22μF",
+                    rationale="按典型应用建议维持输出稳定性与瞬态响应。",
+                ),
+            ],
+            evidence=[
+                RecipeEvidence(
+                    source_type="datasheet",
+                    summary="LDO 常规应用包含输入与输出电容，且要求靠近芯片布局。",
+                    source_ref=device.datasheet_url,
+                    confidence=0.85,
+                )
+            ],
+        )
+        return recipe, topology
+
+    def _build_generic_recipe(
+        self,
+        device: DeviceModel,
+    ) -> tuple[DesignRecipe, TopologyDef]:
+        if device.topology is None:
+            raise ValueError(f"器件 {device.part_number} 缺少可用拓扑，当前无法自动合成。")
+
+        params = {
+            key: str(param.default)
+            for key, param in device.topology.parameters.items()
+            if str(param.default)
+        }
+        recipe = DesignRecipe(
+            topology_family=device.topology.circuit_type,
+            summary=f"沿用 {device.part_number} 已有拓扑定义。",
+            pin_roles=_extract_pin_roles(device),
+            default_parameters=params,
+            evidence=[
+                RecipeEvidence(
+                    source_type="library",
+                    summary="器件库中已存在可直接复用的拓扑定义。",
+                    confidence=1.0,
+                )
+            ],
+        )
+        return recipe, device.topology
+
+
+def apply_request_updates(
+    request: UserDesignRequest,
+    **updates: object,
+) -> UserDesignRequest:
+    return replace(request, **updates)
+
+
+def parse_revision_request(user_input: str) -> tuple[dict[str, str], dict[str, object]]:
+    """将常见自然语言修改解析为参数与请求更新。"""
+    text = user_input.lower()
+    param_updates: dict[str, str] = {}
+    request_updates: dict[str, object] = {}
+
+    if "输出电容" in user_input or "output cap" in text:
+        value = _extract_value_token(user_input)
+        if value:
+            param_updates["c_out"] = value
+
+    if "输入电容" in user_input or "input cap" in text:
+        value = _extract_value_token(user_input)
+        if value:
+            param_updates["c_in"] = value
+
+    if "电感" in user_input or "inductor" in text:
+        value = _extract_value_token(user_input)
+        if value:
+            param_updates["l_value"] = value
+
+    if "输出" in user_input and "v" in text:
+        voltage = _extract_voltage_token(user_input)
+        if voltage:
+            request_updates["v_out"] = voltage
+
+    if ("加" in user_input or "添加" in user_input) and (
+        "led" in text or "指示灯" in user_input
+    ):
+        request_updates["wants_led"] = True
+        request_updates["led_color"] = _extract_led_color(user_input)
+
+    if ("去掉" in user_input or "删除" in user_input) and (
+        "led" in text or "指示灯" in user_input
+    ):
+        request_updates["wants_led"] = False
+
+    return param_updates, request_updates
+
+
+def _extract_part_number(user_input: str) -> str:
+    match = _PART_NUMBER_RE.search(user_input)
+    return match.group(1).upper() if match else ""
+
+
+def _normalize_part_number(part_number: str) -> str:
+    return re.sub(r"[^A-Z0-9]", "", part_number.upper())
+
+
+def _normalize_numeric_string(value: str) -> str:
+    if not value:
+        return ""
+    return value.strip().replace("V", "").replace("v", "")
+
+
+def _parse_engineering_value(value: str | float | int | None) -> float | None:
+    if value is None:
+        return None
+    if isinstance(value, (float, int)):
+        return float(value)
+    text = str(value).strip().replace("μ", "u").replace("µ", "u")
+    match = re.search(r"(-?\d+(?:\.\d+)?)\s*([A-Za-zΩ]*)", text)
+    if not match:
+        return None
+    number = float(match.group(1))
+    unit = match.group(2).lower()
+    multipliers = {
+        "": 1.0,
+        "v": 1.0,
+        "a": 1.0,
+        "ma": 1e-3,
+        "khz": 1e3,
+        "mhz": 1e6,
+        "uf": 1e-6,
+        "nf": 1e-9,
+        "pf": 1e-12,
+        "mf": 1e-3,
+        "uh": 1e-6,
+        "mh": 1e-3,
+        "h": 1.0,
+        "k": 1e3,
+        "ω": 1.0,
+        "kω": 1e3,
+    }
+    return number * multipliers.get(unit, 1.0)
+
+
+def _coalesce_numeric(*values: object) -> float:
+    for value in values:
+        parsed = _parse_engineering_value(value)  # type: ignore[arg-type]
+        if parsed is not None:
+            return parsed
+    return 0.0
+
+
+def _nearest_series_value(value: float, series: list[float], scale: float) -> float:
+    if value <= 0:
+        return scale
+    normalized = value / scale
+    magnitude = scale
+    while normalized >= 1000:
+        normalized /= 1000.0
+        magnitude *= 1000.0
+    while normalized < 1.0:
+        normalized *= 10.0
+        magnitude /= 10.0
+    best = min(series, key=lambda item: abs(item - normalized))
+    return best * magnitude
+
+
+def _format_cap_ascii(value_f: float) -> str:
+    if value_f >= 1e-6:
+        return f"{_trim_float(value_f * 1e6)}uF"
+    if value_f >= 1e-9:
+        return f"{_trim_float(value_f * 1e9)}nF"
+    return f"{_trim_float(value_f * 1e12)}pF"
+
+
+def _format_inductor_ascii(value_h: float) -> str:
+    if value_h >= 1e-3:
+        return f"{_trim_float(value_h * 1e3)}mH"
+    return f"{_trim_float(value_h * 1e6)}uH"
+
+
+def _format_resistor_ascii(value_ohm: float) -> str:
+    if value_ohm >= 1000:
+        return f"{_trim_float(value_ohm / 1000.0)}kΩ"
+    return f"{_trim_float(value_ohm)}Ω"
+
+
+def _trim_float(value: float) -> str:
+    return f"{value:.3f}".rstrip("0").rstrip(".")
+
+
+def _extract_pin_roles(device: DeviceModel) -> dict[str, str]:
+    roles: dict[str, str] = {}
+    if device.symbol is None:
+        return roles
+    for pin in device.symbol.pins:
+        name = pin.name.upper()
+        if name in {"VIN", "IN"}:
+            roles[pin.name] = "power_input"
+        elif name in {"VOUT", "OUT"}:
+            roles[pin.name] = "power_output"
+        elif name in {"GND", "PGND", "AGND"}:
+            roles[pin.name] = "ground"
+        elif name in {"FB", "COMP"}:
+            roles[pin.name] = "feedback"
+        elif name in {"SW", "LX", "PH"}:
+            roles[pin.name] = "switch"
+        elif name in {"BOOT", "BST"}:
+            roles[pin.name] = "bootstrap"
+        elif name in {"EN", "SHDN"}:
+            roles[pin.name] = "enable"
+        else:
+            roles[pin.name] = "signal"
+    return roles
+
+
+def _preferred_pin(device: DeviceModel, names: list[str]) -> str:
+    if device.symbol is None:
+        return names[0]
+    upper_names = {name.upper() for name in names}
+    for pin in device.symbol.pins:
+        if pin.name.upper() in upper_names:
+            return pin.name
+    return names[0]
+
+
+def _make_svg_filename(device: DeviceModel, params: dict[str, str]) -> str:
+    vin = params.get("v_in", "")
+    vout = params.get("v_out", "")
+    safe = device.part_number.replace("/", "_").replace(" ", "_")
+    if vin and vout:
+        return f"forge_{safe}_{vin}V_to_{vout}V.svg"
+    return f"forge_{safe}.svg"
+
+
+def _build_rationale(recipe: DesignRecipe) -> list[str]:
+    lines = [
+        component.rationale
+        for component in recipe.sizing_components
+        if component.rationale
+    ]
+    lines.extend(formula.rationale for formula in recipe.formulas if formula.rationale)
+    lines.extend(item.summary for item in recipe.evidence if item.summary)
+    return lines
+
+
+def _render_bom(device: DeviceModel, params: dict[str, str]) -> str:
+    lines = [
+        f"# BOM — {device.part_number}",
+        "",
+        "| 位号 | 名称 | 数值 | 备注 |",
+        "|---|---|---|---|",
+    ]
+    lines.append(f"| U1 | {device.part_number} | {device.package or '-'} | 主控器件 |")
+
+    ref_count: dict[str, int] = {}
+    if device.topology is not None:
+        for component in device.topology.external_components:
+            ref_count[component.ref_prefix] = ref_count.get(component.ref_prefix, 0) + 1
+            ref = f"{component.ref_prefix}{ref_count[component.ref_prefix]}"
+            value = _resolve_component_value(component, params)
+            lines.append(
+                f"| {ref} | {_component_label(component.role)} | {_display_value(value)} | {component.role} |"
+            )
+
+    if params.get("power_led", "").lower() == "true":
+        lines.append(
+            f"| RLED1 | LED限流电阻 | {params.get('led_resistor', '1kΩ')} | 电源指示支路 |"
+        )
+        lines.append(
+            f"| DLED1 | LED({params.get('led_color', 'green')}) | 指示灯 | 输出电源指示 |"
+        )
+    return "\n".join(lines)
+
+
+def _render_spice(device: DeviceModel, params: dict[str, str]) -> str:
+    circuit_type = device.topology.circuit_type if device.topology else device.category
+    lines = ["* SchemaForge synthesized netlist", f"* Device: {device.part_number}", ""]
+    if circuit_type == "buck":
+        lines.append(f"V1 VIN 0 DC {params.get('v_in', '12')}")
+        lines.append(f"XU1 VIN SW FB 0 {device.part_number}")
+        lines.append(f"CIN VIN 0 {_spice_passive(params.get('c_in', '10uF'))}")
+        lines.append(f"L1 SW VOUT {_spice_passive(params.get('l_value', '10uH'))}")
+        lines.append(f"COUT VOUT 0 {_spice_passive(params.get('c_out', '22uF'))}")
+        lines.append(
+            f"RFB1 VOUT FB {_spice_passive(params.get('r_fb_upper', '52.3kΩ'))}"
+        )
+        lines.append(
+            f"RFB2 FB 0 {_spice_passive(params.get('r_fb_lower', '10kΩ'))}"
+        )
+    elif circuit_type == "ldo":
+        lines.append(f"V1 VIN 0 DC {params.get('v_in', '5')}")
+        lines.append(f"XU1 VIN VOUT 0 {device.part_number}")
+        lines.append(f"CIN VIN 0 {_spice_passive(params.get('c_in', '10uF'))}")
+        lines.append(f"COUT VOUT 0 {_spice_passive(params.get('c_out', '22uF'))}")
+    else:
+        lines.append("* 当前仅对 Buck / LDO 生成结构化 SPICE 网表")
+
+    if params.get("power_led", "").lower() == "true":
+        lines.append(
+            f"RLED1 VOUT LEDA {_spice_passive(params.get('led_resistor', '1kΩ'))}"
+        )
+        lines.append("DLED1 LEDA 0 LEDMODEL")
+        lines.append(".model LEDMODEL D")
+    lines.append("")
+    lines.append(".end")
+    return "\n".join(lines)
+
+
+def _component_label(role: str) -> str:
+    return {
+        "input_cap": "输入电容",
+        "output_cap": "输出电容",
+        "inductor": "功率电感",
+        "boot_cap": "自举电容",
+        "fb_upper": "反馈上拉电阻",
+        "fb_lower": "反馈下拉电阻",
+    }.get(role, role)
+
+
+def _resolve_component_value(component: ExternalComponent, params: dict[str, str]) -> str:
+    expression = component.value_expression.strip()
+    if expression.startswith("{") and expression.endswith("}"):
+        key = expression[1:-1]
+        return params.get(key, component.default_value)
+    return component.default_value
+
+
+def _display_value(value: str) -> str:
+    return value.replace("u", "μ") if "u" in value else value
+
+
+def _spice_passive(value: str) -> str:
+    normalized = value.replace("μ", "u").replace("Ω", "")
+    normalized = normalized.replace("uF", "u").replace("nF", "n")
+    normalized = normalized.replace("pF", "p").replace("uH", "u")
+    normalized = normalized.replace("mH", "m")
+    return normalized
+
+
+def _extract_value_token(text: str) -> str:
+    match = _VALUE_RE.search(text)
+    if not match:
+        return ""
+    unit = match.group(2).replace("μ", "u").replace("µ", "u")
+    return f"{match.group(1)}{unit}"
+
+
+def _extract_voltage_token(text: str) -> str:
+    match = re.search(r"(\d+(?:\.\d+)?)\s*V", text, re.IGNORECASE)
+    return _trim_float(float(match.group(1))) if match else ""
+
+
+def _extract_led_color(text: str) -> str:
+    lower = text.lower()
+    for label, color in [
+        ("红", "red"),
+        ("绿", "green"),
+        ("蓝", "blue"),
+        ("白", "white"),
+    ]:
+        if label in text or color in lower:
+            return color
+    return "green"

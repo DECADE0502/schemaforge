@@ -74,6 +74,9 @@ def layout_ldo(
     # 格式化电容值显示
     c_in_display = c_in.replace("u", "\u03bc")
     c_out_display = c_out.replace("u", "\u03bc")
+    power_led = str(params.get("power_led", "")).lower() == "true"
+    led_color = str(params.get("led_color", "green"))
+    led_resistor = str(params.get("led_resistor", "1kΩ"))
 
     ic_label = f"{ic_model}-{v_out}" if v_out else ic_model
 
@@ -126,6 +129,7 @@ def layout_ldo(
 
         # 输出电容分支点
         elm.Dot()
+        output_tap = d.here
         d.push()
 
         # 输出电容向下到地
@@ -133,6 +137,15 @@ def layout_ldo(
         elm.Ground()
 
         d.pop()
+
+        if power_led:
+            d.push()
+            elm.Resistor().down().at(output_tap).label(
+                f'RLED\n{led_resistor}', 'right'
+            )
+            elm.LED().down().label(f'DLED\n{led_color}', 'right')
+            elm.Ground()
+            d.pop()
 
         # 输出端标记
         elm.Line().right(1)
@@ -163,17 +176,26 @@ def layout_buck(
     c_out = str(params.get("c_out", "22uF")).replace("u", "\u03bc")
     l_value = str(params.get("l_value", "4.7uH")).replace("u", "\u03bc")
     c_boot = str(params.get("c_boot", "100nF"))
+    power_led = str(params.get("power_led", "")).lower() == "true"
+    led_color = str(params.get("led_color", "green"))
+    led_resistor = str(params.get("led_resistor", "1kΩ"))
 
     # FB分压电阻（简化计算：假定Vref=0.8V）
-    v_ref = _safe_float(params.get("v_ref", 0.8), 0.8)
-    r_fb_total = _safe_float(params.get("r_fb_total", 100.0), 100.0)  # kOhm
-    ratio = v_ref / v_out
-    r2_raw = r_fb_total * 1000 * ratio
-    r1_raw = r_fb_total * 1000 - r2_raw
-    r1_val = find_nearest_e24(r1_raw)
-    r2_val = find_nearest_e24(r2_raw)
-    r1_str = format_value(r1_val, "\u03a9")
-    r2_str = format_value(r2_val, "\u03a9")
+    r1_given = params.get("r_fb_upper")
+    r2_given = params.get("r_fb_lower")
+    if r1_given and r2_given:
+        r1_str = str(r1_given)
+        r2_str = str(r2_given)
+    else:
+        v_ref = _safe_float(params.get("v_ref", 0.8), 0.8)
+        r_fb_total = _safe_float(params.get("r_fb_total", 100.0), 100.0)  # kOhm
+        ratio = v_ref / v_out
+        r2_raw = r_fb_total * 1000 * ratio
+        r1_raw = r_fb_total * 1000 - r2_raw
+        r1_val = find_nearest_e24(r1_raw)
+        r2_val = find_nearest_e24(r2_raw)
+        r1_str = format_value(r1_val, "\u03a9")
+        r2_str = format_value(r2_val, "\u03a9")
 
     if filename is None:
         filename = f"topo_buck_{v_in}V_to_{v_out}V.svg"
@@ -239,10 +261,20 @@ def layout_buck(
 
         # 输出电容分支
         elm.Dot()
+        output_tap = d.here
         d.push()
         elm.Capacitor(polar=True).down().label(f'C2\n{c_out}', 'right')
         elm.Ground()
         d.pop()
+
+        if power_led:
+            d.push()
+            elm.Resistor().down().at(output_tap).label(
+                f'RLED\n{led_resistor}', 'right'
+            )
+            elm.LED().down().label(f'DLED\n{led_color}', 'right')
+            elm.Ground()
+            d.pop()
 
         # VOUT输出
         vout_point = d.here

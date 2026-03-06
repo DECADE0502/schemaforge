@@ -113,6 +113,46 @@ class TopologyDef(BaseModel):
     design_rules: list[str] = Field(default_factory=list)
 
 
+class RecipeEvidence(BaseModel):
+    """设计结论的证据摘要。"""
+
+    source_type: str = "ai_inferred"
+    summary: str = ""
+    source_ref: str = ""
+    page: int | None = None
+    confidence: float = 1.0
+
+
+class RecipeComponent(BaseModel):
+    """外围器件选型条目。"""
+
+    role: str
+    value: str = ""
+    formula: str = ""
+    rationale: str = ""
+
+
+class RecipeFormula(BaseModel):
+    """计算公式及结果。"""
+
+    name: str
+    expression: str
+    value: str = ""
+    rationale: str = ""
+
+
+class DesignRecipe(BaseModel):
+    """器件级设计 recipe。"""
+
+    topology_family: str = ""
+    summary: str = ""
+    pin_roles: dict[str, str] = Field(default_factory=dict)
+    default_parameters: dict[str, str] = Field(default_factory=dict)
+    sizing_components: list[RecipeComponent] = Field(default_factory=list)
+    formulas: list[RecipeFormula] = Field(default_factory=list)
+    evidence: list[RecipeEvidence] = Field(default_factory=list)
+
+
 # ============================================================
 # 完整器件模型
 # ============================================================
@@ -123,6 +163,7 @@ class DeviceModel(BaseModel):
 
     # --- 身份信息 ---
     part_number: str
+    aliases: list[str] = Field(default_factory=list)
     manufacturer: str = ""
     description: str = ""
     category: str = (
@@ -137,6 +178,7 @@ class DeviceModel(BaseModel):
 
     # --- 推荐电路 ---
     topology: TopologyDef | None = None  # None 表示独立无源器件
+    design_recipe: DesignRecipe | None = None
 
     # --- SPICE ---
     spice_model: str = ""
