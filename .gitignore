@@ -42,3 +42,7 @@ htmlcov/
 
 # OpenCode / Agent state
 .opencode/
+.omc/
+
+# Output artifacts
+schemaforge/output/
