@@ -103,7 +103,14 @@ class LibraryPage(QWidget):
         self.operation_tabs.addTab(self.search_panel, "🔍 EasyEDA搜索")
 
         # PDF/图片导入标签
-        self.import_wizard = ImportWizard(use_mock=True)
+        import os
+
+        _use_mock = os.environ.get("SCHEMAFORGE_MOCK", "0").lower() in (
+            "1",
+            "true",
+            "yes",
+        )
+        self.import_wizard = ImportWizard(use_mock=_use_mock)
         self.import_wizard.draft_ready.connect(self._on_import_wizard_submit)
         self.operation_tabs.addTab(self.import_wizard, "📄 PDF/图片导入")
 
@@ -132,9 +139,15 @@ class LibraryPage(QWidget):
 
         # 器件表格
         self.device_table = QTableWidget(0, 5)
-        self.device_table.setHorizontalHeaderLabels([
-            "料号", "类别", "制造商", "封装", "来源",
-        ])
+        self.device_table.setHorizontalHeaderLabels(
+            [
+                "料号",
+                "类别",
+                "制造商",
+                "封装",
+                "来源",
+            ]
+        )
         header = self.device_table.horizontalHeader()
         header.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
         header.setSectionResizeMode(1, QHeaderView.ResizeMode.Fixed)
@@ -147,9 +160,7 @@ class LibraryPage(QWidget):
         self.device_table.setSelectionBehavior(
             QTableWidget.SelectionBehavior.SelectRows
         )
-        self.device_table.setEditTriggers(
-            QTableWidget.EditTrigger.NoEditTriggers
-        )
+        self.device_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         layout.addWidget(self.device_table)
 
         # 操作按钮
@@ -267,6 +278,7 @@ class LibraryPage(QWidget):
     def _on_easyeda_import(self, hit: object) -> None:
         """EasyEDA 搜索结果 → 导入为 DeviceDraft → 加载到表单"""
         from schemaforge.ingest.easyeda_provider import EasyEDAHit as HitType
+
         if not isinstance(hit, HitType):
             return
 

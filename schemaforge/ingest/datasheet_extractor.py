@@ -18,6 +18,7 @@ from schemaforge.common.progress import ProgressTracker
 from schemaforge.ingest.ai_analyzer import (
     ImageAnalysisResult,
     TextAnalysisResult,
+    analyze_combined,
     analyze_datasheet_text,
     analyze_image,
     analyze_image_file,
@@ -25,6 +26,7 @@ from schemaforge.ingest.ai_analyzer import (
 from schemaforge.ingest.pdf_parser import (
     PdfParseResult,
     parse_pdf,
+    render_pdf_pages,
 )
 from schemaforge.library.validator import DeviceDraft, PinDraft
 
@@ -32,6 +34,7 @@ from schemaforge.library.validator import DeviceDraft, PinDraft
 # ============================================================
 # 提取结果
 # ============================================================
+
 
 @dataclass
 class ExtractionResult:
@@ -51,20 +54,36 @@ class ExtractionResult:
 # PDF 提取流程
 # ============================================================
 
+
+_SPARSE_TEXT_THRESHOLD = 200
+
+
+def _load_extra_images(paths: list[str]) -> list[bytes]:
+    from pathlib import Path as _Path
+
+    images: list[bytes] = []
+    for p in paths:
+        fp = _Path(p)
+        if fp.exists() and fp.stat().st_size < 10 * 1024 * 1024:
+            images.append(fp.read_bytes())
+    return images
+
+
 def extract_from_pdf(
     filepath: str,
     hint: str = "",
     use_mock: bool = False,
     tracker: ProgressTracker | None = None,
     page_limit: int | None = 10,
+    extra_images: list[str] | None = None,
 ) -> ExtractionResult:
     """从 PDF datasheet 提取器件信息
 
     流程:
     1. 解析 PDF 提取文本
-    2. AI 分析文本 → 结构化信息
-    3. 组装 DeviceDraft
-    4. 标记缺失字段 (需用户补全)
+    2. 收集图片（用户附加 + 稀疏文本时自动渲染 PDF 页面）
+    3. 有图片时走融合分析，否则纯文本分析
+    4. 组装 DeviceDraft + 标记缺失字段
 
     Args:
         filepath: PDF 文件路径
@@ -72,13 +91,13 @@ def extract_from_pdf(
         use_mock: 是否使用 mock AI
         tracker: 进度跟踪器
         page_limit: 最大解析页数
+        extra_images: 用户附加的引脚图/封装图文件路径列表
 
     Returns:
         ExtractionResult
     """
     result = ExtractionResult()
 
-    # 1. 解析 PDF
     if tracker:
         tracker.stage("解析PDF文件", 10)
     pdf_result = parse_pdf(filepath, page_limit=page_limit)
@@ -92,15 +111,40 @@ def extract_from_pdf(
 
     if tracker:
         tracker.log(f"PDF 解析完成: {pdf_data.summary}")
-        tracker.stage("AI分析文本", 30)
 
-    # 2. AI 分析文本
     text = pdf_data.full_text
-    if not text.strip():
-        result.error_message = "PDF 中未提取到文本内容"
-        return result
 
-    ai_result = analyze_datasheet_text(text, hint=hint, use_mock=use_mock)
+    all_image_bytes = _load_extra_images(extra_images or [])
+
+    if len(text.strip()) < _SPARSE_TEXT_THRESHOLD:
+        if tracker:
+            tracker.log("PDF 文本稀疏，自动渲染前 3 页为图片进行视觉分析")
+            tracker.stage("渲染PDF页面", 25)
+        render_result = render_pdf_pages(filepath, pages=[1, 2, 3])
+        if render_result.success and render_result.data:
+            for img_ref in render_result.data:
+                all_image_bytes.append(img_ref.image_bytes)
+
+    if all_image_bytes:
+        if tracker:
+            tracker.stage(
+                f"AI 融合分析（文本+{len(all_image_bytes)}张图片）",
+                35,
+            )
+        ai_result = analyze_combined(
+            text,
+            all_image_bytes,
+            hint=hint,
+            use_mock=use_mock,
+        )
+    else:
+        if not text.strip():
+            result.error_message = "PDF 中未提取到文本内容"
+            return result
+        if tracker:
+            tracker.stage("AI分析文本", 30)
+        ai_result = analyze_datasheet_text(text, hint=hint, use_mock=use_mock)
+
     if not ai_result.success:
         err = ai_result.error
         result.error_message = err.message if err else "AI 分析失败"
@@ -116,11 +160,9 @@ def extract_from_pdf(
         )
         tracker.stage("组装器件草稿", 60)
 
-    # 3. 组装 DeviceDraft
     draft = _analysis_to_draft(analysis, source_file=filepath)
     result.draft = draft
 
-    # 4. 检查缺失字段
     questions = _generate_questions(draft, analysis)
     if questions:
         result.needs_user_input = True
@@ -140,6 +182,7 @@ def extract_from_pdf(
 # ============================================================
 # 图片提取流程
 # ============================================================
+
 
 def extract_from_image(
     image_source: str | bytes,
@@ -187,12 +230,14 @@ def extract_from_image(
     # 组装 DeviceDraft (图片分析信息通常不完整)
     pins: list[PinDraft] = []
     for p in img_analysis.pins:
-        pins.append(PinDraft(
-            name=p.get("name", ""),
-            number=p.get("number", ""),
-            pin_type=p.get("type", ""),
-            description=p.get("description", ""),
-        ))
+        pins.append(
+            PinDraft(
+                name=p.get("name", ""),
+                number=p.get("number", ""),
+                pin_type=p.get("type", ""),
+                description=p.get("description", ""),
+            )
+        )
 
     draft = DeviceDraft(
         package=img_analysis.package,
@@ -201,7 +246,13 @@ def extract_from_image(
         source="image",
         confidence=img_analysis.confidence,
         notes="从图片识别提取",
-        missing_fields=["part_number", "manufacturer", "category", "description", "specs"],
+        missing_fields=[
+            "part_number",
+            "manufacturer",
+            "category",
+            "description",
+            "specs",
+        ],
     )
 
     # 如果 hint 中有料号信息
@@ -224,6 +275,7 @@ def extract_from_image(
 # 辅助函数
 # ============================================================
 
+
 def _analysis_to_draft(
     analysis: TextAnalysisResult,
     source_file: str = "",
@@ -232,12 +284,14 @@ def _analysis_to_draft(
     pins: list[PinDraft] = []
     for p in analysis.pins:
         if isinstance(p, dict):
-            pins.append(PinDraft(
-                name=p.get("name", ""),
-                number=p.get("number", ""),
-                pin_type=p.get("type", ""),
-                description=p.get("description", ""),
-            ))
+            pins.append(
+                PinDraft(
+                    name=p.get("name", ""),
+                    number=p.get("number", ""),
+                    pin_type=p.get("type", ""),
+                    description=p.get("description", ""),
+                )
+            )
 
     missing = list(analysis.missing_fields)
     confidence_map: dict[str, float] = {}
@@ -278,58 +332,73 @@ def _generate_questions(
     # 缺少料号
     if not draft.part_number:
         q_idx += 1
-        questions.append({
-            "question_id": f"q_{q_idx}",
-            "text": "无法从 datasheet 中识别器件型号，请手动输入",
-            "field_path": "part_number",
-            "answer_type": "text",
-            "required": True,
-        })
+        questions.append(
+            {
+                "question_id": f"q_{q_idx}",
+                "text": "无法从 datasheet 中识别器件型号，请手动输入",
+                "field_path": "part_number",
+                "answer_type": "text",
+                "required": True,
+            }
+        )
 
     # 缺少类别
     if not draft.category:
         q_idx += 1
-        questions.append({
-            "question_id": f"q_{q_idx}",
-            "text": "无法确定器件类别，请选择或输入",
-            "field_path": "category",
-            "answer_type": "text",
-            "required": False,
-        })
+        questions.append(
+            {
+                "question_id": f"q_{q_idx}",
+                "text": "无法确定器件类别，请选择或输入",
+                "field_path": "category",
+                "answer_type": "text",
+                "required": False,
+            }
+        )
 
     # 低置信度料号
     if draft.part_number and analysis.confidence < 0.6:
         q_idx += 1
-        questions.append({
-            "question_id": f"q_{q_idx}",
-            "text": f"AI 识别料号为 '{draft.part_number}'（置信度 {analysis.confidence:.0%}），请确认是否正确",
-            "field_path": "part_number",
-            "answer_type": "confirm",
-            "default": draft.part_number,
-        })
+        questions.append(
+            {
+                "question_id": f"q_{q_idx}",
+                "text": f"AI 识别料号为 '{draft.part_number}'（置信度 {analysis.confidence:.0%}），请确认是否正确",
+                "field_path": "part_number",
+                "answer_type": "confirm",
+                "default": draft.part_number,
+            }
+        )
 
     # 缺少引脚定义
-    if not draft.pins and draft.category not in ("resistor", "capacitor", "inductor", "passive"):
+    if not draft.pins and draft.category not in (
+        "resistor",
+        "capacitor",
+        "inductor",
+        "passive",
+    ):
         q_idx += 1
-        questions.append({
-            "question_id": f"q_{q_idx}",
-            "text": "未能从文本中提取引脚定义。建议上传引脚图截图，或手动填写",
-            "field_path": "pins",
-            "answer_type": "text",
-            "required": False,
-            "evidence": "PDF 文本中未发现明确的引脚表格",
-        })
+        questions.append(
+            {
+                "question_id": f"q_{q_idx}",
+                "text": "未能从文本中提取引脚定义。建议上传引脚图截图，或手动填写",
+                "field_path": "pins",
+                "answer_type": "text",
+                "required": False,
+                "evidence": "PDF 文本中未发现明确的引脚表格",
+            }
+        )
 
     # AI 自身标记的警告
     for warn in analysis.warnings:
         q_idx += 1
-        questions.append({
-            "question_id": f"q_{q_idx}",
-            "text": warn,
-            "field_path": "",
-            "answer_type": "text",
-            "required": False,
-        })
+        questions.append(
+            {
+                "question_id": f"q_{q_idx}",
+                "text": warn,
+                "field_path": "",
+                "answer_type": "text",
+                "required": False,
+            }
+        )
 
     return questions
 
@@ -339,29 +408,35 @@ def _generate_questions_for_image(draft: DeviceDraft) -> list[dict[str, Any]]:
     questions: list[dict[str, Any]] = []
 
     if not draft.part_number:
-        questions.append({
-            "question_id": "img_q_1",
-            "text": "请输入器件型号",
-            "field_path": "part_number",
+        questions.append(
+            {
+                "question_id": "img_q_1",
+                "text": "请输入器件型号",
+                "field_path": "part_number",
+                "answer_type": "text",
+                "required": True,
+            }
+        )
+
+    questions.append(
+        {
+            "question_id": "img_q_2",
+            "text": "请输入制造商名称",
+            "field_path": "manufacturer",
             "answer_type": "text",
-            "required": True,
-        })
+            "required": False,
+        }
+    )
 
-    questions.append({
-        "question_id": "img_q_2",
-        "text": "请输入制造商名称",
-        "field_path": "manufacturer",
-        "answer_type": "text",
-        "required": False,
-    })
-
-    questions.append({
-        "question_id": "img_q_3",
-        "text": "请选择或输入器件类别 (如 ldo, buck, mcu)",
-        "field_path": "category",
-        "answer_type": "text",
-        "required": False,
-    })
+    questions.append(
+        {
+            "question_id": "img_q_3",
+            "text": "请选择或输入器件类别 (如 ldo, buck, mcu)",
+            "field_path": "category",
+            "answer_type": "text",
+            "required": False,
+        }
+    )
 
     return questions
 
@@ -394,8 +469,7 @@ def apply_user_answers(
     # 从 missing_fields 中移除已回答的字段
     answered_fields = set(answers.keys())
     data["missing_fields"] = [
-        f for f in data.get("missing_fields", [])
-        if f not in answered_fields
+        f for f in data.get("missing_fields", []) if f not in answered_fields
     ]
 
     return DeviceDraft.model_validate(data)

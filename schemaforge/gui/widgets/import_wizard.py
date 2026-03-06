@@ -24,6 +24,8 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QLineEdit,
+    QListWidget,
+    QListWidgetItem,
     QMessageBox,
     QProgressBar,
     QPushButton,
@@ -45,6 +47,7 @@ from schemaforge.library.validator import DeviceDraft
 # 提取工作线程
 # ============================================================
 
+
 class ExtractionWorker(QThread):
     """后台执行提取流程"""
 
@@ -57,12 +60,14 @@ class ExtractionWorker(QThread):
         filepath: str,
         hint: str = "",
         use_mock: bool = True,
+        extra_images: list[str] | None = None,
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
         self.filepath = filepath
         self.hint = hint
         self.use_mock = use_mock
+        self.extra_images: list[str] = extra_images or []
 
     def run(self) -> None:
         from schemaforge.common.progress import ProgressTracker
@@ -80,6 +85,7 @@ class ExtractionWorker(QThread):
                     hint=self.hint,
                     use_mock=self.use_mock,
                     tracker=tracker,
+                    extra_images=self.extra_images,
                 )
             elif ext in (".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp"):
                 result = extract_from_image(
@@ -100,6 +106,7 @@ class ExtractionWorker(QThread):
     def _on_event(self, event: object) -> None:
         """ProgressTracker 事件回调"""
         from schemaforge.common.events import ProgressEvent, LogEvent
+
         if isinstance(event, ProgressEvent):
             self.progress.emit(event.message, event.percentage)
         elif isinstance(event, LogEvent):
@@ -109,6 +116,7 @@ class ExtractionWorker(QThread):
 # ============================================================
 # 导入向导面板
 # ============================================================
+
 
 class ImportWizard(QWidget):
     """PDF/图片导入向导
@@ -163,6 +171,43 @@ class ImportWizard(QWidget):
         file_layout.addWidget(browse_btn)
 
         layout.addWidget(file_group)
+
+        # ── 引脚图片区（可选，多选） ──
+        img_group = QGroupBox("引脚图 / 封装图（可选）")
+        img_layout = QVBoxLayout(img_group)
+
+        img_desc = QLabel("上传引脚图或封装图截图，AI 会结合 PDF 文本与图片一起分析。")
+        img_desc.setWordWrap(True)
+        img_desc.setStyleSheet("color: #666; font-size: 10px;")
+        img_layout.addWidget(img_desc)
+
+        self._image_list = QListWidget()
+        self._image_list.setMaximumHeight(90)
+        self._image_list.setStyleSheet("font-size: 11px;")
+        img_layout.addWidget(self._image_list)
+
+        img_btn_row = QHBoxLayout()
+        add_img_btn = QPushButton("添加引脚图")
+        add_img_btn.setStyleSheet(
+            "QPushButton { background: #6c757d; color: white; "
+            "border-radius: 4px; padding: 4px 12px; font-size: 11px; }"
+            "QPushButton:hover { background: #5a6268; }"
+        )
+        add_img_btn.clicked.connect(self._on_add_images)
+        img_btn_row.addWidget(add_img_btn)
+
+        remove_img_btn = QPushButton("移除选中")
+        remove_img_btn.setStyleSheet(
+            "QPushButton { background: #dc3545; color: white; "
+            "border-radius: 4px; padding: 4px 12px; font-size: 11px; }"
+            "QPushButton:hover { background: #c82333; }"
+        )
+        remove_img_btn.clicked.connect(self._on_remove_image)
+        img_btn_row.addWidget(remove_img_btn)
+        img_btn_row.addStretch()
+        img_layout.addLayout(img_btn_row)
+
+        layout.addWidget(img_group)
 
         # 提示输入
         hint_row = QHBoxLayout()
@@ -255,6 +300,34 @@ class ImportWizard(QWidget):
             self.file_label.setStyleSheet("color: #212529; font-weight: bold;")
             self.start_btn.setEnabled(True)
 
+    def _on_add_images(self) -> None:
+        filepaths, _ = QFileDialog.getOpenFileNames(
+            self,
+            "选择引脚图 / 封装图",
+            "",
+            "图片文件 (*.png *.jpg *.jpeg *.webp *.gif *.bmp);;所有文件 (*)",
+        )
+        for fp in filepaths:
+            existing = [
+                self._image_list.item(i).data(Qt.ItemDataRole.UserRole)
+                for i in range(self._image_list.count())
+            ]
+            if fp not in existing:
+                item = QListWidgetItem(Path(fp).name)
+                item.setData(Qt.ItemDataRole.UserRole, fp)
+                self._image_list.addItem(item)
+
+    def _on_remove_image(self) -> None:
+        for item in self._image_list.selectedItems():
+            row = self._image_list.row(item)
+            self._image_list.takeItem(row)
+
+    def _get_extra_image_paths(self) -> list[str]:
+        return [
+            self._image_list.item(i).data(Qt.ItemDataRole.UserRole)
+            for i in range(self._image_list.count())
+        ]
+
     # ── 开始提取 ──
 
     def _on_start(self) -> None:
@@ -273,6 +346,7 @@ class ImportWizard(QWidget):
             filepath=self._selected_file,
             hint=self.hint_edit.text().strip(),
             use_mock=self.use_mock,
+            extra_images=self._get_extra_image_paths(),
         )
         self._worker.finished.connect(self._on_extraction_done)
         self._worker.error.connect(self._on_extraction_error)
@@ -340,7 +414,8 @@ class ImportWizard(QWidget):
             info_layout.addRow(f"{label}:", val_label)
 
         self._result_layout.insertWidget(
-            self._result_layout.count() - 1, info_group,
+            self._result_layout.count() - 1,
+            info_group,
         )
 
         # 追问卡片
@@ -374,7 +449,8 @@ class ImportWizard(QWidget):
                 q_layout.addLayout(q_row)
 
             self._result_layout.insertWidget(
-                self._result_layout.count() - 1, q_group,
+                self._result_layout.count() - 1,
+                q_group,
             )
 
         # 启用确认按钮
@@ -420,6 +496,7 @@ class ImportWizard(QWidget):
         self.file_label.setText("未选择文件")
         self.file_label.setStyleSheet("color: #999;")
         self.hint_edit.clear()
+        self._image_list.clear()
         self.start_btn.setEnabled(False)
         self.confirm_btn.setEnabled(False)
         self.progress_bar.hide()
