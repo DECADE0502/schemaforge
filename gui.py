@@ -16,7 +16,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 from typing import Any
 
 from PySide6.QtCore import Qt, QThread, Signal
-from PySide6.QtGui import QFont, QAction, QColor
+from PySide6.QtGui import QAction, QColor
 from PySide6.QtWidgets import (
     QApplication,
     QComboBox,
@@ -118,7 +118,7 @@ class SvgView(QGraphicsView):
         self.setRenderHints(
             QPainter.RenderHint.Antialiasing | QPainter.RenderHint.SmoothPixmapTransform
         )
-        self.setBackgroundBrush(QColor("#ffffff"))
+        self.setBackgroundBrush(QColor("#1a1a2e"))
         self.setFrameShape(QFrame.Shape.NoFrame)
 
         self._scene = QGraphicsScene(self)
@@ -151,7 +151,7 @@ class SvgPreviewWidget(QWidget):
         # 空状态提示
         self.empty_label = QLabel("原理图预览区\n\n输入电路需求后点击「生成」")
         self.empty_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.empty_label.setStyleSheet("color: #888; font-size: 16px;")
+        self.empty_label.setProperty("class", "muted")
         layout.addWidget(self.empty_label)
 
         self.tab_widget.hide()
@@ -207,7 +207,6 @@ class LogPanel(QWidget):
         self.steps: list[QLabel] = []
         for name in self._STEP_NAMES:
             label = QLabel(f"○ {name}")
-            label.setStyleSheet("color: #999; font-size: 11px;")
             label.setAlignment(Qt.AlignmentFlag.AlignCenter)
             step_layout.addWidget(label)
             self.steps.append(label)
@@ -216,11 +215,7 @@ class LogPanel(QWidget):
         # 日志文本区
         self.log_text = QPlainTextEdit()
         self.log_text.setReadOnly(True)
-        self.log_text.setFont(QFont("Consolas", 9))
-        self.log_text.setStyleSheet(
-            "QPlainTextEdit { background: #1e1e2e; color: #cdd6f4; "
-            "border: 1px solid #45475a; border-radius: 4px; }"
-        )
+        self.log_text.setProperty("class", "log-output")
         self.log_text.setMaximumBlockCount(500)
         layout.addWidget(self.log_text)
 
@@ -229,7 +224,9 @@ class LogPanel(QWidget):
         self.log_text.clear()
         for i, label in enumerate(self.steps):
             label.setText(f"○ {self._STEP_NAMES[i]}")
-            label.setStyleSheet("color: #999; font-size: 11px;")
+            label.setProperty("class", "")
+            label.style().unpolish(label)
+            label.style().polish(label)
 
     def append_log(self, message: str) -> None:
         """追加一条带时间戳的日志"""
@@ -243,20 +240,19 @@ class LogPanel(QWidget):
     def update_step(self, percentage: int) -> None:
         """根据进度百分比更新步骤指示器"""
         for i, threshold in enumerate(self._STEP_THRESHOLDS):
+            label = self.steps[i]
             if percentage >= threshold:
                 if percentage > threshold + 10 or percentage >= 100:
-                    self.steps[i].setText(f"✓ {self._STEP_NAMES[i]}")
-                    self.steps[i].setStyleSheet(
-                        "color: #a6e3a1; font-size: 11px; font-weight: bold;"
-                    )
+                    label.setText(f"✓ {self._STEP_NAMES[i]}")
+                    label.setProperty("class", "success")
                 else:
-                    self.steps[i].setText(f"▸ {self._STEP_NAMES[i]}")
-                    self.steps[i].setStyleSheet(
-                        "color: #89b4fa; font-size: 11px; font-weight: bold;"
-                    )
+                    label.setText(f"▸ {self._STEP_NAMES[i]}")
+                    label.setProperty("class", "primary")
             else:
-                self.steps[i].setText(f"○ {self._STEP_NAMES[i]}")
-                self.steps[i].setStyleSheet("color: #999; font-size: 11px;")
+                label.setText(f"○ {self._STEP_NAMES[i]}")
+                label.setProperty("class", "")
+            label.style().unpolish(label)
+            label.style().polish(label)
 
 
 # ============================================================
@@ -271,6 +267,7 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.setWindowTitle("SchemaForge — 约束驱动的AI原理图生成器")
         self.resize(1280, 800)
+        self.setMinimumSize(960, 640)
 
         # 引擎（默认离线模式）
         self.engine = SchemaForgeEngine(use_mock=True)
@@ -294,11 +291,6 @@ class MainWindow(QMainWindow):
 
         # ── 顶级标签页：原理图设计 / 器件库管理 ──
         self.main_tabs = QTabWidget()
-        self.main_tabs.setFont(QFont("Microsoft YaHei", 11))
-        self.main_tabs.setStyleSheet(
-            "QTabBar::tab { min-width: 140px; min-height: 32px; "
-            "padding: 6px 16px; font-weight: bold; }"
-        )
 
         # ── 标签1: 原理图设计 ──
         design_page = QWidget()
@@ -341,25 +333,24 @@ class MainWindow(QMainWindow):
         # BOM 标签
         self.bom_text = QTextEdit()
         self.bom_text.setReadOnly(True)
-        self.bom_text.setFont(QFont("Consolas", 10))
+        self.bom_text.setProperty("class", "log-output")
         self.result_tabs.addTab(self.bom_text, "BOM 清单")
 
         # SPICE 标签
         self.spice_text = QTextEdit()
         self.spice_text.setReadOnly(True)
-        self.spice_text.setFont(QFont("Consolas", 10))
+        self.spice_text.setProperty("class", "log-output")
         self.result_tabs.addTab(self.spice_text, "SPICE 网表")
 
         # ERC 标签
         self.erc_text = QTextEdit()
         self.erc_text.setReadOnly(True)
-        self.erc_text.setFont(QFont("Consolas", 10))
+        self.erc_text.setProperty("class", "log-output")
         self.result_tabs.addTab(self.erc_text, "ERC 检查")
 
         # 设计概要标签
         self.summary_text = QTextEdit()
         self.summary_text.setReadOnly(True)
-        self.summary_text.setFont(QFont("Microsoft YaHei", 10))
         self.result_tabs.addTab(self.summary_text, "设计概要")
 
         # 运行日志标签
@@ -389,7 +380,7 @@ class MainWindow(QMainWindow):
 
         # 标题
         title = QLabel("电路需求输入")
-        title.setFont(QFont("Microsoft YaHei", 12, QFont.Weight.Bold))
+        title.setProperty("class", "title")
         layout.addWidget(title)
 
         # 输入框
@@ -401,8 +392,6 @@ class MainWindow(QMainWindow):
             "• 1kHz低通滤波器\n"
             "• LED电源指示灯"
         )
-        self.input_edit.setFont(QFont("Microsoft YaHei", 11))
-        self.input_edit.setMaximumHeight(120)
         layout.addWidget(self.input_edit)
 
         # 快捷模板选择
@@ -443,31 +432,14 @@ class MainWindow(QMainWindow):
         btn_layout = QHBoxLayout()
 
         self.generate_btn = QPushButton("生成原理图")
-        self.generate_btn.setFont(QFont("Microsoft YaHei", 12, QFont.Weight.Bold))
         self.generate_btn.setMinimumHeight(44)
-        self.generate_btn.setStyleSheet(
-            "QPushButton {"
-            "  background-color: #2563EB; color: white; border-radius: 6px;"
-            "  padding: 8px 16px;"
-            "}"
-            "QPushButton:hover { background-color: #1D4ED8; }"
-            "QPushButton:pressed { background-color: #1E40AF; }"
-            "QPushButton:disabled { background-color: #94A3B8; }"
-        )
+        self.generate_btn.setProperty("class", "primary")
         self.generate_btn.clicked.connect(self._on_generate)
         btn_layout.addWidget(self.generate_btn)
 
         self.demo_btn = QPushButton("运行Demo")
         self.demo_btn.setMinimumHeight(44)
-        self.demo_btn.setStyleSheet(
-            "QPushButton {"
-            "  background-color: #7C3AED; color: white; border-radius: 6px;"
-            "  padding: 8px 16px;"
-            "}"
-            "QPushButton:hover { background-color: #6D28D9; }"
-            "QPushButton:pressed { background-color: #5B21B6; }"
-            "QPushButton:disabled { background-color: #94A3B8; }"
-        )
+        self.demo_btn.setProperty("class", "primary")
         self.demo_btn.clicked.connect(self._on_demo)
         btn_layout.addWidget(self.demo_btn)
 
@@ -482,7 +454,7 @@ class MainWindow(QMainWindow):
         # ERC 快速摘要
         self.quick_status = QLabel("")
         self.quick_status.setWordWrap(True)
-        self.quick_status.setStyleSheet("color: #666; font-size: 11px; padding: 4px;")
+        self.quick_status.setProperty("class", "muted")
         layout.addWidget(self.quick_status)
 
         layout.addStretch()
@@ -647,9 +619,9 @@ class MainWindow(QMainWindow):
         if not result.success:
             self.statusbar.showMessage(f"失败 — 阶段: {result.stage}")
             self.quick_status.setText(f"错误: {result.error}")
-            self.quick_status.setStyleSheet(
-                "color: #DC2626; font-size: 11px; padding: 4px;"
-            )
+            self.quick_status.setProperty("class", "error")
+            self.quick_status.style().unpolish(self.quick_status)
+            self.quick_status.style().polish(self.quick_status)
             self.log_panel.append_log(f"❌ 失败: {result.error}")
             self.chat_panel.add_message("system", f"生成失败: {result.error}")
             QMessageBox.critical(
@@ -659,9 +631,9 @@ class MainWindow(QMainWindow):
 
         # 成功 — 更新所有面板
         self.statusbar.showMessage(f"完成 — {result.design_name}")
-        self.quick_status.setStyleSheet(
-            "color: #16A34A; font-size: 11px; padding: 4px;"
-        )
+        self.quick_status.setProperty("class", "success")
+        self.quick_status.style().unpolish(self.quick_status)
+        self.quick_status.style().polish(self.quick_status)
         self.log_panel.append_log(f"✅ 完成: {result.design_name}")
         self.chat_panel.add_message(
             "assistant",
@@ -735,9 +707,9 @@ class MainWindow(QMainWindow):
         if not result.success:
             self.statusbar.showMessage(f"失败 — 阶段: {result.stage}")
             self.quick_status.setText(f"错误: {result.error}")
-            self.quick_status.setStyleSheet(
-                "color: #DC2626; font-size: 11px; padding: 4px;"
-            )
+            self.quick_status.setProperty("class", "error")
+            self.quick_status.style().unpolish(self.quick_status)
+            self.quick_status.style().polish(self.quick_status)
             self.log_panel.append_log(f"[X] 失败: {result.error}")
             self.chat_panel.add_message("system", f"生成失败: {result.error}")
             QMessageBox.critical(
@@ -749,9 +721,9 @@ class MainWindow(QMainWindow):
 
         design_name = result.plan.name if result.plan else "未命名"
         self.statusbar.showMessage(f"完成 — {design_name}")
-        self.quick_status.setStyleSheet(
-            "color: #16A34A; font-size: 11px; padding: 4px;"
-        )
+        self.quick_status.setProperty("class", "success")
+        self.quick_status.style().unpolish(self.quick_status)
+        self.quick_status.style().polish(self.quick_status)
         self.log_panel.append_log(f"[OK] 完成: {design_name}")
         self.chat_panel.add_message(
             "assistant",
@@ -826,9 +798,9 @@ class MainWindow(QMainWindow):
         self.progress_header.set_busy(False)
         self.statusbar.showMessage("引擎异常")
         self.quick_status.setText(f"异常: {error_msg}")
-        self.quick_status.setStyleSheet(
-            "color: #DC2626; font-size: 11px; padding: 4px;"
-        )
+        self.quick_status.setProperty("class", "error")
+        self.quick_status.style().unpolish(self.quick_status)
+        self.quick_status.style().polish(self.quick_status)
         self.log_panel.append_log(f"❌ 异常: {error_msg}")
         self.chat_panel.add_message("system", f"引擎异常: {error_msg}")
         QMessageBox.critical(self, "引擎异常", error_msg)
@@ -916,12 +888,9 @@ class MainWindow(QMainWindow):
 def main() -> None:
     app = QApplication(sys.argv)
 
-    # 全局字体
-    font = QFont("Microsoft YaHei", 9)
-    app.setFont(font)
+    from schemaforge.gui.theme import apply_theme
 
-    # 应用样式
-    app.setStyle("Fusion")
+    apply_theme(app)
 
     window = MainWindow()
     window.show()

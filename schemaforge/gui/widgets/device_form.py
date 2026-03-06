@@ -7,7 +7,6 @@
 from __future__ import annotations
 
 from PySide6.QtCore import Qt, Signal
-from PySide6.QtGui import QFont
 from PySide6.QtWidgets import (
     QComboBox,
     QFormLayout,
@@ -49,7 +48,7 @@ class DeviceForm(QWidget):
 
         # 标题
         title = QLabel("手动录入器件")
-        title.setFont(QFont("Microsoft YaHei", 13, QFont.Weight.Bold))
+        title.setProperty("class", "title")
         layout.addWidget(title)
 
         # 滚动区
@@ -125,9 +124,15 @@ class DeviceForm(QWidget):
 
         # 引脚表格
         self.pin_table = QTableWidget(0, 5)
-        self.pin_table.setHorizontalHeaderLabels([
-            "名称", "编号", "类型", "方位", "说明",
-        ])
+        self.pin_table.setHorizontalHeaderLabels(
+            [
+                "名称",
+                "编号",
+                "类型",
+                "方位",
+                "说明",
+            ]
+        )
         header = self.pin_table.horizontalHeader()
         header.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
         header.setSectionResizeMode(1, QHeaderView.ResizeMode.Fixed)
@@ -138,6 +143,9 @@ class DeviceForm(QWidget):
         self.pin_table.setColumnWidth(2, 100)
         self.pin_table.setColumnWidth(3, 80)
         self.pin_table.setMinimumHeight(200)
+        self.pin_table.setAlternatingRowColors(True)
+        self.pin_table.setShowGrid(False)
+        self.pin_table.verticalHeader().setVisible(False)
         pin_layout.addWidget(self.pin_table)
 
         form_layout.addWidget(pin_group)
@@ -154,7 +162,6 @@ class DeviceForm(QWidget):
             "v_out_typ=3.3V\n"
             "i_out_max=2A"
         )
-        self.specs_text.setMaximumHeight(100)
         specs_layout.addWidget(self.specs_text)
 
         form_layout.addWidget(specs_group)
@@ -163,7 +170,6 @@ class DeviceForm(QWidget):
         notes_group = QGroupBox("备注")
         notes_layout = QVBoxLayout(notes_group)
         self.notes_edit = QPlainTextEdit()
-        self.notes_edit.setMaximumHeight(60)
         notes_layout.addWidget(self.notes_edit)
         form_layout.addWidget(notes_group)
 
@@ -176,13 +182,8 @@ class DeviceForm(QWidget):
         btn_layout = QHBoxLayout()
 
         self.submit_btn = QPushButton("提交入库")
-        self.submit_btn.setFont(QFont("Microsoft YaHei", 11, QFont.Weight.Bold))
+        self.submit_btn.setProperty("class", "primary")
         self.submit_btn.setMinimumHeight(40)
-        self.submit_btn.setStyleSheet(
-            "QPushButton { background: #2563EB; color: white; "
-            "border-radius: 6px; padding: 8px 20px; }"
-            "QPushButton:hover { background: #1D4ED8; }"
-        )
         self.submit_btn.clicked.connect(self._on_submit)
         btn_layout.addWidget(self.submit_btn)
 
@@ -207,7 +208,9 @@ class DeviceForm(QWidget):
 
         # 类型下拉
         type_combo = QComboBox()
-        type_combo.addItems(["", "input", "output", "power", "passive", "nc", "bidirectional"])
+        type_combo.addItems(
+            ["", "input", "output", "power", "passive", "nc", "bidirectional"]
+        )
         self.pin_table.setCellWidget(row, 2, type_combo)
 
         # 方位下拉
@@ -255,13 +258,19 @@ class DeviceForm(QWidget):
             side_widget = self.pin_table.cellWidget(row, 3)
             desc_item = self.pin_table.item(row, 4)
 
-            pins.append(PinDraft(
-                name=name_item.text().strip() if name_item else "",
-                number=num_item.text().strip() if num_item else str(row + 1),
-                pin_type=type_widget.currentText() if isinstance(type_widget, QComboBox) else "",
-                side=side_widget.currentText() if isinstance(side_widget, QComboBox) else "left",
-                description=desc_item.text().strip() if desc_item else "",
-            ))
+            pins.append(
+                PinDraft(
+                    name=name_item.text().strip() if name_item else "",
+                    number=num_item.text().strip() if num_item else str(row + 1),
+                    pin_type=type_widget.currentText()
+                    if isinstance(type_widget, QComboBox)
+                    else "",
+                    side=side_widget.currentText()
+                    if isinstance(side_widget, QComboBox)
+                    else "left",
+                    description=desc_item.text().strip() if desc_item else "",
+                )
+            )
 
         # 电气参数
         specs: dict[str, str] = {}

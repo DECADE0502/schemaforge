@@ -12,7 +12,6 @@ from __future__ import annotations
 from pathlib import Path
 
 from PySide6.QtCore import Qt, Signal
-from PySide6.QtGui import QFont
 from PySide6.QtWidgets import (
     QHBoxLayout,
     QHeaderView,
@@ -67,18 +66,15 @@ class LibraryPage(QWidget):
         # 顶部标题栏
         header = QHBoxLayout()
         title = QLabel("📦 器件库管理")
-        title.setFont(QFont("Microsoft YaHei", 14, QFont.Weight.Bold))
+        title.setProperty("class", "title")
         header.addWidget(title)
         header.addStretch()
 
         self.stats_label = QLabel("")
-        self.stats_label.setStyleSheet("color: #6c757d; font-size: 12px;")
+        self.stats_label.setProperty("class", "muted")
         header.addWidget(self.stats_label)
 
         refresh_btn = QPushButton("🔄 刷新")
-        refresh_btn.setStyleSheet(
-            "QPushButton { padding: 4px 12px; border-radius: 4px; }"
-        )
         refresh_btn.clicked.connect(self._refresh_device_list)
         header.addWidget(refresh_btn)
         layout.addLayout(header)
@@ -138,7 +134,6 @@ class LibraryPage(QWidget):
         search_row = QHBoxLayout()
         self.list_search = QLineEdit()
         self.list_search.setPlaceholderText("搜索器件库...")
-        self.list_search.setFont(QFont("Microsoft YaHei", 10))
         self.list_search.textChanged.connect(self._on_search_changed)
         search_row.addWidget(self.list_search)
         layout.addLayout(search_row)
@@ -167,6 +162,9 @@ class LibraryPage(QWidget):
             QTableWidget.SelectionBehavior.SelectRows
         )
         self.device_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        self.device_table.setAlternatingRowColors(True)
+        self.device_table.setShowGrid(False)
+        self.device_table.verticalHeader().setVisible(False)
         self.device_table.itemSelectionChanged.connect(self._on_device_selected)
         layout.addWidget(self.device_table)
 
@@ -174,11 +172,7 @@ class LibraryPage(QWidget):
         btn_row = QHBoxLayout()
 
         delete_btn = QPushButton("删除选中")
-        delete_btn.setStyleSheet(
-            "QPushButton { background: #dc3545; color: white; "
-            "border-radius: 4px; padding: 6px 12px; }"
-            "QPushButton:hover { background: #bb2d3b; }"
-        )
+        delete_btn.setProperty("class", "danger")
         delete_btn.clicked.connect(self._on_delete_selected)
         btn_row.addWidget(delete_btn)
 

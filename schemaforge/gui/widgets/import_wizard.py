@@ -16,10 +16,12 @@ from __future__ import annotations
 from pathlib import Path
 
 from PySide6.QtCore import Qt, Signal, QThread
-from PySide6.QtGui import QFont, QPixmap
+from PySide6.QtGui import QColor, QPainter, QPixmap
 from PySide6.QtWidgets import (
     QFileDialog,
     QFormLayout,
+    QGraphicsScene,
+    QGraphicsView,
     QGroupBox,
     QHBoxLayout,
     QLabel,
@@ -142,7 +144,7 @@ class ImportWizard(QWidget):
 
         # 标题
         title = QLabel("📄 PDF / 图片导入")
-        title.setFont(QFont("Microsoft YaHei", 13, QFont.Weight.Bold))
+        title.setProperty("class", "title")
         layout.addWidget(title)
 
         desc = QLabel(
@@ -150,7 +152,7 @@ class ImportWizard(QWidget):
             "不确定的信息会提示你手动补全。"
         )
         desc.setWordWrap(True)
-        desc.setStyleSheet("color: #666; font-size: 11px; margin-bottom: 8px;")
+        desc.setProperty("class", "muted")
         layout.addWidget(desc)
 
         # ── 文件选择区 ──
@@ -158,15 +160,10 @@ class ImportWizard(QWidget):
         file_layout = QHBoxLayout(file_group)
 
         self.file_label = QLabel("未选择文件")
-        self.file_label.setStyleSheet("color: #999;")
+        self.file_label.setProperty("class", "muted")
         file_layout.addWidget(self.file_label, 1)
 
         browse_btn = QPushButton("选择文件")
-        browse_btn.setStyleSheet(
-            "QPushButton { background: #6c757d; color: white; "
-            "border-radius: 4px; padding: 6px 16px; }"
-            "QPushButton:hover { background: #5a6268; }"
-        )
         browse_btn.clicked.connect(self._on_browse)
         file_layout.addWidget(browse_btn)
 
@@ -178,30 +175,19 @@ class ImportWizard(QWidget):
 
         img_desc = QLabel("上传引脚图或封装图截图，AI 会结合 PDF 文本与图片一起分析。")
         img_desc.setWordWrap(True)
-        img_desc.setStyleSheet("color: #666; font-size: 10px;")
+        img_desc.setProperty("class", "muted")
         img_layout.addWidget(img_desc)
 
         self._image_list = QListWidget()
-        self._image_list.setMaximumHeight(90)
-        self._image_list.setStyleSheet("font-size: 11px;")
         img_layout.addWidget(self._image_list)
 
         img_btn_row = QHBoxLayout()
         add_img_btn = QPushButton("添加引脚图")
-        add_img_btn.setStyleSheet(
-            "QPushButton { background: #6c757d; color: white; "
-            "border-radius: 4px; padding: 4px 12px; font-size: 11px; }"
-            "QPushButton:hover { background: #5a6268; }"
-        )
         add_img_btn.clicked.connect(self._on_add_images)
         img_btn_row.addWidget(add_img_btn)
 
         remove_img_btn = QPushButton("移除选中")
-        remove_img_btn.setStyleSheet(
-            "QPushButton { background: #dc3545; color: white; "
-            "border-radius: 4px; padding: 4px 12px; font-size: 11px; }"
-            "QPushButton:hover { background: #c82333; }"
-        )
+        remove_img_btn.setProperty("class", "danger")
         remove_img_btn.clicked.connect(self._on_remove_image)
         img_btn_row.addWidget(remove_img_btn)
         img_btn_row.addStretch()
@@ -219,15 +205,9 @@ class ImportWizard(QWidget):
 
         # 开始按钮
         self.start_btn = QPushButton("开始提取")
-        self.start_btn.setFont(QFont("Microsoft YaHei", 11, QFont.Weight.Bold))
+        self.start_btn.setProperty("class", "primary")
         self.start_btn.setMinimumHeight(40)
         self.start_btn.setEnabled(False)
-        self.start_btn.setStyleSheet(
-            "QPushButton { background: #0d6efd; color: white; "
-            "border-radius: 6px; padding: 8px 20px; }"
-            "QPushButton:hover { background: #0b5ed7; }"
-            "QPushButton:disabled { background: #6c757d; }"
-        )
         self.start_btn.clicked.connect(self._on_start)
         layout.addWidget(self.start_btn)
 
@@ -238,7 +218,7 @@ class ImportWizard(QWidget):
         layout.addWidget(self.progress_bar)
 
         self.progress_label = QLabel("")
-        self.progress_label.setStyleSheet("color: #495057; font-size: 11px;")
+        self.progress_label.setProperty("class", "muted")
         self.progress_label.hide()
         layout.addWidget(self.progress_label)
 
@@ -261,15 +241,9 @@ class ImportWizard(QWidget):
         btn_row = QHBoxLayout()
 
         self.confirm_btn = QPushButton("确认入库")
-        self.confirm_btn.setFont(QFont("Microsoft YaHei", 11, QFont.Weight.Bold))
+        self.confirm_btn.setProperty("class", "success")
         self.confirm_btn.setMinimumHeight(40)
         self.confirm_btn.setEnabled(False)
-        self.confirm_btn.setStyleSheet(
-            "QPushButton { background: #198754; color: white; "
-            "border-radius: 6px; padding: 8px 20px; }"
-            "QPushButton:hover { background: #157347; }"
-            "QPushButton:disabled { background: #6c757d; }"
-        )
         self.confirm_btn.clicked.connect(self._on_confirm)
         btn_row.addWidget(self.confirm_btn)
 
@@ -297,7 +271,9 @@ class ImportWizard(QWidget):
             name = Path(filepath).name
             size = Path(filepath).stat().st_size / 1024
             self.file_label.setText(f"{name} ({size:.0f}KB)")
-            self.file_label.setStyleSheet("color: #212529; font-weight: bold;")
+            self.file_label.setProperty("class", "")
+            self.file_label.style().unpolish(self.file_label)
+            self.file_label.style().polish(self.file_label)
             self.start_btn.setEnabled(True)
 
     def _on_add_images(self) -> None:
@@ -366,11 +342,15 @@ class ImportWizard(QWidget):
 
         if not result.success:
             self.progress_label.setText(f"❌ 提取失败: {result.error_message}")
-            self.progress_label.setStyleSheet("color: #dc3545; font-size: 11px;")
+            self.progress_label.setProperty("class", "error")
+            self.progress_label.style().unpolish(self.progress_label)
+            self.progress_label.style().polish(self.progress_label)
             return
 
         self.progress_label.setText("✅ 提取完成")
-        self.progress_label.setStyleSheet("color: #198754; font-size: 11px;")
+        self.progress_label.setProperty("class", "success")
+        self.progress_label.style().unpolish(self.progress_label)
+        self.progress_label.style().polish(self.progress_label)
 
         self._current_draft = result.draft
         self._show_results(result)
@@ -379,7 +359,9 @@ class ImportWizard(QWidget):
         self.start_btn.setEnabled(True)
         self.progress_bar.hide()
         self.progress_label.setText(f"❌ {msg}")
-        self.progress_label.setStyleSheet("color: #dc3545; font-size: 11px;")
+        self.progress_label.setProperty("class", "error")
+        self.progress_label.style().unpolish(self.progress_label)
+        self.progress_label.style().polish(self.progress_label)
 
     # ── 结果展示 ──
 
@@ -410,7 +392,7 @@ class ImportWizard(QWidget):
         for label, value in fields:
             val_label = QLabel(value or "(未识别)")
             if not value:
-                val_label.setStyleSheet("color: #dc3545; font-style: italic;")
+                val_label.setProperty("class", "error")
             info_layout.addRow(f"{label}:", val_label)
 
         self._result_layout.insertWidget(
@@ -430,10 +412,7 @@ class ImportWizard(QWidget):
         # 追问卡片
         if result.needs_user_input and result.questions:
             q_group = QGroupBox(f"需要补全 ({len(result.questions)} 项)")
-            q_group.setStyleSheet(
-                "QGroupBox { border: 2px solid #ffc107; border-radius: 6px; "
-                "margin-top: 8px; padding-top: 12px; }"
-            )
+            q_group.setObjectName("questionGroup")
             q_layout = QVBoxLayout(q_group)
 
             self._answer_widgets.clear()
@@ -442,7 +421,6 @@ class ImportWizard(QWidget):
                 q_row = QHBoxLayout()
                 q_label = QLabel(q.get("text", ""))
                 q_label.setWordWrap(True)
-                q_label.setMinimumWidth(200)
                 q_row.addWidget(q_label, 2)
 
                 q_input = QLineEdit()
@@ -514,20 +492,22 @@ class ImportWizard(QWidget):
             return None
 
         group = QGroupBox("原理图 Symbol 预览")
-        group.setStyleSheet(
-            "QGroupBox { border: 2px solid #0d6efd; border-radius: 6px; "
-            "margin-top: 8px; padding-top: 14px; }"
-        )
         layout = QVBoxLayout(group)
-        img_label = QLabel()
-        img_label.setPixmap(
-            pixmap.scaledToWidth(
-                min(pixmap.width(), 500),
-                Qt.TransformationMode.SmoothTransformation,
-            )
+
+        scene = QGraphicsScene()
+        scene.addPixmap(pixmap)
+        scene.setSceneRect(pixmap.rect().toRectF())
+
+        view = QGraphicsView(scene)
+        view.setRenderHints(
+            QPainter.RenderHint.Antialiasing | QPainter.RenderHint.SmoothPixmapTransform
         )
-        img_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        layout.addWidget(img_label)
+        view.setBackgroundBrush(QColor("#1a1a2e"))
+        view.setMinimumHeight(200)
+        view.setProperty("class", "symbol-preview")
+        view.fitInView(scene.sceneRect(), Qt.AspectRatioMode.KeepAspectRatio)
+
+        layout.addWidget(view)
         return group
 
     # ── 确认入库 ──
@@ -568,7 +548,9 @@ class ImportWizard(QWidget):
         self._current_result = None
         self._current_draft = None
         self.file_label.setText("未选择文件")
-        self.file_label.setStyleSheet("color: #999;")
+        self.file_label.setProperty("class", "muted")
+        self.file_label.style().unpolish(self.file_label)
+        self.file_label.style().polish(self.file_label)
         self.hint_edit.clear()
         self._image_list.clear()
         self.start_btn.setEnabled(False)

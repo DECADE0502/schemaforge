@@ -12,7 +12,6 @@ from __future__ import annotations
 from datetime import datetime
 
 from PySide6.QtCore import Qt, Signal
-from PySide6.QtGui import QFont
 from PySide6.QtWidgets import (
     QComboBox,
     QFrame,
@@ -38,16 +37,7 @@ class MessageBubble(QFrame):
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
-        self.setFrameShape(QFrame.Shape.StyledPanel)
-
-        is_user = role == "user"
-        bg_color = "#e3f2fd" if is_user else "#f3e5f5" if role == "assistant" else "#fff3e0"
-        border_color = "#90caf9" if is_user else "#ce93d8" if role == "assistant" else "#ffcc80"
-
-        self.setStyleSheet(
-            f"QFrame {{ background: {bg_color}; border: 1px solid {border_color}; "
-            f"border-radius: 8px; padding: 8px; margin: 2px 4px; }}"
-        )
+        self.setProperty("class", f"bubble-{role}")
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(8, 4, 8, 4)
@@ -55,21 +45,24 @@ class MessageBubble(QFrame):
 
         # 头部：角色 + 时间
         header = QHBoxLayout()
-        role_map = {"user": "👤 用户", "assistant": "🤖 AI", "system": "⚙️ 系统", "tool": "🔧 工具"}
+        role_map = {
+            "user": "👤 用户",
+            "assistant": "🤖 AI",
+            "system": "⚙️ 系统",
+            "tool": "🔧 工具",
+        }
         role_label = QLabel(role_map.get(role, role))
-        role_label.setFont(QFont("Microsoft YaHei", 9, QFont.Weight.Bold))
         header.addWidget(role_label)
         header.addStretch()
         if timestamp:
             time_label = QLabel(timestamp)
-            time_label.setStyleSheet("color: #999; font-size: 10px;")
+            time_label.setProperty("class", "muted")
             header.addWidget(time_label)
         layout.addLayout(header)
 
         # 内容
         content_label = QLabel(content)
         content_label.setWordWrap(True)
-        content_label.setFont(QFont("Microsoft YaHei", 10))
         content_label.setTextInteractionFlags(
             Qt.TextInteractionFlag.TextSelectableByMouse
         )
@@ -93,31 +86,25 @@ class QuestionCard(QFrame):
     ) -> None:
         super().__init__(parent)
         self.question_id = question_id
-        self.setFrameShape(QFrame.Shape.StyledPanel)
-        self.setStyleSheet(
-            "QFrame { background: #fff8e1; border: 2px solid #ffc107; "
-            "border-radius: 8px; padding: 8px; margin: 4px; }"
-        )
+        self.setProperty("class", "question-card")
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(8, 8, 8, 8)
 
         # 问题标题
         header = QLabel("❓ AI 需要确认")
-        header.setFont(QFont("Microsoft YaHei", 10, QFont.Weight.Bold))
         layout.addWidget(header)
 
         # 问题内容
         q_label = QLabel(text)
         q_label.setWordWrap(True)
-        q_label.setFont(QFont("Microsoft YaHei", 10))
         layout.addWidget(q_label)
 
         # 证据说明
         if evidence:
             ev_label = QLabel(f"💡 依据: {evidence}")
             ev_label.setWordWrap(True)
-            ev_label.setStyleSheet("color: #666; font-size: 10px; margin-top: 4px;")
+            ev_label.setProperty("class", "muted")
             layout.addWidget(ev_label)
 
         # 回答控件
@@ -150,10 +137,7 @@ class QuestionCard(QFrame):
 
         if answer_type != "confirm":
             submit_btn = QPushButton("提交")
-            submit_btn.setStyleSheet(
-                "QPushButton { background: #4caf50; color: white; "
-                "border-radius: 4px; padding: 4px 12px; }"
-            )
+            submit_btn.setProperty("class", "success")
             submit_btn.clicked.connect(self._on_submit)
             answer_row.addWidget(submit_btn)
 
@@ -164,10 +148,9 @@ class QuestionCard(QFrame):
         if answer:
             self.answered.emit(self.question_id, answer)
             self.setEnabled(False)
-            self.setStyleSheet(
-                "QFrame { background: #e8f5e9; border: 2px solid #4caf50; "
-                "border-radius: 8px; padding: 8px; margin: 4px; }"
-            )
+            self.setProperty("class", "card")
+            self.style().unpolish(self)
+            self.style().polish(self)
 
     def _submit(self, value: str) -> None:
         self._confirm_value = value
@@ -193,15 +176,13 @@ class ChatPanel(QWidget):
 
         # 标题
         title = QLabel("💬 AI 对话")
-        title.setFont(QFont("Microsoft YaHei", 11, QFont.Weight.Bold))
+        title.setProperty("class", "subtitle")
         layout.addWidget(title)
 
         # 消息滚动区
         self._scroll = QScrollArea()
         self._scroll.setWidgetResizable(True)
-        self._scroll.setHorizontalScrollBarPolicy(
-            Qt.ScrollBarPolicy.ScrollBarAlwaysOff
-        )
+        self._scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
 
         self._container = QWidget()
         self._msg_layout = QVBoxLayout(self._container)
@@ -216,17 +197,10 @@ class ChatPanel(QWidget):
         input_row = QHBoxLayout()
         self._input = QPlainTextEdit()
         self._input.setPlaceholderText("输入消息...")
-        self._input.setMaximumHeight(60)
-        self._input.setFont(QFont("Microsoft YaHei", 10))
         input_row.addWidget(self._input)
 
         send_btn = QPushButton("发送")
-        send_btn.setMinimumHeight(40)
-        send_btn.setStyleSheet(
-            "QPushButton { background: #2196f3; color: white; "
-            "border-radius: 6px; padding: 6px 16px; font-weight: bold; }"
-            "QPushButton:hover { background: #1976d2; }"
-        )
+        send_btn.setProperty("class", "primary")
         send_btn.clicked.connect(self._on_send)
         input_row.addWidget(send_btn)
 
@@ -238,7 +212,8 @@ class ChatPanel(QWidget):
         bubble = MessageBubble(role, content, ts)
         # 插入到 stretch 之前
         self._msg_layout.insertWidget(
-            self._msg_layout.count() - 1, bubble,
+            self._msg_layout.count() - 1,
+            bubble,
         )
         # 滚动到底部
         self._scroll.verticalScrollBar().setValue(
@@ -265,7 +240,8 @@ class ChatPanel(QWidget):
         )
         card.answered.connect(self.question_answered.emit)
         self._msg_layout.insertWidget(
-            self._msg_layout.count() - 1, card,
+            self._msg_layout.count() - 1,
+            card,
         )
         self._scroll.verticalScrollBar().setValue(
             self._scroll.verticalScrollBar().maximum()

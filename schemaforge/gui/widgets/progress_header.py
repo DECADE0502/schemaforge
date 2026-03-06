@@ -7,7 +7,6 @@
 from __future__ import annotations
 
 from PySide6.QtCore import Signal
-from PySide6.QtGui import QFont
 from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
@@ -50,44 +49,32 @@ class ProgressHeader(QWidget):
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
-        self.setFixedHeight(56)
+        self.setMinimumHeight(40)
 
         layout = QHBoxLayout(self)
         layout.setContentsMargins(8, 4, 8, 4)
 
         # 阶段标签
         self._stage_label = QLabel("就绪")
-        self._stage_label.setFont(QFont("Microsoft YaHei", 11, QFont.Weight.Bold))
         self._stage_label.setMinimumWidth(120)
         layout.addWidget(self._stage_label)
 
         # 消息
         self._message_label = QLabel("")
-        self._message_label.setFont(QFont("Microsoft YaHei", 10))
-        self._message_label.setStyleSheet("color: #555;")
+        self._message_label.setProperty("class", "muted")
         layout.addWidget(self._message_label, 1)
 
         # 进度条
         self._progress = QProgressBar()
         self._progress.setRange(0, 100)
         self._progress.setValue(0)
-        self._progress.setFixedWidth(200)
+        self._progress.setMinimumWidth(160)
         self._progress.setTextVisible(True)
-        self._progress.setStyleSheet(
-            "QProgressBar { border: 1px solid #ccc; border-radius: 4px; "
-            "background: #f5f5f5; text-align: center; }"
-            "QProgressBar::chunk { background: #2196f3; border-radius: 3px; }"
-        )
         layout.addWidget(self._progress)
 
         # 取消按钮
         self._cancel_btn = QPushButton("取消")
-        self._cancel_btn.setStyleSheet(
-            "QPushButton { background: #ef5350; color: white; "
-            "border-radius: 4px; padding: 4px 12px; }"
-            "QPushButton:hover { background: #e53935; }"
-            "QPushButton:disabled { background: #bdbdbd; }"
-        )
+        self._cancel_btn.setProperty("class", "danger")
         self._cancel_btn.clicked.connect(self.cancel_requested.emit)
         self._cancel_btn.setEnabled(False)
         layout.addWidget(self._cancel_btn)

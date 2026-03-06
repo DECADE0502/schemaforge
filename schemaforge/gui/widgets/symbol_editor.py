@@ -7,9 +7,12 @@
 from __future__ import annotations
 
 from PySide6.QtCore import Qt, Signal, QTimer
-from PySide6.QtGui import QFont, QPixmap
+from PySide6.QtGui import QColor, QPainter, QPixmap
 from PySide6.QtWidgets import (
     QComboBox,
+    QGraphicsPixmapItem,
+    QGraphicsScene,
+    QGraphicsView,
     QGroupBox,
     QHBoxLayout,
     QHeaderView,
@@ -78,6 +81,14 @@ _COL_TYPE = 3
 _COL_DESC = 4
 
 
+class _AutoFitView(QGraphicsView):
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        items = [i for i in self.scene().items() if isinstance(i, QGraphicsPixmapItem)]
+        if items:
+            self.fitInView(items[0], Qt.AspectRatioMode.KeepAspectRatio)
+
+
 class SymbolEditorWidget(QWidget):
     symbol_changed = Signal(object)  # SymbolDef
 
@@ -98,7 +109,7 @@ class SymbolEditorWidget(QWidget):
         root.setContentsMargins(8, 8, 8, 8)
 
         title = QLabel("符号引脚编辑器")
-        title.setFont(QFont("Microsoft YaHei", 13, QFont.Weight.Bold))
+        title.setProperty("class", "title")
         root.addWidget(title)
 
         splitter = QSplitter(Qt.Orientation.Vertical)
@@ -114,12 +125,10 @@ class SymbolEditorWidget(QWidget):
 
         btn_bar = QHBoxLayout()
         add_btn = QPushButton("添加引脚")
-        add_btn.setFont(QFont("Microsoft YaHei", 10))
         add_btn.clicked.connect(self._add_pin_row)
         btn_bar.addWidget(add_btn)
 
         del_btn = QPushButton("删除选中")
-        del_btn.setFont(QFont("Microsoft YaHei", 10))
         del_btn.clicked.connect(self._delete_selected_rows)
         btn_bar.addWidget(del_btn)
 
@@ -130,6 +139,8 @@ class SymbolEditorWidget(QWidget):
         self.pin_table.setHorizontalHeaderLabels(
             ["名称", "编号", "方位", "类型", "描述"]
         )
+        self.pin_table.setAlternatingRowColors(True)
+        self.pin_table.setShowGrid(False)
         header = self.pin_table.horizontalHeader()
         header.setSectionResizeMode(_COL_NAME, QHeaderView.ResizeMode.Stretch)
         header.setSectionResizeMode(_COL_NUM, QHeaderView.ResizeMode.Fixed)
@@ -139,7 +150,6 @@ class SymbolEditorWidget(QWidget):
         self.pin_table.setColumnWidth(_COL_NUM, 60)
         self.pin_table.setColumnWidth(_COL_SIDE, 80)
         self.pin_table.setColumnWidth(_COL_TYPE, 80)
-        self.pin_table.setMinimumHeight(180)
         self.pin_table.cellChanged.connect(self._on_cell_changed)
         pin_layout.addWidget(self.pin_table)
 
@@ -154,11 +164,16 @@ class SymbolEditorWidget(QWidget):
         preview_group = QGroupBox("符号预览")
         preview_inner = QVBoxLayout(preview_group)
 
-        self.preview_label = QLabel("（尚无预览）")
-        self.preview_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.preview_label.setMinimumHeight(160)
-        self.preview_label.setFont(QFont("Microsoft YaHei", 10))
-        preview_inner.addWidget(self.preview_label)
+        self._preview_scene = QGraphicsScene(self)
+        self._preview_view = _AutoFitView(self._preview_scene)
+        self._preview_view.setRenderHints(
+            QPainter.RenderHint.Antialiasing | QPainter.RenderHint.SmoothPixmapTransform
+        )
+        self._preview_view.setBackgroundBrush(QColor("#1a1a2e"))
+        self._preview_view.setProperty("class", "symbol-preview")
+        self._preview_view.setMinimumHeight(160)
+        self._preview_item: QGraphicsPixmapItem | None = None
+        preview_inner.addWidget(self._preview_view)
 
         preview_layout.addWidget(preview_group)
         splitter.addWidget(preview_widget)
@@ -292,8 +307,11 @@ class SymbolEditorWidget(QWidget):
     def _refresh_preview(self) -> None:
         symbol = self.get_symbol()
         if not symbol.pins:
-            self.preview_label.setText("（无引脚，无法预览）")
-            self.preview_label.setPixmap(QPixmap())
+            self._preview_scene.clear()
+            self._preview_item = None
+            self._preview_scene.addText("（无引脚，无法预览）").setDefaultTextColor(
+                QColor("#858585")
+            )
             self.symbol_changed.emit(symbol)
             return
 
@@ -303,14 +321,17 @@ class SymbolEditorWidget(QWidget):
             )
             pixmap = QPixmap()
             pixmap.loadFromData(png_bytes)
-            scaled = pixmap.scaledToWidth(
-                min(pixmap.width(), 500),
-                Qt.TransformationMode.SmoothTransformation,
+            self._preview_scene.clear()
+            self._preview_item = self._preview_scene.addPixmap(pixmap)
+            self._preview_scene.setSceneRect(self._preview_item.boundingRect())
+            self._preview_view.fitInView(
+                self._preview_item, Qt.AspectRatioMode.KeepAspectRatio
             )
-            self.preview_label.setPixmap(scaled)
-            self.preview_label.setText("")
         except Exception:
-            self.preview_label.setPixmap(QPixmap())
-            self.preview_label.setText("渲染失败")
+            self._preview_scene.clear()
+            self._preview_item = None
+            self._preview_scene.addText("渲染失败").setDefaultTextColor(
+                QColor("#f44747")
+            )
 
         self.symbol_changed.emit(symbol)

@@ -9,7 +9,6 @@ from __future__ import annotations
 import os
 
 from PySide6.QtCore import Qt, Signal, QThread
-from PySide6.QtGui import QFont
 from PySide6.QtWidgets import (
     QFormLayout,
     QGroupBox,
@@ -133,11 +132,11 @@ class DeviceDetailPanel(QWidget):
         layout.setContentsMargins(8, 8, 8, 8)
 
         title = QLabel("📋 器件详情")
-        title.setFont(QFont("Microsoft YaHei", 13, QFont.Weight.Bold))
+        title.setProperty("class", "title")
         layout.addWidget(title)
 
         self._empty_label = QLabel("← 请在左侧列表中选择一个器件")
-        self._empty_label.setStyleSheet("color: #999; font-size: 12px;")
+        self._empty_label.setProperty("class", "muted")
         self._empty_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(self._empty_label)
 
@@ -176,25 +175,14 @@ class DeviceDetailPanel(QWidget):
         btn_row = QHBoxLayout()
 
         self._save_btn = QPushButton("💾 保存 Symbol")
-        self._save_btn.setFont(QFont("Microsoft YaHei", 11, QFont.Weight.Bold))
+        self._save_btn.setProperty("class", "success")
         self._save_btn.setMinimumHeight(36)
-        self._save_btn.setStyleSheet(
-            "QPushButton { background: #198754; color: white; "
-            "border-radius: 6px; padding: 6px 16px; }"
-            "QPushButton:hover { background: #157347; }"
-        )
         self._save_btn.clicked.connect(self._on_save)
         btn_row.addWidget(self._save_btn)
 
         self._ai_btn = QPushButton("🤖 AI 重新分析引脚")
-        self._ai_btn.setFont(QFont("Microsoft YaHei", 11))
+        self._ai_btn.setProperty("class", "primary")
         self._ai_btn.setMinimumHeight(36)
-        self._ai_btn.setStyleSheet(
-            "QPushButton { background: #0d6efd; color: white; "
-            "border-radius: 6px; padding: 6px 16px; }"
-            "QPushButton:hover { background: #0b5ed7; }"
-            "QPushButton:disabled { background: #6c757d; }"
-        )
         self._ai_btn.clicked.connect(self._on_ai_modify)
         btn_row.addWidget(self._ai_btn)
 

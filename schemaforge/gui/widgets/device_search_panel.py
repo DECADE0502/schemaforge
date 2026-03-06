@@ -7,7 +7,6 @@
 from __future__ import annotations
 
 from PySide6.QtCore import Qt, Signal, QThread
-from PySide6.QtGui import QFont
 from PySide6.QtWidgets import (
     QFrame,
     QHBoxLayout,
@@ -30,6 +29,7 @@ from schemaforge.ingest.easyeda_provider import (
 # ============================================================
 # 搜索工作线程
 # ============================================================
+
 
 class EasyEDASearchWorker(QThread):
     """后台执行 EasyEDA 搜索"""
@@ -57,6 +57,7 @@ class EasyEDASearchWorker(QThread):
 # 搜索结果卡片
 # ============================================================
 
+
 class HitCard(QFrame):
     """单条搜索结果卡片"""
 
@@ -65,12 +66,7 @@ class HitCard(QFrame):
     def __init__(self, hit: EasyEDAHit, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.hit = hit
-        self.setFrameShape(QFrame.Shape.StyledPanel)
-        self.setStyleSheet(
-            "QFrame { background: #f8f9fa; border: 1px solid #dee2e6; "
-            "border-radius: 6px; padding: 8px; margin: 2px 0; }"
-            "QFrame:hover { background: #e9ecef; border-color: #adb5bd; }"
-        )
+        self.setProperty("class", "hit-card")
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(8, 6, 8, 6)
@@ -79,16 +75,12 @@ class HitCard(QFrame):
         # 第一行: 标题 + 导入按钮
         top_row = QHBoxLayout()
         title_label = QLabel(hit.title or "(无标题)")
-        title_label.setFont(QFont("Microsoft YaHei", 11, QFont.Weight.Bold))
+        title_label.setProperty("class", "subtitle")
         top_row.addWidget(title_label)
         top_row.addStretch()
 
         import_btn = QPushButton("导入")
-        import_btn.setStyleSheet(
-            "QPushButton { background: #198754; color: white; "
-            "border-radius: 4px; padding: 4px 12px; font-weight: bold; }"
-            "QPushButton:hover { background: #157347; }"
-        )
+        import_btn.setProperty("class", "success")
         import_btn.clicked.connect(lambda: self.import_clicked.emit(self.hit))
         top_row.addWidget(import_btn)
         layout.addLayout(top_row)
@@ -97,7 +89,7 @@ class HitCard(QFrame):
         if hit.description:
             desc_label = QLabel(hit.description[:120])
             desc_label.setWordWrap(True)
-            desc_label.setStyleSheet("color: #495057; font-size: 11px;")
+            desc_label.setProperty("class", "muted")
             layout.addWidget(desc_label)
 
         # 第三行: 元数据
@@ -113,13 +105,14 @@ class HitCard(QFrame):
 
         if meta_parts:
             meta_label = QLabel(" | ".join(meta_parts))
-            meta_label.setStyleSheet("color: #6c757d; font-size: 10px;")
+            meta_label.setProperty("class", "muted")
             layout.addWidget(meta_label)
 
 
 # ============================================================
 # EasyEDA 搜索面板
 # ============================================================
+
 
 class DeviceSearchPanel(QWidget):
     """EasyEDA 器件搜索面板
@@ -141,25 +134,19 @@ class DeviceSearchPanel(QWidget):
 
         # 标题
         title = QLabel("EasyEDA 在线搜索")
-        title.setFont(QFont("Microsoft YaHei", 13, QFont.Weight.Bold))
+        title.setProperty("class", "title")
         layout.addWidget(title)
 
         # 搜索栏
         search_row = QHBoxLayout()
         self.search_input = QLineEdit()
         self.search_input.setPlaceholderText("输入器件型号搜索，如: TPS54202")
-        self.search_input.setFont(QFont("Microsoft YaHei", 11))
         self.search_input.returnPressed.connect(self._on_search)
         search_row.addWidget(self.search_input)
 
         self.search_btn = QPushButton("搜索")
-        self.search_btn.setMinimumHeight(36)
-        self.search_btn.setStyleSheet(
-            "QPushButton { background: #0d6efd; color: white; "
-            "border-radius: 6px; padding: 6px 20px; font-weight: bold; }"
-            "QPushButton:hover { background: #0b5ed7; }"
-            "QPushButton:disabled { background: #6c757d; }"
-        )
+        self.search_btn.setProperty("class", "primary")
+        self.search_btn.setMinimumHeight(32)
         self.search_btn.clicked.connect(self._on_search)
         search_row.addWidget(self.search_btn)
         layout.addLayout(search_row)
@@ -172,15 +159,13 @@ class DeviceSearchPanel(QWidget):
 
         # 状态标签
         self.status_label = QLabel("")
-        self.status_label.setStyleSheet("color: #6c757d; font-size: 11px;")
+        self.status_label.setProperty("class", "muted")
         layout.addWidget(self.status_label)
 
         # 结果滚动区
         self._scroll = QScrollArea()
         self._scroll.setWidgetResizable(True)
-        self._scroll.setHorizontalScrollBarPolicy(
-            Qt.ScrollBarPolicy.ScrollBarAlwaysOff
-        )
+        self._scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
 
         self._result_container = QWidget()
         self._result_layout = QVBoxLayout(self._result_container)
@@ -223,7 +208,8 @@ class DeviceSearchPanel(QWidget):
             card = HitCard(hit)
             card.import_clicked.connect(self._on_import)
             self._result_layout.insertWidget(
-                self._result_layout.count() - 1, card,
+                self._result_layout.count() - 1,
+                card,
             )
 
     def _on_error(self, msg: str) -> None:
@@ -231,7 +217,9 @@ class DeviceSearchPanel(QWidget):
         self.search_btn.setEnabled(True)
         self.progress.hide()
         self.status_label.setText(f"搜索失败: {msg}")
-        self.status_label.setStyleSheet("color: #dc3545; font-size: 11px;")
+        self.status_label.setProperty("class", "error")
+        self.status_label.style().unpolish(self.status_label)
+        self.status_label.style().polish(self.status_label)
 
     def _on_import(self, hit: EasyEDAHit) -> None:
         """用户点击导入"""
@@ -244,4 +232,6 @@ class DeviceSearchPanel(QWidget):
             w = item.widget()
             if w:
                 w.deleteLater()
-        self.status_label.setStyleSheet("color: #6c757d; font-size: 11px;")
+        self.status_label.setProperty("class", "muted")
+        self.status_label.style().unpolish(self.status_label)
+        self.status_label.style().polish(self.status_label)
