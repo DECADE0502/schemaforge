@@ -1,0 +1,311 @@
+{
+  "part_number": "TPS5430",
+  "manufacturer": "TI",
+  "description": "Buck降压转换器 5.5V-36V输入 3A SOT-23-6/SOIC-8",
+  "category": "buck",
+  "specs": {
+    "v_in_min": "5.5V",
+    "v_in_max": "36V",
+    "v_out_min": "1.22V",
+    "v_out_max": "33V",
+    "i_out_max": "3A",
+    "fsw": "500kHz",
+    "efficiency": "95%"
+  },
+  "symbol": {
+    "pins": [
+      {
+        "name": "VIN",
+        "pin_number": "1",
+        "side": "left",
+        "pin_type": "power_in",
+        "slot": "1/4",
+        "inverted": false,
+        "anchor_name": "",
+        "description": "输入电压"
+      },
+      {
+        "name": "EN",
+        "pin_number": "2",
+        "side": "left",
+        "pin_type": "input",
+        "slot": "2/4",
+        "inverted": false,
+        "anchor_name": "",
+        "description": "使能引脚"
+      },
+      {
+        "name": "BST",
+        "pin_number": "3",
+        "side": "top",
+        "pin_type": "passive",
+        "slot": "1/1",
+        "inverted": false,
+        "anchor_name": "",
+        "description": "自举电容引脚"
+      },
+      {
+        "name": "SW",
+        "pin_number": "4",
+        "side": "right",
+        "pin_type": "power_out",
+        "slot": "1/4",
+        "inverted": false,
+        "anchor_name": "",
+        "description": "开关节点输出"
+      },
+      {
+        "name": "FB",
+        "pin_number": "5",
+        "side": "right",
+        "pin_type": "input",
+        "slot": "3/4",
+        "inverted": false,
+        "anchor_name": "",
+        "description": "反馈引脚"
+      },
+      {
+        "name": "GND",
+        "pin_number": "6",
+        "side": "bottom",
+        "pin_type": "ground",
+        "slot": "1/1",
+        "inverted": false,
+        "anchor_name": "",
+        "description": "接地"
+      }
+    ],
+    "size": [5.0, 4.0],
+    "edge_pad_w": 0.5,
+    "edge_pad_h": 0.5,
+    "pin_spacing": 1.0,
+    "lead_len": 0.5,
+    "label_position": "top"
+  },
+  "topology": {
+    "circuit_type": "buck",
+    "external_components": [
+      {
+        "role": "input_cap",
+        "ref_prefix": "C",
+        "required": true,
+        "default_value": "10uF/50V",
+        "value_expression": "{c_in}",
+        "constraints": {"voltage_rating": ">= v_in * 1.2"},
+        "schemdraw_element": "Capacitor"
+      },
+      {
+        "role": "output_cap",
+        "ref_prefix": "C",
+        "required": true,
+        "default_value": "47uF/10V",
+        "value_expression": "{c_out}",
+        "constraints": {"voltage_rating": ">= v_out * 1.5", "esr": "low"},
+        "schemdraw_element": "Capacitor"
+      },
+      {
+        "role": "inductor",
+        "ref_prefix": "L",
+        "required": true,
+        "default_value": "22uH",
+        "value_expression": "{l_value}",
+        "constraints": {"i_sat": ">= i_out_max * 1.3"},
+        "schemdraw_element": "Inductor2"
+      },
+      {
+        "role": "boot_cap",
+        "ref_prefix": "C",
+        "required": true,
+        "default_value": "100nF",
+        "value_expression": "{c_bst}",
+        "constraints": {},
+        "schemdraw_element": "Capacitor"
+      },
+      {
+        "role": "fb_upper",
+        "ref_prefix": "R",
+        "required": true,
+        "default_value": "33k",
+        "value_expression": "{r_fb_upper}",
+        "constraints": {},
+        "schemdraw_element": "Resistor"
+      },
+      {
+        "role": "fb_lower",
+        "ref_prefix": "R",
+        "required": true,
+        "default_value": "10k",
+        "value_expression": "{r_fb_lower}",
+        "constraints": {},
+        "schemdraw_element": "Resistor"
+      },
+      {
+        "role": "catch_diode",
+        "ref_prefix": "D",
+        "required": true,
+        "default_value": "SS34",
+        "value_expression": "{diode}",
+        "constraints": {"v_rrm": ">= v_in_max", "i_f": ">= i_out_max"},
+        "schemdraw_element": "Diode"
+      }
+    ],
+    "connections": [
+      {
+        "net_name": "VIN",
+        "device_pin": "VIN",
+        "external_refs": ["input_cap.1"],
+        "is_power": true,
+        "is_ground": false
+      },
+      {
+        "net_name": "SW",
+        "device_pin": "SW",
+        "external_refs": ["inductor.1", "catch_diode.cathode"],
+        "is_power": false,
+        "is_ground": false
+      },
+      {
+        "net_name": "VOUT",
+        "device_pin": "",
+        "external_refs": ["inductor.2", "output_cap.1", "fb_upper.1"],
+        "is_power": true,
+        "is_ground": false
+      },
+      {
+        "net_name": "FB",
+        "device_pin": "FB",
+        "external_refs": ["fb_upper.2", "fb_lower.1"],
+        "is_power": false,
+        "is_ground": false
+      },
+      {
+        "net_name": "BST",
+        "device_pin": "BST",
+        "external_refs": ["boot_cap.1"],
+        "is_power": false,
+        "is_ground": false
+      },
+      {
+        "net_name": "BST_SW",
+        "device_pin": "",
+        "external_refs": ["boot_cap.2"],
+        "is_power": false,
+        "is_ground": false
+      },
+      {
+        "net_name": "GND",
+        "device_pin": "GND",
+        "external_refs": ["input_cap.2", "output_cap.2", "catch_diode.anode", "fb_lower.2"],
+        "is_power": false,
+        "is_ground": true
+      }
+    ],
+    "parameters": {
+      "v_in": {
+        "name": "v_in",
+        "display_name": "输入电压",
+        "type": "float",
+        "unit": "V",
+        "default": "12",
+        "min_val": 5.5,
+        "max_val": 36.0,
+        "choices": [],
+        "description": "输入直流电压"
+      },
+      "v_out": {
+        "name": "v_out",
+        "display_name": "输出电压",
+        "type": "float",
+        "unit": "V",
+        "default": "3.3",
+        "min_val": 1.22,
+        "max_val": 33.0,
+        "choices": [],
+        "description": "目标输出电压"
+      },
+      "i_out_max": {
+        "name": "i_out_max",
+        "display_name": "最大输出电流",
+        "type": "float",
+        "unit": "A",
+        "default": "1",
+        "min_val": 0.1,
+        "max_val": 3.0,
+        "choices": [],
+        "description": "最大负载电流"
+      },
+      "fsw": {
+        "name": "fsw",
+        "display_name": "开关频率",
+        "type": "float",
+        "unit": "kHz",
+        "default": "500",
+        "min_val": 100.0,
+        "max_val": 1000.0,
+        "choices": [],
+        "description": "开关频率"
+      },
+      "c_in": {
+        "name": "c_in",
+        "display_name": "输入电容",
+        "type": "string",
+        "unit": "",
+        "default": "10uF/50V",
+        "min_val": null,
+        "max_val": null,
+        "choices": [],
+        "description": "输入滤波电容"
+      },
+      "c_out": {
+        "name": "c_out",
+        "display_name": "输出电容",
+        "type": "string",
+        "unit": "",
+        "default": "47uF/10V",
+        "min_val": null,
+        "max_val": null,
+        "choices": [],
+        "description": "输出滤波电容"
+      },
+      "l_value": {
+        "name": "l_value",
+        "display_name": "电感值",
+        "type": "string",
+        "unit": "",
+        "default": "22uH",
+        "min_val": null,
+        "max_val": null,
+        "choices": [],
+        "description": "功率电感"
+      }
+    },
+    "calculations": {
+      "duty_cycle": "v_out / v_in",
+      "inductor_ripple_current": "(v_in - v_out) * duty_cycle / (fsw * 1000 * 22e-6)",
+      "fb_ratio": "v_out / 1.22 - 1"
+    },
+    "design_rules": [
+      "电感饱和电流 >= 1.3× 最大输出电流",
+      "输入电容耐压 >= 1.2× 最大输入电压",
+      "续流二极管耐压 >= 最大输入电压",
+      "反馈电阻分压比精度影响输出电压精度"
+    ]
+  },
+  "spice_model": "XU{ref} {VIN} {GND} {EN} {BST} {SW} {FB} TPS5430",
+  "spice_model_ref": "",
+  "lcsc_part": "C9854",
+  "datasheet_url": "https://www.ti.com/lit/ds/symlink/tps5430.pdf",
+  "easyeda_id": "",
+  "package": "SOIC-8",
+  "source": "manual",
+  "confidence": 1.0,
+  "notes": "Step 6: 第二个复杂电路类型 — Buck降压转换器",
+  "design_roles": ["main_regulator", "step_down", "dc_dc"],
+  "selection_hints": ["宽输入电压范围（5.5V~36V）", "高效率降压场景", "中等负载（≤3A）", "工业级应用", "替代LDO降低功耗"],
+  "anti_patterns": ["输入输出压差<2V（LDO更合适）", "超低噪声要求（开关纹波难消除）", "极轻载（<50mA效率下降）", "无PCB空间放电感"],
+  "required_companions": ["功率电感22uH（饱和电流≥3.9A）", "输入电容10uF/50V（陶瓷）", "输出电容47uF（低ESR）", "自举电容100nF", "续流二极管SS34", "反馈电阻分压网络"],
+  "operating_constraints": {"min_v_in": "5.5V", "max_v_in": "36V", "max_i_out": "3A", "v_fb": "1.22V", "fsw_typ": "500kHz"},
+  "layout_hints": ["输入电容紧贴VIN和GND引脚", "SW走线尽量短粗（高di/dt）", "电感靠近SW引脚", "反馈走线远离SW节点（避免噪声耦合）", "GND铺铜面积尽量大", "自举电容靠近BST和SW引脚"],
+  "failure_modes": ["电感饱和导致电流失控", "输入电容ESR过高引起VIN纹波大", "续流二极管反向恢复导致开关损耗", "反馈走线拾取SW噪声导致输出不稳", "热关断（过载或散热不足）"],
+  "review_rules": ["check_inductor_saturation", "check_input_cap_rms", "check_diode_rating", "check_feedback_accuracy", "check_bootstrap_cap"]
+}

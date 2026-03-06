@@ -97,10 +97,14 @@ class DesignReviewEngine:
         # 按类别执行专属规则
         if category == "ldo":
             issues.extend(self._review_ldo(module))
+        elif category == "buck":
+            issues.extend(self._review_buck(module))
         elif category in ("led", "led_indicator"):
             issues.extend(self._review_led(module))
         elif category in ("voltage_divider", "divider"):
             issues.extend(self._review_voltage_divider(module))
+        elif category in ("rc_filter", "passive_circuit"):
+            issues.extend(self._review_rc_filter(module))
 
         # 通用规则（所有模块）
         issues.extend(self._review_general(module))
@@ -292,6 +296,240 @@ class DesignReviewEngine:
                         suggestion="选用 ESR < 100mΩ 的低ESR电容（如钽电容或聚合物铝电解电容），避免振荡",
                     )
                 )
+
+        return issues
+
+    # ============================================================
+    # Buck 规则
+    # ============================================================
+
+    def _review_buck(self, module: ModuleReviewInput) -> list[ReviewIssue]:
+        """Buck 降压转换器专属审查规则"""
+        issues: list[ReviewIssue] = []
+        params = module.parameters
+        device = module.device
+
+        v_in = _parse_numeric(params.get("v_in", ""))
+        v_out = _parse_numeric(params.get("v_out", ""))
+        i_out = _parse_numeric(params.get("i_out_max", params.get("i_out", "")))
+        v_in_max = _parse_numeric(device.specs.get("v_in_max", ""))
+        fsw = _parse_numeric(params.get("fsw", device.specs.get("fsw", "")))
+
+        # --- buck_inductor_saturation (BLOCKING) ---
+        if i_out is not None:
+            i_ripple_est = i_out * 0.3
+            i_peak = i_out + i_ripple_est / 2
+            i_sat_required = i_peak * 1.3
+            issues.append(
+                ReviewIssue(
+                    severity=ReviewSeverity.BLOCKING,
+                    category=IssueCategory.ELECTRICAL,
+                    rule_id="buck_inductor_saturation",
+                    message=(
+                        f"电感饱和电流需 ≥ {i_sat_required:.2f}A "
+                        f"（峰值电流 {i_peak:.2f}A × 1.3 安全裕量）"
+                    ),
+                    suggestion=(
+                        f"选择饱和电流 ≥ {i_sat_required:.1f}A 的电感，"
+                        f"否则大电流时电感饱和导致电流失控"
+                    ),
+                    evidence=(
+                        f"i_out={i_out:.2f}A, i_ripple_est={i_ripple_est:.2f}A, "
+                        f"i_peak={i_peak:.2f}A"
+                    ),
+                )
+            )
+
+        # --- buck_input_cap_rms (WARNING) ---
+        if v_in is not None and v_out is not None and i_out is not None and v_in > 0:
+            duty = v_out / v_in
+            i_rms = i_out * (duty * (1 - duty)) ** 0.5
+            if i_rms > 0.5:
+                issues.append(
+                    ReviewIssue(
+                        severity=ReviewSeverity.WARNING,
+                        category=IssueCategory.THERMAL,
+                        rule_id="buck_input_cap_rms",
+                        message=(
+                            f"输入电容 RMS 纹波电流较大：{i_rms:.2f}A，"
+                            f"需使用低ESR电容承受此纹波"
+                        ),
+                        suggestion="选用额定纹波电流 ≥ 实际RMS电流的低ESR陶瓷电容，或并联多颗",
+                        evidence=(
+                            f"duty={duty:.2f}, I_rms = I_out × √(D×(1-D)) = "
+                            f"{i_out:.2f} × √({duty:.2f}×{1 - duty:.2f}) = {i_rms:.2f}A"
+                        ),
+                    )
+                )
+
+        # --- buck_output_ripple (WARNING) ---
+        if v_in is not None and v_out is not None and fsw is not None and v_in > 0:
+            duty = v_out / v_in
+            l_value = 22e-6
+            fsw_hz = fsw * 1000 if fsw < 10000 else fsw
+            if fsw_hz > 0:
+                delta_il = (v_in - v_out) * duty / (fsw_hz * l_value)
+                ripple_mv = delta_il / (47e-6 * fsw_hz) * 1000 if delta_il > 0 else 0
+                if delta_il > 0:
+                    issues.append(
+                        ReviewIssue(
+                            severity=ReviewSeverity.WARNING,
+                            category=IssueCategory.ELECTRICAL,
+                            rule_id="buck_output_ripple",
+                            message=(
+                                f"电感纹波电流约 {delta_il:.2f}A，"
+                                f"输出纹波约 {ripple_mv:.0f}mV（估算值，取决于实际电容ESR）"
+                            ),
+                            suggestion="若纹波过大，增大电感值或输出电容，或加后级LC滤波",
+                            evidence=(
+                                f"ΔI_L = (V_in-V_out)×D/(f×L) = "
+                                f"({v_in:.1f}-{v_out:.1f})×{duty:.2f}/({fsw_hz:.0f}×22μH)"
+                            ),
+                        )
+                    )
+
+        # --- buck_feedback_accuracy (BLOCKING) ---
+        if v_out is not None:
+            v_fb = 1.22
+            r_fb_lower = 10000
+            r_fb_upper_ideal = r_fb_lower * (v_out / v_fb - 1)
+            if r_fb_upper_ideal > 0:
+                v_out_actual = v_fb * (1 + r_fb_upper_ideal / r_fb_lower)
+                error_pct = abs(v_out_actual - v_out) / v_out * 100 if v_out > 0 else 0
+                issues.append(
+                    ReviewIssue(
+                        severity=ReviewSeverity.BLOCKING,
+                        category=IssueCategory.ELECTRICAL,
+                        rule_id="buck_feedback_accuracy",
+                        message=(
+                            f"反馈分压网络：R_upper={r_fb_upper_ideal:.0f}Ω / "
+                            f"R_lower={r_fb_lower}Ω → V_out={v_out_actual:.3f}V "
+                            f"（误差 {error_pct:.2f}%）"
+                        ),
+                        suggestion=(
+                            "使用1%精度电阻，并确认电阻值为E96标准值，"
+                            "反馈走线远离SW节点避免噪声耦合"
+                        ),
+                        evidence=(
+                            f"V_out = V_fb × (1 + R_upper/R_lower) = "
+                            f"{v_fb} × (1 + {r_fb_upper_ideal:.0f}/{r_fb_lower})"
+                        ),
+                    )
+                )
+
+        # --- buck_max_vin_exceeded (BLOCKING) ---
+        if v_in is not None and v_in_max is not None:
+            if v_in > v_in_max:
+                issues.append(
+                    ReviewIssue(
+                        severity=ReviewSeverity.BLOCKING,
+                        category=IssueCategory.ELECTRICAL,
+                        rule_id="buck_max_vin_exceeded",
+                        message=(
+                            f"输入电压 {v_in:.2f}V 超过器件最大额定输入 {v_in_max:.2f}V"
+                        ),
+                        suggestion=f"降低输入电压至 {v_in_max:.2f}V 以下，或选择耐压更高的Buck IC",
+                        evidence=f"v_in={v_in:.2f}V, spec v_in_max={v_in_max:.2f}V",
+                    )
+                )
+
+        # --- buck_bootstrap_cap (RECOMMENDATION) ---
+        issues.extend(
+            self._check_external_component(
+                module=module,
+                comp_role="boot_cap",
+                rule_id="buck_bootstrap_cap",
+                severity=ReviewSeverity.RECOMMENDATION,
+                category=IssueCategory.COMPLETENESS,
+                message="建议添加自举电容（100nF）以确保高侧驱动正常工作",
+                suggestion="在BST和SW引脚间放置100nF陶瓷电容，距IC引脚<2mm",
+            )
+        )
+
+        # --- buck_catch_diode (WARNING) ---
+        issues.extend(
+            self._check_external_component(
+                module=module,
+                comp_role="catch_diode",
+                rule_id="buck_catch_diode",
+                severity=ReviewSeverity.WARNING,
+                category=IssueCategory.COMPLETENESS,
+                message="异步Buck需要续流二极管，缺失将导致SW节点电压失控",
+                suggestion="添加额定电压≥V_in_max的Schottky续流二极管（如SS34）",
+            )
+        )
+
+        return issues
+
+    # ============================================================
+    # RC 滤波器规则
+    # ============================================================
+
+    def _review_rc_filter(self, module: ModuleReviewInput) -> list[ReviewIssue]:
+        """RC 滤波器专属审查规则"""
+        issues: list[ReviewIssue] = []
+        params = module.parameters
+
+        f_cutoff = _parse_numeric(params.get("f_cutoff", ""))
+        r_value = _parse_numeric(params.get("r_value", params.get("r", "")))
+
+        # --- rc_filter_impedance_mismatch ---
+        if r_value is not None:
+            if r_value > 100000:
+                issues.append(
+                    ReviewIssue(
+                        severity=ReviewSeverity.WARNING,
+                        category=IssueCategory.ELECTRICAL,
+                        rule_id="rc_filter_impedance_mismatch",
+                        message=(
+                            f"滤波电阻阻值偏大：{r_value / 1000:.1f}kΩ > 100kΩ，"
+                            f"容易拾取噪声且后级负载可能影响滤波效果"
+                        ),
+                        suggestion="建议使用 1kΩ~100kΩ 范围的电阻，高阻抗时考虑有源滤波",
+                        evidence=f"r_value={r_value:.0f}Ω",
+                    )
+                )
+            elif r_value < 100:
+                issues.append(
+                    ReviewIssue(
+                        severity=ReviewSeverity.WARNING,
+                        category=IssueCategory.ELECTRICAL,
+                        rule_id="rc_filter_impedance_mismatch",
+                        message=(
+                            f"滤波电阻阻值偏小：{r_value:.0f}Ω < 100Ω，"
+                            f"电容值需很大才能达到低截止频率"
+                        ),
+                        suggestion="增大电阻值至1kΩ以上，可使用更小的电容达到相同截止频率",
+                        evidence=f"r_value={r_value:.0f}Ω",
+                    )
+                )
+
+        # --- rc_filter_cutoff_range ---
+        if f_cutoff is not None:
+            if f_cutoff > 1e6:
+                issues.append(
+                    ReviewIssue(
+                        severity=ReviewSeverity.RECOMMENDATION,
+                        category=IssueCategory.ELECTRICAL,
+                        rule_id="rc_filter_cutoff_range",
+                        message=(
+                            f"截止频率 {f_cutoff / 1e6:.1f}MHz 较高，"
+                            f"元件寄生参数可能影响实际滤波效果"
+                        ),
+                        suggestion="高频应用建议使用LC滤波器或有源滤波器",
+                    )
+                )
+
+        # --- rc_filter_load_effect ---
+        issues.append(
+            ReviewIssue(
+                severity=ReviewSeverity.RECOMMENDATION,
+                category=IssueCategory.ELECTRICAL,
+                rule_id="rc_filter_load_effect",
+                message="注意后级负载阻抗对RC滤波器截止频率的影响",
+                suggestion="确保后级输入阻抗 >> 滤波电阻（建议 ≥ 10×R），否则截止频率和增益会偏离设计值",
+            )
+        )
 
         return issues
 
@@ -511,6 +749,19 @@ class DesignReviewEngine:
                     suggestion="电容距离 IC 引脚应 < 2mm，减小走线寄生电感，避免 LDO 振荡",
                 )
             )
+        elif category == "buck":
+            issues.append(
+                ReviewIssue(
+                    severity=ReviewSeverity.LAYOUT_NOTE,
+                    category=IssueCategory.STABILITY,
+                    rule_id="buck_layout_loop",
+                    message="SW节点走线应短粗，电感靠近IC，输入电容紧贴VIN/GND",
+                    suggestion=(
+                        "Buck电路的功率环路（VIN→IC→SW→L→C_out→GND）面积要最小化，"
+                        "反馈走线远离SW节点避免噪声耦合"
+                    ),
+                )
+            )
         elif category in ("led", "led_indicator"):
             issues.append(
                 ReviewIssue(
@@ -541,6 +792,19 @@ class DesignReviewEngine:
                     rule_id="ldo_bringup_startup",
                     message="上电时检查输出电压稳定时间",
                     suggestion="用示波器观察上电瞬间输出波形，确认无过冲且在规格时间内稳定",
+                )
+            )
+        elif category == "buck":
+            issues.append(
+                ReviewIssue(
+                    severity=ReviewSeverity.BRINGUP_NOTE,
+                    category=IssueCategory.STABILITY,
+                    rule_id="buck_bringup_softstart",
+                    message="上电时观察SW节点波形和输出电压软启动过程",
+                    suggestion=(
+                        "用示波器探测SW节点确认开关波形正常，"
+                        "检查输出电压单调上升无过冲，逐步加载测试稳定性"
+                    ),
                 )
             )
         elif category in ("led", "led_indicator"):
@@ -585,6 +849,12 @@ class DesignReviewEngine:
                 p = (v_in - v_out) * i_out
                 total_power += p
                 power_details.append(f"{module.role}: {p:.2f}W")
+            elif category == "buck" and v_out is not None and i_out is not None:
+                eff = 0.85
+                p_out = v_out * i_out
+                p_loss = p_out * (1 / eff - 1)
+                total_power += p_loss
+                power_details.append(f"{module.role}: {p_loss:.2f}W (Buck损耗)")
             elif v_in is not None and i_out is not None:
                 p = v_in * i_out
                 total_power += p

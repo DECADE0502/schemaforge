@@ -39,7 +39,7 @@ python -m pytest -q
 python -m ruff check schemaforge gui.py tests main.py
 ```
 
-## 当前状态：831 tests passed, ruff 全绿
+## 当前状态：878 tests passed, ruff 全绿
 
 ### 已完成阶段
 
@@ -57,6 +57,7 @@ python -m ruff check schemaforge gui.py tests main.py
 | Phase E | 设计审查引擎 — 18 条工程审查规则 | 47 |
 | Phase F | IR 级 Patch 引擎 — 6 种多轮修改操作 | 54 |
 | Phase G | 参考设计库 — 5 个经过验证的参考设计 | 43 |
+| Step 6 | Buck降压转换器 — 第二个复杂电路类型 + RC滤波器审查规则 | 47 |
 
 ### 双主链架构
 
@@ -97,7 +98,7 @@ schemaforge/
 │   ├── planner.py              # AI 设计规划（自然语言→模块需求）
 │   ├── retrieval.py            # 器件库检索（评分排序+角色匹配）
 │   ├── candidate_solver.py     # 候选方案求解器（多候选+6维评分）
-│   ├── review.py               # 设计审查引擎（18条工程审查规则）
+│   ├── review.py               # 设计审查引擎（26条工程审查规则）
 │   ├── rationality.py          # 合理性检查（电压/电流/功率）
 │   ├── topology_adapter.py     # 拓扑适配（DeviceModel→可渲染格式）
 │   ├── topology_draft.py       # 拓扑草稿生成器
@@ -122,8 +123,8 @@ schemaforge/
 │   ├── renderer.py             # TopologyRenderer
 │   └── topology.py             # 5 种布局策略
 ├── store/
-│   ├── devices/                # 器件库 JSON 数据（4个器件）
-│   └── reference_designs/      # 参考设计库（5个参考设计）
+│   ├── devices/                # 器件库 JSON 数据（5个器件）
+│   └── reference_designs/      # 参考设计库（6个参考设计）
 └── workflows/                  # 工作流编排
     ├── state_machine.py        # 通用状态机
     ├── design_session.py       # 设计会话（端到端编排）
@@ -144,7 +145,7 @@ schemaforge/
 
 ```bash
 # 以下命令必须全部通过才算质量合格
-python -m pytest -q                                        # 831 passed
+python -m pytest -q                                        # 878 passed
 python -m ruff check schemaforge gui.py tests main.py     # All checks passed
 ```
 

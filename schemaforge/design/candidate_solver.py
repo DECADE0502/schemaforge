@@ -310,6 +310,39 @@ class CandidateSolver:
                     score -= 0.3
                     details.append(f"电流能力不足: {i_out_dev}A < {i_out_req}A")
 
+        elif category == "buck":
+            v_out_req = _parse_float(params.get("v_out", ""))
+            v_in_req = _parse_float(params.get("v_in", ""))
+            i_out_req = _parse_float(params.get("i_out_max", ""))
+            v_in_max_spec = _parse_float(device.specs.get("v_in_max", ""))
+            i_out_max_spec = _parse_float(device.specs.get("i_out_max", ""))
+
+            if v_in_req is not None and v_in_max_spec is not None:
+                if v_in_req <= v_in_max_spec:
+                    score += 0.2
+                    details.append(
+                        f"输入电压在额定范围内: {v_in_req}V <= {v_in_max_spec}V"
+                    )
+                else:
+                    score -= 0.3
+                    details.append(f"输入超压: {v_in_req}V > {v_in_max_spec}V")
+
+            if i_out_req is not None and i_out_max_spec is not None:
+                if i_out_max_spec >= i_out_req:
+                    score += 0.2
+                    details.append(f"电流能力满足: {i_out_max_spec}A >= {i_out_req}A")
+                else:
+                    score -= 0.3
+                    details.append(f"电流能力不足: {i_out_max_spec}A < {i_out_req}A")
+
+            if v_out_req is not None and v_in_req is not None:
+                if v_in_req > v_out_req > 0:
+                    score += 0.1
+                    details.append(f"降压方向正确: {v_in_req}V → {v_out_req}V")
+                else:
+                    score -= 0.2
+                    details.append("输入输出电压关系不合理")
+
         elif category == "led":
             v_supply = _parse_float(params.get("v_supply", ""))
             led_vf = _parse_float(device.specs.get("v_f", device.specs.get("vf", "")))
@@ -431,6 +464,41 @@ class CandidateSolver:
                     score -= 0.3
                     details.append(f"输入超压: {v_in}V > {v_in_max}V")
 
+        elif category == "buck":
+            v_in = _parse_float(params.get("v_in", ""))
+            v_out = _parse_float(params.get("v_out", ""))
+            v_in_max = _parse_float(device.specs.get("v_in_max", ""))
+            v_in_min = _parse_float(device.specs.get("v_in_min", ""))
+
+            if v_in is not None and v_out is not None:
+                if v_in > v_out > 0:
+                    duty = v_out / v_in
+                    if 0.1 <= duty <= 0.9:
+                        score += 0.3
+                        details.append(f"占空比 {duty:.2f} 在合理范围内")
+                    else:
+                        score += 0.1
+                        details.append(f"占空比 {duty:.2f} 偏极端，效率可能下降")
+                else:
+                    score -= 0.3
+                    details.append("输入电压须高于输出电压")
+
+            if v_in is not None and v_in_max is not None:
+                if v_in <= v_in_max:
+                    score += 0.1
+                    details.append(f"输入在额定范围: {v_in}V <= {v_in_max}V")
+                else:
+                    score -= 0.3
+                    details.append(f"输入超压: {v_in}V > {v_in_max}V")
+
+            if v_in is not None and v_in_min is not None:
+                if v_in >= v_in_min:
+                    score += 0.1
+                    details.append(f"输入满足最低要求: {v_in}V >= {v_in_min}V")
+                else:
+                    score -= 0.2
+                    details.append(f"输入不足: {v_in}V < 最低 {v_in_min}V")
+
         elif category == "led":
             i_led = _parse_float(params.get("i_led", device.specs.get("i_f", "")))
             i_max = _parse_float(
@@ -534,8 +602,39 @@ class CandidateSolver:
             else:
                 details.append("LDO 功耗取决于压差和负载电流")
 
+        elif category == "buck":
+            v_in = _parse_float(params.get("v_in", ""))
+            v_out = _parse_float(params.get("v_out", ""))
+            i_out = _parse_float(
+                params.get("i_out_max", device.specs.get("i_out_max", "1"))
+            )
+            efficiency = _parse_float(device.specs.get("efficiency", "90"))
+            if (
+                v_in is not None
+                and v_out is not None
+                and i_out is not None
+                and efficiency is not None
+            ):
+                eff = efficiency / 100 if efficiency > 1 else efficiency
+                p_out = v_out * i_out
+                p_in = p_out / eff if eff > 0 else p_out
+                p_loss = p_in - p_out
+                if p_loss < 0.3:
+                    score = 1.0
+                    details.append(
+                        f"功耗损耗低: {p_loss:.2f}W（效率~{eff * 100:.0f}%）"
+                    )
+                elif p_loss < 1.0:
+                    score = 0.8
+                    details.append(f"功耗损耗适中: {p_loss:.2f}W")
+                else:
+                    score = 0.5
+                    details.append(f"功耗损耗偏高: {p_loss:.2f}W，需散热设计")
+            else:
+                score = 0.8
+                details.append("Buck 效率通常 >85%，热风险较低")
+
         elif category == "led":
-            # LED 功耗通常很低
             score = 0.9
             details.append("LED 功耗极低（典型 <0.1W）")
 

@@ -60,7 +60,7 @@ def _make_design(
 
 def test_load_all_returns_five_designs(store: ReferenceDesignStore) -> None:
     designs = store.load_all()
-    assert len(designs) == 5
+    assert len(designs) == 6
 
 
 def test_load_all_ids(store: ReferenceDesignStore) -> None:
@@ -72,13 +72,14 @@ def test_load_all_ids(store: ReferenceDesignStore) -> None:
         "ref_voltage_divider",
         "ref_rc_filter",
         "ref_ldo_led_combo",
+        "ref_buck_basic",
     }
 
 
 def test_load_all_twice_clears_cache(store: ReferenceDesignStore) -> None:
     first = store.load_all()
     second = store.load_all()
-    assert len(first) == len(second) == 5
+    assert len(first) == len(second) == 6
 
 
 # ============================================================
@@ -161,7 +162,7 @@ def test_search_by_scenario_battery(store: ReferenceDesignStore) -> None:
 
 def test_search_with_empty_criteria_returns_all(store: ReferenceDesignStore) -> None:
     results = store.search()
-    assert len(results) == 5
+    assert len(results) == 6
 
 
 def test_search_no_match_returns_empty(store: ReferenceDesignStore) -> None:
