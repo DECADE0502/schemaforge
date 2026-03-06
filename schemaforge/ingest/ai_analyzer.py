@@ -212,6 +212,13 @@ def analyze_datasheet_text(
                 ),
             )
 
+        raw_specs = parsed.get("specs", {})
+        safe_specs = (
+            {str(k): str(v) for k, v in raw_specs.items()}
+            if isinstance(raw_specs, dict)
+            else {}
+        )
+
         result = TextAnalysisResult(
             part_number=parsed.get("part_number", ""),
             manufacturer=parsed.get("manufacturer", ""),
@@ -220,7 +227,7 @@ def analyze_datasheet_text(
             package=parsed.get("package", ""),
             pin_count=int(parsed.get("pin_count", 0)),
             pins=parsed.get("pins", []),
-            specs=parsed.get("specs", {}),
+            specs=safe_specs,
             confidence=float(parsed.get("confidence", 0.5)),
             raw_response=raw,
             missing_fields=parsed.get("missing_fields", []),
@@ -440,6 +447,13 @@ def analyze_combined(
                 ),
             )
 
+        raw_specs = parsed.get("specs", {})
+        safe_specs = (
+            {str(k): str(v) for k, v in raw_specs.items()}
+            if isinstance(raw_specs, dict)
+            else {}
+        )
+
         result = TextAnalysisResult(
             part_number=parsed.get("part_number", ""),
             manufacturer=parsed.get("manufacturer", ""),
@@ -448,7 +462,7 @@ def analyze_combined(
             package=parsed.get("package", ""),
             pin_count=int(parsed.get("pin_count", 0)),
             pins=parsed.get("pins", []),
-            specs=parsed.get("specs", {}),
+            specs=safe_specs,
             confidence=float(parsed.get("confidence", 0.5)),
             raw_response=raw,
             missing_fields=parsed.get("missing_fields", []),
