@@ -7,8 +7,12 @@ Phase 4: 库驱动设计 v1
 - planner: AI 设计规划（自然语言→模块需求列表）
 - topology_adapter: 拓扑适配（DeviceModel→可渲染格式）
 - rationality: 合理性检查（电压/电流/功率/兼容性）
+
+Phase 5: PatchEngine
+- patch_engine: PatchOp 执行器（set/add/remove/replace）
 """
 
+from schemaforge.design.patch_engine import PatchEngine, PatchResult
 from schemaforge.design.planner import DesignPlan, DesignPlanner, ModuleRequirement
 from schemaforge.design.rationality import (
     RationalityChecker,
@@ -25,6 +29,11 @@ from schemaforge.design.topology_adapter import (
     AdaptedModule,
     TopologyAdapter,
 )
+from schemaforge.design.topology_draft import (
+    NetDraft,
+    TopologyDraft,
+    TopologyDraftGenerator,
+)
 
 __all__ = [
     "AdaptationResult",
@@ -34,9 +43,14 @@ __all__ = [
     "DeviceRequirement",
     "DeviceRetriever",
     "ModuleRequirement",
+    "NetDraft",
+    "PatchEngine",
+    "PatchResult",
     "RationalityChecker",
     "RationalityIssue",
     "RationalityReport",
     "RetrievalResult",
     "TopologyAdapter",
+    "TopologyDraft",
+    "TopologyDraftGenerator",
 ]

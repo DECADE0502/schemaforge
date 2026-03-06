@@ -22,7 +22,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, cast
 
 from schemaforge.core.exporter import generate_bom, generate_spice
 from schemaforge.core.models import (
@@ -38,6 +38,7 @@ from schemaforge.schematic.renderer import TopologyRenderer
 # ============================================================
 # 适配结果
 # ============================================================
+
 
 @dataclass
 class AdaptedModule:
@@ -99,14 +100,21 @@ class AdaptationResult:
 # 拓扑适配器
 # ============================================================
 
+
 class TopologyAdapter:
     """拓扑适配器
 
     将器件库数据 + 用户参数 → 可渲染/可导出的格式。
+
+    Args:
+        use_mock_draft: 当器件无拓扑时是否使用 mock 草稿生成器（默认 True）
     """
 
-    def __init__(self) -> None:
+    def __init__(self, use_mock_draft: bool = True) -> None:
         self._renderer = TopologyRenderer()
+        from schemaforge.design.topology_draft import TopologyDraftGenerator
+
+        self._draft_generator = TopologyDraftGenerator(use_mock=use_mock_draft)
 
     def adapt_single(
         self,
@@ -131,12 +139,20 @@ class TopologyAdapter:
             ValueError: 器件无拓扑定义
         """
         if device.topology is None:
-            raise ValueError(f"器件 {device.part_number} 没有拓扑定义，无法适配")
+            try:
+                draft = self._draft_generator.generate(device, context=parameters)
+                generated_topology = self._draft_generator.draft_to_topology(
+                    draft, device
+                )
+                device = device.model_copy(update={"topology": generated_topology})
+            except (ValueError, NotImplementedError) as exc:
+                raise ValueError(
+                    f"器件 {device.part_number} 没有拓扑定义，且自动草稿生成失败：{exc}"
+                ) from exc
 
-        topology = device.topology
+        topology = cast(TopologyDef, device.topology)
         user_params = parameters or {}
 
-        # 合并参数：用户参数 > 拓扑默认参数
         render_params = self._merge_parameters(topology, user_params, device)
 
         return AdaptedModule(
@@ -247,11 +263,13 @@ class TopologyAdapter:
         components: list[ComponentInstance] = []
 
         # 主器件
-        components.append(ComponentInstance(
-            ref="U1",
-            component_type=device.part_number,
-            parameters=adapted.render_params,
-        ))
+        components.append(
+            ComponentInstance(
+                ref="U1",
+                component_type=device.part_number,
+                parameters=adapted.render_params,
+            )
+        )
 
         # 外部元件
         ref_counters: dict[str, int] = {}
@@ -266,30 +284,36 @@ class TopologyAdapter:
             if ext.value_expression:
                 # 尝试从参数中解析 {key}
                 import re
+
                 def _replace(m: Any) -> str:
                     key = m.group(1)
                     return adapted.render_params.get(key, m.group(0))
+
                 value = re.sub(r"\{([^{}]+)\}", _replace, ext.value_expression)
 
             comp_params: dict[str, str] = {"value": value}
             if ext.schemdraw_element:
                 comp_params["element"] = ext.schemdraw_element
 
-            components.append(ComponentInstance(
-                ref=ref,
-                component_type=ext.role,
-                parameters=comp_params,
-            ))
+            components.append(
+                ComponentInstance(
+                    ref=ref,
+                    component_type=ext.role,
+                    parameters=comp_params,
+                )
+            )
 
         # 构建网络
         nets: list[Net] = []
         for conn in topology.connections:
             connections_list: list[NetConnection] = []
             if conn.device_pin:
-                connections_list.append(NetConnection(
-                    component_ref="U1",
-                    pin_name=conn.device_pin,
-                ))
+                connections_list.append(
+                    NetConnection(
+                        component_ref="U1",
+                        pin_name=conn.device_pin,
+                    )
+                )
             for ext_ref in conn.external_refs:
                 # ext_ref 格式: "input_cap.1"
                 parts = ext_ref.split(".")
@@ -299,18 +323,22 @@ class TopologyAdapter:
                     pin = parts[1]
                     for comp in components[1:]:  # 跳过 U1
                         if comp.component_type == role_name:
-                            connections_list.append(NetConnection(
-                                component_ref=comp.ref,
-                                pin_name=pin,
-                            ))
+                            connections_list.append(
+                                NetConnection(
+                                    component_ref=comp.ref,
+                                    pin_name=pin,
+                                )
+                            )
                             break
 
-            nets.append(Net(
-                name=conn.net_name,
-                connections=connections_list,
-                is_power=conn.is_power,
-                is_ground=conn.is_ground,
-            ))
+            nets.append(
+                Net(
+                    name=conn.net_name,
+                    connections=connections_list,
+                    is_power=conn.is_power,
+                    is_ground=conn.is_ground,
+                )
+            )
 
         instance_name = role or device.part_number
         return CircuitInstance(

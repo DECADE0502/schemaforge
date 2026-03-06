@@ -3,6 +3,8 @@
 串联 Phase 4 全部模块的端到端流程：
 自然语言需求 → 规划 → 检索 → 适配 → 合理性检查 → 渲染 → 导出
 
+同时构建 Design IR（中间真值），支持后续多轮修改、快照回滚、审查等能力。
+
 用法::
 
     session = DesignSession(store_dir=Path("schemaforge/store"))
@@ -10,6 +12,10 @@
     if result.success:
         print(result.svg_paths)
         print(result.bom_text)
+
+    # 获取 Design IR
+    ir = session.ir
+    print(ir.to_summary())
 """
 
 from __future__ import annotations
@@ -34,6 +40,7 @@ from schemaforge.workflows.state_machine import (
 # ============================================================
 # 会话结果
 # ============================================================
+
 
 @dataclass
 class ModuleResult:
@@ -80,7 +87,7 @@ class DesignSessionResult:
     spice_text: str = ""
     design_spec: dict[str, Any] = field(default_factory=dict)
     error: str = ""
-    stage: str = ""             # 失败阶段
+    stage: str = ""  # 失败阶段
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -97,6 +104,7 @@ class DesignSessionResult:
 # ============================================================
 # 设计会话
 # ============================================================
+
 
 class DesignSession:
     """设计会话
@@ -126,6 +134,22 @@ class DesignSession:
         self._progress = progress_callback
         self._tracker = tracker
         self._sm: WorkflowStateMachine | None = None
+        self._ir: Any = None
+        self._ir_history: Any = None
+
+    @property
+    def ir(self) -> Any:
+        """当前设计的 IR（Design IR 中间真值）"""
+        return self._ir
+
+    @property
+    def ir_history(self) -> Any:
+        """IR 快照历史管理器"""
+        if self._ir_history is None:
+            from schemaforge.design.ir import IRHistory
+
+            self._ir_history = IRHistory()
+        return self._ir_history
 
     def _emit(self, message: str, percentage: int) -> None:
         if self._progress:
@@ -185,7 +209,8 @@ class DesignSession:
             return result
 
         self._emit(
-            f"匹配到 {len(matched)}/{len(module_results)} 个器件", 35,
+            f"匹配到 {len(matched)}/{len(module_results)} 个器件",
+            35,
         )
 
         # === 阶段3: validating — 合理性检查 ===
@@ -214,8 +239,7 @@ class DesignSession:
 
         # 过滤：只处理通过合理性检查的模块
         renderable = [
-            m for m in matched
-            if m.rationality is None or m.rationality.is_acceptable
+            m for m in matched if m.rationality is None or m.rationality.is_acceptable
         ]
 
         if not renderable:
@@ -227,11 +251,13 @@ class DesignSession:
         adapt_modules = []
         for mr in renderable:
             assert mr.device is not None
-            adapt_modules.append((
-                mr.device,
-                mr.requirement.parameters,
-                mr.requirement.role,
-            ))
+            adapt_modules.append(
+                (
+                    mr.device,
+                    mr.requirement.parameters,
+                    mr.requirement.role,
+                )
+            )
 
         adaptation = self._adapter.adapt_multi(
             modules=adapt_modules,
@@ -255,7 +281,8 @@ class DesignSession:
             assert mr.device is not None
             try:
                 svg_path = self._adapter.render(
-                    mr.device, mr.requirement.parameters,
+                    mr.device,
+                    mr.requirement.parameters,
                 )
                 mr.svg_path = svg_path
                 svg_paths.append(svg_path)
@@ -266,7 +293,9 @@ class DesignSession:
 
             try:
                 bom, spice = self._adapter.generate_exports(
-                    mr.device, mr.requirement.parameters, mr.requirement.role,
+                    mr.device,
+                    mr.requirement.parameters,
+                    mr.requirement.role,
                 )
                 mr.bom_text = bom
                 mr.spice_text = spice
@@ -293,11 +322,150 @@ class DesignSession:
             result.error = "没有成功渲染的模块"
             self._sm.transition("error", reason="渲染全失败")
 
+        # === 构建 Design IR ===
+        self._ir = self._build_ir(user_input, result, plan)
+        self.ir_history.save(self._ir, f"v{self._ir.version}")
+
         return result
 
     # ----------------------------------------------------------
     # 内部方法
     # ----------------------------------------------------------
+
+    def _build_ir(
+        self,
+        user_input: str,
+        result: DesignSessionResult,
+        plan: DesignPlan,
+    ) -> Any:
+        """从设计结果构建 Design IR"""
+        from schemaforge.design.ir import (
+            Assumption,
+            CandidateDevice,
+            Constraint,
+            ConstraintPriority,
+            DerivedParameters,
+            DesignIR,
+            DesignIntent,
+            DesignOutputs,
+            DesignReview,
+            DeviceSelection,
+            ModuleIR,
+            ModuleIntent,
+            ModuleReview,
+            ReviewIssue,
+            ReviewSeverity,
+            TopologyIR,
+        )
+
+        ir = DesignIR(
+            intent=DesignIntent(
+                raw_input=user_input,
+                summary=plan.description or plan.name,
+                known_constraints=[
+                    Constraint(
+                        name=k,
+                        value=v,
+                        priority=ConstraintPriority.REQUIRED,
+                        source="user",
+                    )
+                    for mod in plan.modules
+                    for k, v in mod.parameters.items()
+                ],
+                assumptions=[
+                    Assumption(
+                        field="design_mode",
+                        assumed_value="mock" if self._planner.use_mock else "ai",
+                        reason="规划器模式",
+                    ),
+                ],
+                confidence=0.8 if result.success else 0.3,
+            ),
+            stage=result.stage,
+            success=result.success,
+            error=result.error,
+        )
+
+        for mr in result.modules:
+            module_ir = ModuleIR(
+                intent=ModuleIntent(
+                    role=mr.requirement.role,
+                    category=mr.requirement.category,
+                    description=mr.requirement.description,
+                    target_specs=mr.requirement.parameters,
+                    depends_on=mr.requirement.connections_to,
+                ),
+                svg_path=mr.svg_path,
+                bom_text=mr.bom_text,
+                spice_text=mr.spice_text,
+                error=mr.error,
+            )
+
+            if mr.device is not None:
+                candidates = [
+                    CandidateDevice(
+                        part_number=mr.device.part_number,
+                        manufacturer=mr.device.manufacturer,
+                        score=mr.retrieval.score if mr.retrieval else 0.0,
+                        match_reasons=(
+                            mr.retrieval.match_reasons if mr.retrieval else []
+                        ),
+                    ),
+                ]
+                module_ir.selection = DeviceSelection(
+                    selected=candidates[0],
+                    candidates=candidates,
+                    selection_reason="最佳匹配",
+                )
+
+            if mr.device is not None:
+                module_ir.parameters = DerivedParameters(
+                    input_params=mr.requirement.parameters,
+                    render_params=mr.requirement.parameters,
+                )
+
+            if mr.rationality is not None:
+                review_issues = [
+                    ReviewIssue(
+                        severity=(
+                            ReviewSeverity.BLOCKING
+                            if issue.severity == "error"
+                            else ReviewSeverity.WARNING
+                        ),
+                        rule_id=issue.rule_id,
+                        message=issue.message,
+                        suggestion=issue.suggestion,
+                        evidence=issue.evidence,
+                        module_role=mr.requirement.role,
+                    )
+                    for issue in mr.rationality.issues
+                ]
+                module_ir.review = ModuleReview(
+                    issues=review_issues,
+                    passed=mr.rationality.is_acceptable,
+                )
+
+            ir.modules.append(module_ir)
+
+        ir.topology = TopologyIR(
+            design_spec=result.design_spec,
+        )
+
+        ir.outputs = DesignOutputs(
+            svg_paths=result.svg_paths,
+            bom_text=result.bom_text,
+            spice_text=result.spice_text,
+        )
+
+        all_review_issues: list[ReviewIssue] = []
+        for m in ir.modules:
+            all_review_issues.extend(m.review.issues)
+        ir.review = DesignReview(
+            issues=all_review_issues,
+            overall_passed=result.success,
+        )
+
+        return ir
 
     def _search_and_match(self, mod_req: ModuleRequirement) -> ModuleResult:
         """搜索并匹配单个模块"""
