@@ -372,6 +372,117 @@ class CandidateSolver:
                 score += 0.1
                 details.append("分压比可灵活配置")
 
+        elif category == "boost":
+            v_out_req = _parse_float(params.get("v_out", ""))
+            v_in_req = _parse_float(params.get("v_in", ""))
+            i_out_req = _parse_float(params.get("i_out_max", ""))
+            v_in_max_spec = _parse_float(device.specs.get("v_in_max", ""))
+            i_out_max_spec = _parse_float(device.specs.get("i_out_max", ""))
+
+            # Boost 升压方向: v_out > v_in
+            if v_out_req is not None and v_in_req is not None:
+                if v_out_req > v_in_req > 0:
+                    score += 0.15
+                    details.append(f"升压方向正确: {v_in_req}V → {v_out_req}V")
+                else:
+                    score -= 0.2
+                    details.append("输入输出电压关系不符合升压要求")
+
+            if v_in_req is not None and v_in_max_spec is not None:
+                if v_in_req <= v_in_max_spec:
+                    score += 0.15
+                    details.append(
+                        f"输入电压在额定范围内: {v_in_req}V <= {v_in_max_spec}V"
+                    )
+                else:
+                    score -= 0.3
+                    details.append(f"输入超压: {v_in_req}V > {v_in_max_spec}V")
+
+            if i_out_req is not None and i_out_max_spec is not None:
+                if i_out_max_spec >= i_out_req:
+                    score += 0.2
+                    details.append(f"电流能力满足: {i_out_max_spec}A >= {i_out_req}A")
+                else:
+                    score -= 0.3
+                    details.append(f"电流能力不足: {i_out_max_spec}A < {i_out_req}A")
+
+        elif category in ("flyback", "sepic"):
+            v_out_req = _parse_float(params.get("v_out", ""))
+            v_in_req = _parse_float(params.get("v_in", ""))
+            v_in_max_spec = _parse_float(device.specs.get("v_in_max", ""))
+            v_out_max_spec = _parse_float(device.specs.get("v_out_max", ""))
+            label = "Flyback" if category == "flyback" else "SEPIC"
+
+            if v_in_req is not None and v_in_max_spec is not None:
+                if v_in_req <= v_in_max_spec:
+                    score += 0.15
+                    details.append(
+                        f"输入电压在额定范围内: {v_in_req}V <= {v_in_max_spec}V"
+                    )
+                else:
+                    score -= 0.3
+                    details.append(f"输入超压: {v_in_req}V > {v_in_max_spec}V")
+
+            if v_out_req is not None and v_out_max_spec is not None:
+                if v_out_req <= v_out_max_spec:
+                    score += 0.15
+                    details.append(
+                        f"输出电压在额定范围内: {v_out_req}V <= {v_out_max_spec}V"
+                    )
+                else:
+                    score -= 0.2
+                    details.append(f"输出超额定: {v_out_req}V > {v_out_max_spec}V")
+
+            if v_in_req is not None and v_out_req is not None:
+                if v_in_req > 0 and v_out_req > 0:
+                    score += 0.15
+                    details.append(
+                        f"{label} 支持 {v_in_req}V → {v_out_req}V 变换"
+                    )
+                else:
+                    score -= 0.1
+                    details.append("电压参数需为正值")
+
+            # flyback 隔离需求加分
+            if category == "flyback":
+                isolation = params.get("isolation", device.specs.get("isolation", ""))
+                if isolation:
+                    score += 0.05
+                    details.append("具备隔离特性")
+
+        elif category == "opamp":
+            v_supply = _parse_float(
+                params.get("v_supply", params.get("v_cc", ""))
+            )
+            v_supply_max = _parse_float(device.specs.get("v_supply_max", ""))
+            v_supply_min = _parse_float(device.specs.get("v_supply_min", ""))
+
+            if v_supply is not None and v_supply_max is not None:
+                if v_supply <= v_supply_max:
+                    score += 0.2
+                    details.append(
+                        f"供电电压在额定范围内: {v_supply}V <= {v_supply_max}V"
+                    )
+                else:
+                    score -= 0.3
+                    details.append(f"供电超压: {v_supply}V > {v_supply_max}V")
+
+            if v_supply is not None and v_supply_min is not None:
+                if v_supply >= v_supply_min:
+                    score += 0.15
+                    details.append(
+                        f"供电满足最低要求: {v_supply}V >= {v_supply_min}V"
+                    )
+                else:
+                    score -= 0.2
+                    details.append(f"供电不足: {v_supply}V < {v_supply_min}V")
+
+            # rail-to-rail 检查
+            rail_to_rail = device.specs.get("rail_to_rail", "")
+            if rail_to_rail:
+                score += 0.1
+                details.append("支持 Rail-to-Rail 输出")
+
         else:
             # 通用评分：有规格就加分
             if device.specs:
@@ -520,6 +631,137 @@ class CandidateSolver:
             score += 0.3
             details.append("电阻分压器电气结构天然合理")
 
+        elif category == "boost":
+            v_in = _parse_float(params.get("v_in", ""))
+            v_out = _parse_float(params.get("v_out", ""))
+            v_in_max = _parse_float(device.specs.get("v_in_max", ""))
+
+            if v_in is not None and v_out is not None:
+                if v_out > v_in > 0:
+                    duty = 1 - (v_in / v_out)
+                    if 0.1 <= duty <= 0.85:
+                        score += 0.3
+                        details.append(
+                            f"占空比 D={duty:.2f} 在合理范围 [0.1, 0.85]"
+                        )
+                    elif duty < 0.1:
+                        score += 0.1
+                        details.append(
+                            f"占空比 D={duty:.2f} 偏低，升压比小，建议用LDO"
+                        )
+                    else:
+                        score -= 0.1
+                        details.append(
+                            f"占空比 D={duty:.2f} 过高(>0.85)，效率下降风险"
+                        )
+                else:
+                    score -= 0.3
+                    details.append("Boost 需要 Vout > Vin")
+
+            if v_in is not None and v_in_max is not None:
+                if v_in <= v_in_max:
+                    score += 0.1
+                    details.append(f"输入在额定范围: {v_in}V <= {v_in_max}V")
+                else:
+                    score -= 0.3
+                    details.append(f"输入超压: {v_in}V > {v_in_max}V")
+
+        elif category == "flyback":
+            v_in = _parse_float(params.get("v_in", ""))
+            v_out = _parse_float(params.get("v_out", ""))
+            turns_ratio = _parse_float(
+                params.get("turns_ratio", device.specs.get("turns_ratio", ""))
+            )
+
+            if v_in is not None and v_out is not None:
+                # 理想 CCM 占空比: D = Vout / (Vout + Vin * N), N=1 时 D = Vout/(Vout+Vin)
+                n = turns_ratio if turns_ratio is not None and turns_ratio > 0 else 1.0
+                d_est = v_out / (v_out + v_in * n) if (v_out + v_in * n) > 0 else 0
+                if 0.1 <= d_est <= 0.8:
+                    score += 0.3
+                    details.append(
+                        f"估算占空比 {d_est:.2f} 合理（匝比 N={n:.1f}）"
+                    )
+                else:
+                    score += 0.05
+                    details.append(
+                        f"估算占空比 {d_est:.2f} 偏极端，变压器设计难度高"
+                    )
+            else:
+                score += 0.1
+                details.append("Flyback 电压参数待确认")
+
+            # 变压器饱和风险
+            if turns_ratio is not None:
+                if 0.05 <= turns_ratio <= 20:
+                    score += 0.1
+                    details.append(f"匝比 {turns_ratio} 在可行范围内")
+                else:
+                    score -= 0.1
+                    details.append(f"匝比 {turns_ratio} 极端，变压器饱和风险高")
+
+        elif category == "sepic":
+            v_in = _parse_float(params.get("v_in", ""))
+            v_out = _parse_float(params.get("v_out", ""))
+
+            if v_in is not None and v_out is not None:
+                if v_in > 0 and v_out > 0:
+                    # SEPIC 占空比: D = Vout / (Vin + Vout)
+                    duty = v_out / (v_in + v_out)
+                    if 0.1 <= duty <= 0.85:
+                        score += 0.3
+                        details.append(
+                            f"SEPIC 占空比 D={duty:.2f} 合理"
+                        )
+                    else:
+                        score += 0.1
+                        details.append(
+                            f"SEPIC 占空比 D={duty:.2f} 偏极端"
+                        )
+                    details.append(
+                        f"SEPIC 支持升/降压: {v_in}V → {v_out}V"
+                    )
+                else:
+                    score -= 0.2
+                    details.append("电压参数需为正值")
+            else:
+                score += 0.1
+                details.append("SEPIC 电压参数待确认")
+
+        elif category == "opamp":
+            v_supply = _parse_float(
+                params.get("v_supply", params.get("v_cc", ""))
+            )
+            v_supply_max = _parse_float(device.specs.get("v_supply_max", ""))
+            gbw = _parse_float(device.specs.get("gbw", ""))
+
+            # 输出摆幅 vs 供电
+            if v_supply is not None and v_supply_max is not None:
+                if v_supply <= v_supply_max:
+                    score += 0.2
+                    details.append(f"供电在额定范围: {v_supply}V <= {v_supply_max}V")
+                else:
+                    score -= 0.3
+                    details.append(f"供电超额定: {v_supply}V > {v_supply_max}V")
+
+            # 输入共模范围
+            v_icm_max = _parse_float(device.specs.get("v_icm_max", ""))
+            if v_supply is not None and v_icm_max is not None:
+                if v_icm_max >= v_supply * 0.5:
+                    score += 0.1
+                    details.append("输入共模范围满足典型应用")
+                else:
+                    score -= 0.1
+                    details.append("输入共模范围偏窄")
+
+            # 增益带宽积
+            if gbw is not None:
+                if gbw >= 1:
+                    score += 0.1
+                    details.append(f"GBW={gbw}MHz，满足一般应用")
+                else:
+                    details.append(f"GBW={gbw}MHz，带宽偏低")
+
         else:
             if device.specs:
                 score += 0.1
@@ -643,6 +885,96 @@ class CandidateSolver:
             score = 0.8
             details.append("分压器有静态电流，功耗较小")
 
+        elif category == "boost":
+            v_in = _parse_float(params.get("v_in", ""))
+            v_out = _parse_float(params.get("v_out", ""))
+            i_out = _parse_float(
+                params.get("i_out_max", device.specs.get("i_out_max", "1"))
+            )
+            efficiency = _parse_float(device.specs.get("efficiency", "85"))
+            if (
+                v_out is not None
+                and i_out is not None
+                and efficiency is not None
+            ):
+                eff = efficiency / 100 if efficiency > 1 else efficiency
+                p_out = v_out * i_out
+                p_loss = p_out * (1 / eff - 1) if eff > 0 else p_out
+                if p_loss < 0.3:
+                    score = 1.0
+                    details.append(
+                        f"功耗损耗低: {p_loss:.2f}W（效率~{eff * 100:.0f}%）"
+                    )
+                elif p_loss < 1.0:
+                    score = 0.8
+                    details.append(f"功耗损耗适中: {p_loss:.2f}W")
+                else:
+                    score = 0.5
+                    details.append(f"功耗损耗偏高: {p_loss:.2f}W，需散热设计")
+            else:
+                score = 0.75
+                details.append("Boost 效率通常 >80%，热风险中等")
+
+        elif category in ("flyback", "sepic"):
+            v_out = _parse_float(params.get("v_out", ""))
+            i_out = _parse_float(
+                params.get("i_out_max", device.specs.get("i_out_max", "0.5"))
+            )
+            efficiency = _parse_float(device.specs.get("efficiency", "80"))
+            if (
+                v_out is not None
+                and i_out is not None
+                and efficiency is not None
+            ):
+                eff = efficiency / 100 if efficiency > 1 else efficiency
+                p_out = v_out * i_out
+                p_loss = p_out * (1 / eff - 1) if eff > 0 else p_out
+                # 变压器磁芯损耗额外估算 10%
+                core_loss = p_out * 0.1 if category == "flyback" else 0
+                total_loss = p_loss + core_loss
+                label = "Flyback" if category == "flyback" else "SEPIC"
+                if total_loss < 0.5:
+                    score = 0.9
+                    details.append(
+                        f"{label} 总损耗低: {total_loss:.2f}W"
+                    )
+                elif total_loss < 1.5:
+                    score = 0.7
+                    details.append(
+                        f"{label} 总损耗适中: {total_loss:.2f}W（含磁芯损耗）"
+                    )
+                else:
+                    score = 0.4
+                    details.append(
+                        f"{label} 总损耗高: {total_loss:.2f}W，需重点散热"
+                    )
+            else:
+                score = 0.65
+                label = "Flyback" if category == "flyback" else "SEPIC"
+                details.append(f"{label} 效率通常 75-85%，热风险需关注")
+
+        elif category == "opamp":
+            # 运放功耗通常很低
+            i_q = _parse_float(device.specs.get("i_q", ""))
+            v_supply = _parse_float(
+                params.get("v_supply", params.get("v_cc", ""))
+            )
+            if i_q is not None and v_supply is not None:
+                # i_q 单位 mA
+                p_q = v_supply * i_q / 1000
+                if p_q < 0.01:
+                    score = 1.0
+                    details.append(f"静态功耗极低: {p_q * 1000:.1f}mW")
+                elif p_q < 0.05:
+                    score = 0.95
+                    details.append(f"静态功耗低: {p_q * 1000:.1f}mW")
+                else:
+                    score = 0.85
+                    details.append(f"静态功耗: {p_q * 1000:.1f}mW")
+            else:
+                score = 0.9
+                details.append("运放典型功耗极低，热风险很小")
+
         else:
             details.append("热风险需根据实际应用评估")
 
@@ -746,6 +1078,39 @@ def _estimate_power(
         return "取决于分压电阻阻值"
     elif category == "buck":
         return "较低（开关电源效率高）"
+    elif category == "boost":
+        v_out = _parse_float(params.get("v_out", ""))
+        i_out = _parse_float(
+            params.get("i_out_max", device.specs.get("i_out_max", ""))
+        )
+        eff = _parse_float(device.specs.get("efficiency", "85"))
+        if v_out is not None and i_out is not None and eff is not None:
+            e = eff / 100 if eff > 1 else eff
+            p_out = v_out * i_out
+            p_loss = p_out * (1 / e - 1) if e > 0 else 0
+            return f"{p_loss:.2f}W（损耗，效率~{e * 100:.0f}%）"
+        return "取决于升压比和负载"
+    elif category in ("flyback", "sepic"):
+        v_out = _parse_float(params.get("v_out", ""))
+        i_out = _parse_float(
+            params.get("i_out_max", device.specs.get("i_out_max", ""))
+        )
+        eff = _parse_float(device.specs.get("efficiency", "80"))
+        if v_out is not None and i_out is not None and eff is not None:
+            e = eff / 100 if eff > 1 else eff
+            p_out = v_out * i_out
+            p_loss = p_out * (1 / e - 1) if e > 0 else 0
+            return f"{p_loss:.2f}W（损耗，效率~{e * 100:.0f}%）"
+        return "取决于变换比和负载"
+    elif category == "opamp":
+        i_q = _parse_float(device.specs.get("i_q", ""))
+        v_supply = _parse_float(
+            params.get("v_supply", params.get("v_cc", ""))
+        )
+        if i_q is not None and v_supply is not None:
+            p_q = v_supply * i_q / 1000  # mA → A
+            return f"{p_q * 1000:.1f}mW（静态）"
+        return "<50mW（典型）"
     return "未知"
 
 
@@ -764,6 +1129,17 @@ def _estimate_cost(
         return "medium"
     elif category == "buck":
         return "medium" if bom_count <= 5 else "high"
+    elif category == "boost":
+        return "medium" if bom_count <= 5 else "high"
+    elif category == "flyback":
+        # 变压器成本高
+        return "high"
+    elif category == "sepic":
+        return "high" if bom_count > 5 else "medium"
+    elif category == "opamp":
+        if bom_count <= 3:
+            return "low"
+        return "medium"
     return "medium"
 
 
@@ -779,6 +1155,10 @@ def _extract_key_params(
     important_specs = {
         "ldo": ["v_out", "v_dropout", "i_out_max", "v_in_max"],
         "buck": ["v_in_max", "i_out_max", "v_out_min", "v_out_max"],
+        "boost": ["v_in_max", "v_out_max", "i_out_max", "efficiency"],
+        "flyback": ["v_in_max", "v_out_max", "i_out_max", "turns_ratio", "isolation"],
+        "sepic": ["v_in_max", "v_out_max", "i_out_max", "efficiency"],
+        "opamp": ["v_supply_max", "v_supply_min", "gbw", "i_q", "rail_to_rail"],
         "led": ["v_f", "i_f", "color"],
         "voltage_divider": ["v_in", "v_out", "ratio"],
         "rc_filter": ["r", "c", "f_cutoff"],
@@ -827,6 +1207,10 @@ def _build_tradeoff_notes(device: DeviceModel, category: str) -> str:
     tradeoff_map: dict[str, str] = {
         "ldo": "LDO 优点: 低噪声、简单可靠；缺点: 效率低（压差×电流=热耗）",
         "buck": "Buck 优点: 效率高（>90%）；缺点: 需要电感、有开关噪声",
+        "boost": "Boost 优点: 高效升压；缺点: 输出纹波较大、需电感和二极管、占空比过高时效率骤降",
+        "flyback": "Flyback 优点: 电气隔离、升/降压灵活；缺点: 需变压器（成本高）、EMI 较大、效率偏低",
+        "sepic": "SEPIC 优点: 支持升/降压、输入电流连续；缺点: 需耦合电感和耦合电容、效率中等、BOM 较多",
+        "opamp": "运放 优点: 信号调理灵活、精度高；缺点: 带宽受限于 GBW、需注意输入共模范围和输出摆幅",
         "led": "LED 电路简单，功耗低；需限流电阻保护",
         "voltage_divider": "分压器简单可靠，但有静态损耗，不适合大电流负载",
         "rc_filter": "RC 滤波器成本极低，但截止频率受元件精度影响",
@@ -845,6 +1229,9 @@ def _category_label(category: str) -> str:
         "ldo": "LDO稳压",
         "buck": "Buck降压",
         "boost": "Boost升压",
+        "flyback": "Flyback反激",
+        "sepic": "SEPIC变换",
+        "opamp": "运放",
         "led": "LED驱动",
         "voltage_divider": "电压分压",
         "rc_filter": "RC滤波",
