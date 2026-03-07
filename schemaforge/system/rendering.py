@@ -38,9 +38,9 @@ logger = logging.getLogger(__name__)
 # 布局常量
 # ============================================================
 
-_MODULE_X_SPACING = 14.0   # 模块间水平间距
+_MODULE_X_SPACING = 20.0   # 模块间水平间距（增大避免重叠）
 _MODULE_Y_OFFSET = 0.0     # 电源链 Y 基线
-_CONTROL_Y_OFFSET = -10.0  # 控制支路 Y 偏移（在电源链下方）
+_CONTROL_Y_OFFSET = -16.0  # 控制支路 Y 偏移（在电源链下方，加大间距）
 _CONTROL_X_SPACING = 10.0  # 控制支路模块间距
 
 # 电源链类别（参与主链条横向排列）
@@ -857,7 +857,8 @@ def render_system_svg(
         SVG 文件路径
     """
     if filename is None:
-        filename = "system_design.svg"
+        import time
+        filename = f"system_design_{int(time.time() * 1000) % 100000}.svg"
     filepath = output_path(filename)
 
     # 如果提供了 instances 列表，同步到 IR
