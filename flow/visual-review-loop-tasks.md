@@ -7,29 +7,29 @@
 
 ## 阶段 1：定义边界与规则 (V001-V010)
 
-- [ ] V001 写 `docs/visual-review-loop.md`
-- [ ] V002 明确这层只负责"视觉质量"，不负责"电气正确性"
-- [ ] V003 写出允许动作白名单
-- [ ] V004 写出禁止动作黑名单
-- [ ] V005 定义最大迭代次数策略
-- [ ] V006 定义停止条件
-- [ ] V007 定义失败退出策略
-- [ ] V008 定义审稿 trace 格式
-- [ ] V009 定义 AI 审稿分数含义
-- [ ] V010 定义本地硬指标与 AI 软指标的优先级
+- [x] V001 写 `docs/visual-review-loop.md`
+- [x] V002 明确这层只负责"视觉质量"，不负责"电气正确性"
+- [x] V003 写出允许动作白名单
+- [x] V004 写出禁止动作黑名单
+- [x] V005 定义最大迭代次数策略
+- [x] V006 定义停止条件
+- [x] V007 定义失败退出策略
+- [x] V008 定义审稿 trace 格式
+- [x] V009 定义 AI 审稿分数含义
+- [x] V010 定义本地硬指标与 AI 软指标的优先级
 
 ## 阶段 2：建立数据模型 (V011-V020)
 
-- [ ] V011 新建 `schemaforge/visual_review/models.py`
-- [ ] V012 定义 `ReviewImageSet`
-- [ ] V013 定义 `ReviewManifest`
-- [ ] V014 定义 `VisualIssue`
-- [ ] V015 定义 `VisualReviewReport`
-- [ ] V016 定义 `LayoutPatchAction`
-- [ ] V017 定义 `LayoutPatchPlan`
-- [ ] V018 定义 `RenderScore`
-- [ ] V019 定义 `VisualReviewTrace`
-- [ ] V020 为这些模型写序列化测试
+- [x] V011 新建 `schemaforge/visual_review/models.py`
+- [x] V012 定义 `ReviewImageSet`
+- [x] V013 定义 `ReviewManifest`
+- [x] V014 定义 `VisualIssue`
+- [x] V015 定义 `VisualReviewReport`
+- [x] V016 定义 `LayoutPatchAction`
+- [x] V017 定义 `LayoutPatchPlan`
+- [x] V018 定义 `RenderScore`
+- [x] V019 定义 `VisualReviewTrace`
+- [x] V020 为这些模型写序列化测试
 
 ## 阶段 3：截图与审稿素材生成 (V021-V030)
 
