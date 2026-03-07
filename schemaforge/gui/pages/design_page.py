@@ -496,10 +496,14 @@ class DesignPage(QWidget):
                 self._tab_log.append(f"[审查] {len(warnings)} 条审查意见")
                 blocking = [w for w in warnings if w.startswith("[阻断]")]
                 warn_only = [w for w in warnings if w.startswith("[警告]")]
-                review_msg = f"工程审查: {len(blocking)} 阻断, {len(warn_only)} 警告"
-                if blocking:
-                    review_msg += "\n" + "\n".join(blocking[:3])
-                self._chat_panel.add_message("assistant", f"⚠ {review_msg}")
+                hints = [w for w in warnings if w.startswith("[提示]")]
+                if blocking or warn_only:
+                    review_msg = f"工程审查: {len(blocking)} 阻断, {len(warn_only)} 警告"
+                    if blocking:
+                        review_msg += "\n" + "\n".join(blocking[:3])
+                    self._chat_panel.add_message("assistant", f"⚠ {review_msg}")
+                for hint in hints:
+                    self._chat_panel.add_message("assistant", hint)
             self._has_design = True
             self._chat_panel.add_message("assistant", f"✅ {message}")
             self._chat_panel.add_message(
@@ -580,10 +584,14 @@ class DesignPage(QWidget):
                 self._tab_log.append(f"[审查] {len(warnings)} 条审查意见")
                 blocking = [w for w in warnings if w.startswith("[阻断]")]
                 warn_only = [w for w in warnings if w.startswith("[警告]")]
-                review_msg = f"工程审查: {len(blocking)} 阻断, {len(warn_only)} 警告"
-                if blocking:
-                    review_msg += "\n" + "\n".join(blocking[:3])
-                self._chat_panel.add_message("assistant", f"⚠ {review_msg}")
+                hints = [w for w in warnings if w.startswith("[提示]")]
+                if blocking or warn_only:
+                    review_msg = f"工程审查: {len(blocking)} 阻断, {len(warn_only)} 警告"
+                    if blocking:
+                        review_msg += "\n" + "\n".join(blocking[:3])
+                    self._chat_panel.add_message("assistant", f"⚠ {review_msg}")
+                for hint in hints:
+                    self._chat_panel.add_message("assistant", hint)
             self._chat_panel.add_message("assistant", f"✅ {message}")
             self._tab_log.append(f"[修改完成] {message}")
 
