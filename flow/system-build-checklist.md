@@ -33,29 +33,29 @@
 
 ## 阶段 3：重写 AI 输入输出协议
 
-- [ ] T021 重写需求解析 prompt
-- [ ] T022 让 AI 输出模块列表
-- [ ] T023 让 AI 输出连接意图
-- [ ] T024 让 AI 输出不确定项
-- [ ] T025 让 AI 输出特殊控制语义
-- [ ] T026 为 AI 输出写 Pydantic schema
-- [ ] T027 新建 `validate_ai_schema`
-- [ ] T028 新建 `normalize_ai_intents`
-- [ ] T029 新建 `detect_ambiguities`
-- [ ] T030 补 AI 输出协议测试
+- [x] T021 重写需求解析 prompt
+- [x] T022 让 AI 输出模块列表
+- [x] T023 让 AI 输出连接意图
+- [x] T024 让 AI 输出不确定项
+- [x] T025 让 AI 输出特殊控制语义
+- [x] T026 为 AI 输出写 Pydantic schema
+- [x] T027 新建 `validate_ai_schema`
+- [x] T028 新建 `normalize_ai_intents`
+- [x] T029 新建 `detect_ambiguities`
+- [x] T030 补 AI 输出协议测试
 
 ## 阶段 4：重做器件解析与实例化
 
-- [ ] T031 新建 `schemaforge/system/resolver.py`
-- [ ] T032 实现 `resolve_exact_part`
-- [ ] T033 实现 `resolve_alias_part`
-- [ ] T034 实现 `resolve_part_candidates`
-- [ ] T035 实现 `get_device_ports`
-- [ ] T036 实现 `get_power_ports`
-- [ ] T037 实现 `get_signal_ports`
-- [ ] T038 实现 `instantiate_module_from_device`
-- [ ] T039 实现 `validate_module_instance`
-- [ ] T040 补实例化测试
+- [x] T031 新建 `schemaforge/system/resolver.py`
+- [x] T032 实现 `resolve_exact_part`
+- [x] T033 实现 `resolve_alias_part`
+- [x] T034 实现 `resolve_part_candidates`
+- [x] T035 实现 `get_device_ports`
+- [x] T036 实现 `get_power_ports`
+- [x] T037 实现 `get_signal_ports`
+- [x] T038 实现 `instantiate_module_from_device`
+- [x] T039 实现 `validate_module_instance`
+- [x] T040 补实例化测试
 
 ## 阶段 5：重做缺件导入链路
 
