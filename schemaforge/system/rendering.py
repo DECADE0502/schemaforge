@@ -886,8 +886,8 @@ def render_system_svg(
         # T086: 模块间连线
         draw_intermodule_wires(d, ir.connections, all_anchors)
 
-        # T087: 网络标签
-        draw_net_labels(d, ir.nets, all_anchors)
+        # T087: 网络标签（暂时禁用，避免标签遮挡电路）
+        # draw_net_labels(d, ir.nets, all_anchors)
 
         # T088: GND 符号（补充）
         draw_gnd_symbols(d, all_anchors)

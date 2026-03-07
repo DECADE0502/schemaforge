@@ -235,20 +235,15 @@ class SystemDesignSession:
         )
 
         # --- Step 8.5: 视觉审稿闭环 ---
-        if svg_path and ir.get_resolved_modules():
-            try:
-                from schemaforge.visual_review.loop import run_visual_review_loop
-
-                bundle, trace = run_visual_review_loop(ir, bundle)
-                if trace.entries:
-                    warnings.append(
-                        f"[视觉审稿] {trace.total_iterations} 轮优化, "
-                        f"分数 {trace.initial_score:.1f} → {trace.final_score:.1f}, "
-                        f"停止原因: {trace.stop_reason.value}"
-                    )
-            except Exception as exc:  # noqa: BLE001
-                warnings.append(f"视觉审稿失败: {exc}")
-                logger.warning("视觉审稿异常: %s", exc)
+        # 暂时禁用：patch 执行器尚未与 schemdraw 渲染参数联通，
+        # 启用后只会增加延迟而不真正改善 SVG 布局。
+        # 待 LayoutState → schemdraw 参数映射完成后重新启用。
+        # if svg_path and ir.get_resolved_modules():
+        #     try:
+        #         from schemaforge.visual_review.loop import run_visual_review_loop
+        #         bundle, trace = run_visual_review_loop(ir, bundle)
+        #     except Exception:
+        #         pass
 
         self._ir = ir
         self._bundle = bundle
