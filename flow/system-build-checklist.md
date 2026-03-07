@@ -72,29 +72,29 @@
 
 ## 阶段 6：建立连接规则引擎
 
-- [ ] T051 新建 `schemaforge/system/connection_rules.py`
-- [ ] T052 定义规则数据格式
-- [ ] T053 实现电源链规则
-- [ ] T054 实现 GPIO→LED 规则
-- [ ] T055 实现 SPI→Flash 规则骨架
-- [ ] T056 实现 GND 全局归并
-- [ ] T057 实现 EN/BOOT/FB 特殊规则
-- [ ] T058 实现 unresolved 机制
-- [ ] T059 实现 `explain_connection_rule`
-- [ ] T060 补规则引擎测试
+- [x] T051 新建 `schemaforge/system/connection_rules.py`
+- [x] T052 定义规则数据格式
+- [x] T053 实现电源链规则
+- [x] T054 实现 GPIO→LED 规则
+- [x] T055 实现 SPI→Flash 规则骨架
+- [x] T056 实现 GND 全局归并
+- [x] T057 实现 EN/BOOT/FB 特殊规则
+- [x] T058 实现 unresolved 机制
+- [x] T059 实现 `explain_connection_rule`
+- [x] T060 补规则引擎测试
 
 ## 阶段 7：建立模块综合与依赖传播
 
-- [ ] T061 新建 `schemaforge/system/synthesis.py`
-- [ ] T062 接入 Buck 模块综合器
-- [ ] T063 接入 LDO 模块综合器
-- [ ] T064 新建 MCU 最小系统综合器
-- [ ] T065 新建 LED 指示支路综合器
-- [ ] T066 新建 generic placeholder 综合器
-- [ ] T067 实现 `propagate_supply_constraints`
-- [ ] T068 实现 `recompute_dependent_modules`
-- [ ] T069 实现参数 evidence 记录
-- [ ] T070 补多模块综合测试
+- [x] T061 新建 `schemaforge/system/synthesis.py`
+- [x] T062 接入 Buck 模块综合器
+- [x] T063 接入 LDO 模块综合器
+- [x] T064 新建 MCU 最小系统综合器
+- [x] T065 新建 LED 指示支路综合器
+- [x] T066 新建 generic placeholder 综合器
+- [x] T067 实现 `propagate_supply_constraints`
+- [x] T068 实现 `recompute_dependent_modules`
+- [x] T069 实现参数 evidence 记录
+- [x] T070 补多模块综合测试
 
 ## 阶段 8：重做全局实例、编号、BOM、SPICE
 
