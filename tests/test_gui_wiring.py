@@ -157,10 +157,10 @@ class TestEngineWorkerStructure:
     def test_all_workers_have_finished_signal(self) -> None:
         """所有 worker 类都必须有 finished 信号。"""
         for cls_name in [
-            "ClassicEngineWorker",
-            "DesignSessionWorker",
             "SchemaForgeWorker",
             "SchemaForgeReviseWorker",
+            "IngestAssetWorker",
+            "ConfirmImportWorker",
             "SchemaForgeOrchestratedWorker",
         ]:
             assert cls_name in self._get_class_names(), f"{cls_name} 缺失"

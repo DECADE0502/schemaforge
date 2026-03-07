@@ -1,0 +1,317 @@
+{
+  "part_number": "TPS54202",
+  "aliases": [],
+  "manufacturer": "Texas Instruments",
+  "description": "4.5V至28V输入、2A输出、EMI优化的同步降压转换器，集成MOSFET和内部环路补偿，采用SOT-23-6封装",
+  "category": "buck",
+  "specs": {
+    "v_in_min": "4.5V",
+    "v_in_max": "28V",
+    "v_out_min": "0.596V",
+    "v_out_max": "接近VIN",
+    "i_out_max": "2A",
+    "v_ref": "0.596V",
+    "fsw": "500kHz",
+    "rds_on_hs": "148mΩ",
+    "rds_on_ls": "78mΩ",
+    "i_q": "45µA",
+    "i_shutdown": "3µA",
+    "t_soft_start": "5ms",
+    "efficiency_max": ">90%",
+    "thermal_shutdown": "有",
+    "protection": "过流保护（打嗝模式）、过压保护、热关断"
+  },
+  "symbol": {
+    "pins": [
+      {
+        "name": "GND",
+        "pin_number": "1",
+        "side": "bottom",
+        "pin_type": "ground",
+        "slot": "1/1",
+        "inverted": false,
+        "anchor_name": "",
+        "description": "地"
+      },
+      {
+        "name": "SW",
+        "pin_number": "2",
+        "side": "right",
+        "pin_type": "output",
+        "slot": "2/2",
+        "inverted": false,
+        "anchor_name": "",
+        "description": "开关节点，连接电感"
+      },
+      {
+        "name": "VIN",
+        "pin_number": "3",
+        "side": "left",
+        "pin_type": "power_in",
+        "slot": "1/2",
+        "inverted": false,
+        "anchor_name": "",
+        "description": "输入电源"
+      },
+      {
+        "name": "FB",
+        "pin_number": "4",
+        "side": "right",
+        "pin_type": "input",
+        "slot": "1/2",
+        "inverted": false,
+        "anchor_name": "",
+        "description": "反馈引脚，通过电阻分压设置输出电压"
+      },
+      {
+        "name": "EN",
+        "pin_number": "5",
+        "side": "left",
+        "pin_type": "input",
+        "slot": "2/2",
+        "inverted": false,
+        "anchor_name": "",
+        "description": "使能引脚，内部上拉，可浮空使能"
+      },
+      {
+        "name": "BOOT",
+        "pin_number": "6",
+        "side": "top",
+        "pin_type": "power_in",
+        "slot": "1/1",
+        "inverted": false,
+        "anchor_name": "",
+        "description": "自举电容连接，为高端MOSFET栅极驱动供电"
+      }
+    ],
+    "size": [
+      5.0,
+      4.0
+    ],
+    "edge_pad_w": 0.5,
+    "edge_pad_h": 0.5,
+    "pin_spacing": 1.0,
+    "lead_len": 0.5,
+    "label_position": "top"
+  },
+  "topology": {
+    "circuit_type": "buck",
+    "external_components": [
+      {
+        "role": "input_cap",
+        "ref_prefix": "C",
+        "required": true,
+        "default_value": "10uF",
+        "value_expression": "{c_in}",
+        "constraints": {},
+        "schemdraw_element": "Capacitor"
+      },
+      {
+        "role": "output_cap",
+        "ref_prefix": "C",
+        "required": true,
+        "default_value": "22uF",
+        "value_expression": "{c_out}",
+        "constraints": {},
+        "schemdraw_element": "Capacitor"
+      },
+      {
+        "role": "inductor",
+        "ref_prefix": "L",
+        "required": true,
+        "default_value": "15uH",
+        "value_expression": "{l_value}",
+        "constraints": {},
+        "schemdraw_element": "Inductor2"
+      },
+      {
+        "role": "boot_cap",
+        "ref_prefix": "C",
+        "required": true,
+        "default_value": "100nF",
+        "value_expression": "{c_boot}",
+        "constraints": {},
+        "schemdraw_element": "Capacitor"
+      },
+      {
+        "role": "fb_upper",
+        "ref_prefix": "R",
+        "required": true,
+        "default_value": "75kΩ",
+        "value_expression": "{r_fb_upper}",
+        "constraints": {},
+        "schemdraw_element": "Resistor"
+      },
+      {
+        "role": "fb_lower",
+        "ref_prefix": "R",
+        "required": true,
+        "default_value": "10kΩ",
+        "value_expression": "{r_fb_lower}",
+        "constraints": {},
+        "schemdraw_element": "Resistor"
+      }
+    ],
+    "connections": [
+      {
+        "net_name": "VIN",
+        "device_pin": "VIN",
+        "external_refs": [
+          "input_cap.1"
+        ],
+        "is_power": true,
+        "is_ground": false
+      },
+      {
+        "net_name": "SW",
+        "device_pin": "SW",
+        "external_refs": [
+          "inductor.1",
+          "boot_cap.2"
+        ],
+        "is_power": false,
+        "is_ground": false
+      },
+      {
+        "net_name": "VOUT",
+        "device_pin": "",
+        "external_refs": [
+          "inductor.2",
+          "output_cap.1",
+          "fb_upper.1"
+        ],
+        "is_power": true,
+        "is_ground": false
+      },
+      {
+        "net_name": "FB",
+        "device_pin": "FB",
+        "external_refs": [
+          "fb_upper.2",
+          "fb_lower.1"
+        ],
+        "is_power": false,
+        "is_ground": false
+      },
+      {
+        "net_name": "BST",
+        "device_pin": "BOOT",
+        "external_refs": [
+          "boot_cap.1"
+        ],
+        "is_power": false,
+        "is_ground": false
+      },
+      {
+        "net_name": "GND",
+        "device_pin": "GND",
+        "external_refs": [
+          "input_cap.2",
+          "output_cap.2",
+          "fb_lower.2"
+        ],
+        "is_power": false,
+        "is_ground": true
+      }
+    ],
+    "parameters": {},
+    "calculations": {},
+    "design_rules": []
+  },
+  "design_recipe": {
+    "topology_family": "buck",
+    "summary": "TPS54202 的降压设计 recipe，基于典型 Buck 拓扑自动生成外围参数。",
+    "pin_roles": {
+      "GND": "ground",
+      "SW": "switch",
+      "VIN": "power_input",
+      "FB": "feedback",
+      "EN": "enable",
+      "BOOT": "bootstrap"
+    },
+    "default_parameters": {
+      "v_in": "20",
+      "v_out": "5",
+      "i_out_max": "1.4",
+      "fsw": "500",
+      "ic_model": "TPS54202",
+      "c_in": "10uF",
+      "c_out": "22uF",
+      "l_value": "15uH",
+      "c_boot": "100nF",
+      "v_ref": "0.596",
+      "r_fb_upper": "75kΩ",
+      "r_fb_lower": "10kΩ",
+      "r_fb_total": "85",
+      "led_resistor": "1kΩ"
+    },
+    "sizing_components": [
+      {
+        "role": "input_cap",
+        "value": "10uF",
+        "formula": "Cin = Iout * D * (1 - D) / (fsw * ΔVin)",
+        "rationale": "按输入纹波电压估算，并设置 10μF 的工程下限。"
+      },
+      {
+        "role": "inductor",
+        "value": "15uH",
+        "formula": "L = Vout * (1 - D) / (fsw * ΔIL)",
+        "rationale": "按 30% 输出电流纹波设计，再圆整到常用电感系列。"
+      },
+      {
+        "role": "output_cap",
+        "value": "22uF",
+        "formula": "Cout = ΔIL / (8 * fsw * ΔVout)",
+        "rationale": "按 1% 输出纹波估算，并设置 22μF 的工程下限。"
+      },
+      {
+        "role": "fb_upper",
+        "value": "75kΩ",
+        "formula": "Rupper = Rlower * (Vout / Vref - 1)",
+        "rationale": "固定下拉电阻 10kΩ，再按反馈参考电压求上拉值。"
+      },
+      {
+        "role": "fb_lower",
+        "value": "10kΩ",
+        "formula": "Rlower = 10kΩ",
+        "rationale": "优先选用稳定、噪声适中的常见阻值作为反馈下拉。"
+      }
+    ],
+    "formulas": [
+      {
+        "name": "占空比",
+        "expression": "D = Vout / Vin",
+        "value": "0.25",
+        "rationale": "用于估算电感电流纹波与输入电容 RMS 应力。"
+      }
+    ],
+    "evidence": [
+      {
+        "source_type": "datasheet",
+        "summary": "优先沿用典型 Buck 拓扑中的输入电容、电感、输出电容与反馈网络。",
+        "source_ref": "",
+        "page": null,
+        "confidence": 0.85
+      }
+    ]
+  },
+  "spice_model": "",
+  "spice_model_ref": "",
+  "lcsc_part": "",
+  "datasheet_url": "",
+  "easyeda_id": "",
+  "package": "SOT-23-6",
+  "source": "pdf_parsed",
+  "confidence": 0.95,
+  "notes": "从 PDF 提取: test_assets\\TPS54202.pdf",
+  "design_roles": [
+    "dc_dc_converter"
+  ],
+  "selection_hints": [],
+  "anti_patterns": [],
+  "required_companions": [],
+  "operating_constraints": {},
+  "layout_hints": [],
+  "failure_modes": [],
+  "review_rules": []
+}

@@ -1,10 +1,12 @@
 """后台引擎工作线程
 
-提供三个 QThread worker，分别驱动三条链路：
+提供 QThread worker 驱动 AI 链路：
 
-- ``ClassicEngineWorker``:    SchemaForgeEngine（模板驱动）
-- ``DesignSessionWorker``:    DesignSession（需求澄清→候选→审查→渲染）
-- ``SchemaForgeWorker``:      SchemaForgeSession（统一工作台：精确型号+公式驱动+多轮修改）
+- ``SchemaForgeWorker``:             SchemaForgeSession（统一工作台：精确型号+公式驱动+多轮修改）
+- ``SchemaForgeReviseWorker``:       多轮对话修改
+- ``IngestAssetWorker``:             器件补录（PDF/图片资料导入）
+- ``ConfirmImportWorker``:           导入确认
+- ``SchemaForgeOrchestratedWorker``: AI 多轮编排（高级模式）
 
 用法::
 
@@ -21,109 +23,6 @@ import traceback
 from pathlib import Path
 
 from PySide6.QtCore import QThread, Signal
-
-
-# ============================================================
-# ClassicEngineWorker — 旧主链
-# ============================================================
-
-
-class ClassicEngineWorker(QThread):
-    """在后台线程中运行 SchemaForgeEngine.process()。
-
-    Signals:
-        finished(object): 处理完成，携带 EngineResult。
-        error(str): 处理异常，携带错误描述。
-        progress(str, int): 进度回调 (消息, 百分比)。
-    """
-
-    finished = Signal(object)
-    error = Signal(str)
-    progress = Signal(str, int)
-
-    def __init__(
-        self,
-        user_input: str,
-        parent: object | None = None,
-    ) -> None:
-        super().__init__(parent)  # type: ignore[arg-type]
-        self.user_input = user_input
-
-    def _on_progress(self, message: str, percentage: int) -> None:
-        """进度回调，从引擎线程转发信号。"""
-        self.progress.emit(message, percentage)
-
-    def run(self) -> None:
-        """执行引擎处理流程。"""
-        try:
-            from schemaforge.core.engine import SchemaForgeEngine
-
-            engine = SchemaForgeEngine()
-            result = engine.process(
-                self.user_input,
-                progress_callback=self._on_progress,
-            )
-            self.finished.emit(result)
-        except Exception as exc:
-            tb = traceback.format_exc()
-            self.error.emit(f"{exc}\n\n{tb}")
-
-
-# ============================================================
-# DesignSessionWorker — 新主链
-# ============================================================
-
-
-class DesignSessionWorker(QThread):
-    """在后台线程中运行 DesignSession.run()。
-
-    Signals:
-        finished(object): 处理完成，携带 DesignSessionResult。
-        error(str): 处理异常，携带错误描述。
-        progress(str, int): 进度回调 (消息, 百分比)。
-    """
-
-    finished = Signal(object)
-    error = Signal(str)
-    progress = Signal(str, int)
-
-    def __init__(
-        self,
-        user_input: str,
-        parent: object | None = None,
-    ) -> None:
-        super().__init__(parent)  # type: ignore[arg-type]
-        self.user_input = user_input
-
-    def _on_progress(self, message: str, percentage: int) -> None:
-        """进度回调，从会话线程转发信号。"""
-        self.progress.emit(message, percentage)
-
-    def run(self) -> None:
-        """执行设计会话流程。"""
-        try:
-            from schemaforge.workflows.design_session import DesignSession
-
-            session = DesignSession(
-                store_dir=Path("schemaforge/store"),
-                progress_callback=self._on_progress,
-            )
-            result = session.run(self.user_input)
-            self.finished.emit(result)
-        except Exception as exc:
-            tb = traceback.format_exc()
-            self.error.emit(f"{exc}\n\n{tb}")
-
-
-class RetryDesignWorker(DesignSessionWorker):
-    """重试设计 — 在用户补录缺失器件后重新运行同一需求。
-
-    行为与 DesignSessionWorker 完全一致，仅语义不同：
-    store 中的器件库已更新（新增了用户刚录入的器件），
-    重新运行相同的 user_input 即可匹配到新器件。
-    """
-
-    pass
 
 
 # ============================================================

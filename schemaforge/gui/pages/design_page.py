@@ -28,7 +28,6 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-# PdfImportDialog no longer used directly — import flow goes through session
 from schemaforge.gui.widgets.chat_panel import ChatPanel
 from schemaforge.gui.widgets.progress_header import ProgressHeader
 from schemaforge.gui.widgets.svg_viewer import SvgZoomView
@@ -39,7 +38,6 @@ from schemaforge.gui.workers.engine_worker import (
     SchemaForgeReviseWorker,
     SchemaForgeWorker,
 )
-# LibraryService no longer used directly — import flow goes through session
 from schemaforge.workflows.design_session import MissingModule
 
 logger = logging.getLogger(__name__)
@@ -492,7 +490,10 @@ class DesignPage(QWidget):
 
         if status == "generated" and bundle is not None:
             self._status_label.setText("✅ 生成完成")
-            self._display_bundle(bundle)
+            warnings = getattr(result, "warnings", [])
+            self._display_bundle(bundle, warnings=warnings)
+            if warnings:
+                self._tab_log.append(f"[审查] {len(warnings)} 条审查意见")
             self._has_design = True
             self._chat_panel.add_message("assistant", f"✅ {message}")
             self._chat_panel.add_message(
@@ -567,7 +568,10 @@ class DesignPage(QWidget):
 
         if status == "generated" and bundle is not None:
             self._status_label.setText("✅ 修改完成")
-            self._display_bundle(bundle)
+            warnings = getattr(result, "warnings", [])
+            self._display_bundle(bundle, warnings=warnings)
+            if warnings:
+                self._tab_log.append(f"[审查] {len(warnings)} 条审查意见")
             self._chat_panel.add_message("assistant", f"✅ {message}")
             self._tab_log.append(f"[修改完成] {message}")
 
@@ -653,7 +657,7 @@ class DesignPage(QWidget):
             self._chat_panel.add_message("assistant", message or f"AI 动作: {action_name}")
             self._tab_log.append(f"[AI {action_name}] {message}")
 
-    def _display_bundle(self, bundle: Any) -> None:
+    def _display_bundle(self, bundle: Any, warnings: list[str] | None = None) -> None:
         """提取 DesignBundle 的内容并展示到各标签页。"""
         # SVG
         svg_path = getattr(bundle, "svg_path", "")
@@ -670,7 +674,12 @@ class DesignPage(QWidget):
         spice_text = getattr(bundle, "spice_text", "")
         self._tab_bom.setPlainText(bom_text or "（无 BOM 数据）")
         self._tab_spice.setPlainText(spice_text or "（无 SPICE 数据）")
-        self._tab_erc.setPlainText("—")
+
+        # 审查结果
+        if warnings:
+            self._tab_erc.setPlainText("\n".join(warnings))
+        else:
+            self._tab_erc.setPlainText("✅ 工程审查通过，无问题")
 
         # 设计概要
         device = getattr(bundle, "device", None)
