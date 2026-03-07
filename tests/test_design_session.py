@@ -136,7 +136,6 @@ class TestDesignSession:
     def _make_session(self) -> DesignSession:
         return DesignSession(
             store_dir=self.tmp,
-            use_mock=True,
             progress_callback=lambda msg, pct: self.progress_log.append((msg, pct)),
         )
 
@@ -230,7 +229,7 @@ class TestDesignSession:
     def test_empty_store_fails_gracefully(self) -> None:
         empty_tmp = Path(tempfile.mkdtemp())
         try:
-            session = DesignSession(store_dir=empty_tmp, use_mock=True)
+            session = DesignSession(store_dir=empty_tmp, )
             result = session.run("5V转3.3V稳压电路")
             assert not result.success
             # 空库时所有模块缺失，返回 missing_modules 而非硬错误
@@ -261,7 +260,7 @@ class TestDesignSessionWithRealStore:
         if not store_dir.exists():
             return  # CI 环境可能没有
 
-        session = DesignSession(store_dir=store_dir, use_mock=True)
+        session = DesignSession(store_dir=store_dir, )
         result = session.run("5V转3.3V稳压电路")
 
         # 真实 store 有 AMS1117-3.3，应该能匹配

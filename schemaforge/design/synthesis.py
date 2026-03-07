@@ -96,8 +96,8 @@ def _detect_category(text_lower: str) -> str:
     return ""
 
 
-def parse_design_request(user_input: str) -> UserDesignRequest:
-    """从自然语言中提取精确型号与关键约束。"""
+def _parse_design_request_regex(user_input: str) -> UserDesignRequest:
+    """从自然语言中提取精确型号与关键约束（正则实现，作为 fallback）。"""
     part_number = _extract_part_number(user_input)
     v_in, v_out = _extract_voltages(user_input)
     if not v_in or not v_out:
@@ -136,6 +136,36 @@ def parse_design_request(user_input: str) -> UserDesignRequest:
         wants_led=wants_led,
         led_color=led_color,
     )
+
+
+def parse_design_request(user_input: str) -> UserDesignRequest:
+    """AI 驱动的需求解析，正则 fallback。"""
+    import os
+    if not os.environ.get("SCHEMAFORGE_SKIP_AI_PARSE"):
+        try:
+            from schemaforge.ai.client import call_llm_json
+            from schemaforge.ai.prompts import PARSE_REQUEST_PROMPT
+
+            result = call_llm_json(
+                system_prompt=PARSE_REQUEST_PROMPT,
+                user_message=user_input,
+            )
+            if result is not None:
+                return UserDesignRequest(
+                    raw_text=user_input,
+                    part_number=str(result.get("part_number", "")).strip(),
+                    category=str(result.get("category", "")).strip(),
+                    v_in=str(result.get("v_in", "")).strip(),
+                    v_out=str(result.get("v_out", "")).strip(),
+                    i_out=str(result.get("i_out", "")).strip(),
+                    wants_led=bool(result.get("wants_led", False)),
+                    led_color=str(result.get("led_color", "")).strip(),
+                    led_current_ma=str(result.get("led_current_ma", "")).strip(),
+                )
+        except Exception:
+            pass
+
+    return _parse_design_request_regex(user_input)
 
 
 def _has_evaluable_formula(formula_text: str) -> bool:
@@ -1113,8 +1143,8 @@ def parse_revision_request(user_input: str) -> tuple[dict[str, str], dict[str, o
     return result.param_updates, result.request_updates
 
 
-def parse_revision_request_v2(user_input: str) -> RevisionResult:
-    """增强版修改解析 — 支持结构化操作、器件替换等。"""
+def _parse_revision_request_regex(user_input: str) -> RevisionResult:
+    """增强版修改解析（正则实现，作为 fallback）— 支持结构化操作、器件替换等。"""
     text = user_input.lower()
     result = RevisionResult()
 
@@ -1275,6 +1305,31 @@ def parse_revision_request_v2(user_input: str) -> RevisionResult:
         })
 
     return result
+
+
+def parse_revision_request_v2(user_input: str) -> RevisionResult:
+    """AI 驱动的修改请求解析，正则 fallback。"""
+    import os
+    if not os.environ.get("SCHEMAFORGE_SKIP_AI_PARSE"):
+        try:
+            from schemaforge.ai.client import call_llm_json
+            from schemaforge.ai.prompts import PARSE_REVISION_PROMPT
+
+            result = call_llm_json(
+                system_prompt=PARSE_REVISION_PROMPT,
+                user_message=user_input,
+            )
+            if result is not None:
+                return RevisionResult(
+                    param_updates=result.get("param_updates", {}),
+                    request_updates=result.get("request_updates", {}),
+                    replace_device=str(result.get("replace_device", "")).strip(),
+                    structural_ops=result.get("structural_ops", []),
+                )
+        except Exception:
+            pass
+
+    return _parse_revision_request_regex(user_input)
 
 
 def _normalize_param_name(raw: str) -> str:

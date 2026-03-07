@@ -260,7 +260,7 @@ class TestCandidateSolverLDO:
     def setup_method(self) -> None:
         self.tmp = Path(tempfile.mkdtemp())
         self.store = _make_store(self.tmp)
-        self.solver = CandidateSolver(self.store, use_mock=True)
+        self.solver = CandidateSolver(self.store, )
 
     def teardown_method(self) -> None:
         shutil.rmtree(self.tmp, ignore_errors=True)
@@ -358,7 +358,7 @@ class TestCandidateSolverLED:
     def setup_method(self) -> None:
         self.tmp = Path(tempfile.mkdtemp())
         self.store = _make_store(self.tmp)
-        self.solver = CandidateSolver(self.store, use_mock=True)
+        self.solver = CandidateSolver(self.store, )
 
     def teardown_method(self) -> None:
         shutil.rmtree(self.tmp, ignore_errors=True)
@@ -397,7 +397,7 @@ class TestCandidateSolverVoltageDivider:
     def setup_method(self) -> None:
         self.tmp = Path(tempfile.mkdtemp())
         self.store = _make_store(self.tmp)
-        self.solver = CandidateSolver(self.store, use_mock=True)
+        self.solver = CandidateSolver(self.store, )
 
     def teardown_method(self) -> None:
         shutil.rmtree(self.tmp, ignore_errors=True)
@@ -425,7 +425,7 @@ class TestCandidateSolverMultiple:
     def setup_method(self) -> None:
         self.tmp = Path(tempfile.mkdtemp())
         self.store = _make_store_with_two_ldos(self.tmp)
-        self.solver = CandidateSolver(self.store, use_mock=True)
+        self.solver = CandidateSolver(self.store, )
 
     def teardown_method(self) -> None:
         shutil.rmtree(self.tmp, ignore_errors=True)
@@ -456,7 +456,7 @@ class TestCandidateSolverEmptyStore:
     def setup_method(self) -> None:
         self.tmp = Path(tempfile.mkdtemp())
         self.store = ComponentStore(self.tmp)
-        self.solver = CandidateSolver(self.store, use_mock=True)
+        self.solver = CandidateSolver(self.store, )
 
     def teardown_method(self) -> None:
         shutil.rmtree(self.tmp, ignore_errors=True)
@@ -483,7 +483,7 @@ class TestScoreWeights:
     def setup_method(self) -> None:
         self.tmp = Path(tempfile.mkdtemp())
         store = _make_store(self.tmp)
-        self.solver = CandidateSolver(store, use_mock=True)
+        self.solver = CandidateSolver(store, )
 
     def teardown_method(self) -> None:
         shutil.rmtree(self.tmp, ignore_errors=True)
@@ -593,7 +593,7 @@ class TestDataModels:
         tmp = Path(tempfile.mkdtemp())
         try:
             store = _make_store(tmp)
-            solver = CandidateSolver(store, use_mock=True)
+            solver = CandidateSolver(store, )
             result = solver.solve(_ldo_requirement())
             top = result.candidates[0]
             assert "AMS1117-3.3" in top.name
@@ -881,7 +881,7 @@ class TestCandidateSolverBoost:
     def setup_method(self) -> None:
         self.tmp = Path(tempfile.mkdtemp())
         self.store = _make_store_with_boost(self.tmp)
-        self.solver = CandidateSolver(self.store, use_mock=True)
+        self.solver = CandidateSolver(self.store, )
 
     def teardown_method(self) -> None:
         shutil.rmtree(self.tmp, ignore_errors=True)
@@ -977,7 +977,7 @@ class TestCandidateSolverFlyback:
     def setup_method(self) -> None:
         self.tmp = Path(tempfile.mkdtemp())
         self.store = _make_store_with_flyback(self.tmp)
-        self.solver = CandidateSolver(self.store, use_mock=True)
+        self.solver = CandidateSolver(self.store, )
 
     def teardown_method(self) -> None:
         shutil.rmtree(self.tmp, ignore_errors=True)
@@ -1051,7 +1051,7 @@ class TestCandidateSolverSepic:
     def setup_method(self) -> None:
         self.tmp = Path(tempfile.mkdtemp())
         self.store = _make_store_with_sepic(self.tmp)
-        self.solver = CandidateSolver(self.store, use_mock=True)
+        self.solver = CandidateSolver(self.store, )
 
     def teardown_method(self) -> None:
         shutil.rmtree(self.tmp, ignore_errors=True)
@@ -1113,7 +1113,7 @@ class TestCandidateSolverOpamp:
     def setup_method(self) -> None:
         self.tmp = Path(tempfile.mkdtemp())
         self.store = _make_store_with_opamp(self.tmp)
-        self.solver = CandidateSolver(self.store, use_mock=True)
+        self.solver = CandidateSolver(self.store, )
 
     def teardown_method(self) -> None:
         shutil.rmtree(self.tmp, ignore_errors=True)

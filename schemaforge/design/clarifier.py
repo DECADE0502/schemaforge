@@ -3,10 +3,6 @@
 检测缺失的设计约束，区分必要参数和可选参数，
 生成带风险说明的结构化假设，并产出用户在设计前必须回答的问题。
 
-两种模式：
-- Mock 模式（默认）: 基于规则的约束检测，适用于离线测试
-- 可扩展模式: 预留 AI 接口（未来扩展）
-
 支持的模块分类:
 - ldo: 线性稳压器
 - buck: 开关降压器
@@ -15,10 +11,10 @@
 
 用法::
 
-    planner = DesignPlanner(use_mock=True)
+    planner = DesignPlanner()
     plan = planner.plan("5V转3.3V稳压电路，带LED指示灯")
 
-    clarifier = RequirementClarifier(use_mock=True)
+    clarifier = RequirementClarifier()
     result = clarifier.clarify("5V转3.3V稳压电路，带LED指示灯", plan)
 
     if result.can_proceed:
@@ -273,13 +269,10 @@ class RequirementClarifier:
 
     检测规划结果中的缺失约束，区分必要参数和可选参数，
     生成假设和需要用户回答的问题。
-
-    Args:
-        use_mock: True 使用规则模式（默认），False 预留给未来 AI 模式
     """
 
-    def __init__(self, use_mock: bool = True) -> None:
-        self.use_mock = use_mock
+    def __init__(self) -> None:
+        pass
 
     def clarify(self, user_input: str, plan: DesignPlan) -> ClarificationResult:
         """分析设计规划，产出澄清结果
@@ -291,8 +284,6 @@ class RequirementClarifier:
         Returns:
             ClarificationResult 澄清结果
         """
-        if self.use_mock:
-            return self._clarify_mock(user_input, plan)
         return self._clarify_ai(user_input, plan)
 
     # ----------------------------------------------------------

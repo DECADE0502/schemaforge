@@ -136,7 +136,7 @@ class TestLdoClarification:
     """LDO 模块的约束检测"""
 
     def setup_method(self) -> None:
-        self.clarifier = RequirementClarifier(use_mock=True)
+        self.clarifier = RequirementClarifier()
 
     def test_ldo_complete_input(self) -> None:
         """LDO 含 v_in 和 v_out → 可以继续，无缺失必要约束"""
@@ -227,7 +227,7 @@ class TestBuckClarification:
     """Buck 模块的约束检测"""
 
     def setup_method(self) -> None:
-        self.clarifier = RequirementClarifier(use_mock=True)
+        self.clarifier = RequirementClarifier()
 
     def test_buck_missing_v_in(self) -> None:
         """Buck 缺少 v_in → 不能继续"""
@@ -271,7 +271,7 @@ class TestLedClarification:
     """LED 模块的约束检测"""
 
     def setup_method(self) -> None:
-        self.clarifier = RequirementClarifier(use_mock=True)
+        self.clarifier = RequirementClarifier()
 
     def test_led_missing_v_supply(self) -> None:
         """LED 缺少 v_supply → 不能继续"""
@@ -327,7 +327,7 @@ class TestVoltageDividerClarification:
     """电压分压器模块的约束检测"""
 
     def setup_method(self) -> None:
-        self.clarifier = RequirementClarifier(use_mock=True)
+        self.clarifier = RequirementClarifier()
 
     def test_divider_missing_v_out(self) -> None:
         """分压器缺少 v_out → 不能继续"""
@@ -369,7 +369,7 @@ class TestMultiModulePlan:
     """多模块设计计划的联合检查"""
 
     def setup_method(self) -> None:
-        self.clarifier = RequirementClarifier(use_mock=True)
+        self.clarifier = RequirementClarifier()
 
     def test_ldo_plus_led_complete(self) -> None:
         """LDO + LED 都完整 → 可以继续"""
@@ -436,7 +436,7 @@ class TestEmptyPlan:
     """空计划（无模块）的处理"""
 
     def setup_method(self) -> None:
-        self.clarifier = RequirementClarifier(use_mock=True)
+        self.clarifier = RequirementClarifier()
 
     def test_empty_plan_can_proceed(self) -> None:
         """空计划（无模块）→ can_proceed=True"""
@@ -462,7 +462,7 @@ class TestAssumptionQuality:
     """假设的字段质量检查"""
 
     def setup_method(self) -> None:
-        self.clarifier = RequirementClarifier(use_mock=True)
+        self.clarifier = RequirementClarifier()
 
     def test_all_assumptions_have_reason(self) -> None:
         """所有假设都有非空的 reason"""
@@ -509,7 +509,7 @@ class TestConfidence:
     """置信度计算"""
 
     def setup_method(self) -> None:
-        self.clarifier = RequirementClarifier(use_mock=True)
+        self.clarifier = RequirementClarifier()
 
     def test_complete_input_high_confidence(self) -> None:
         """完整输入 → 置信度 >= 0.7"""
@@ -561,7 +561,7 @@ class TestIRIntegration:
     """ClarificationResult 与 IR 模型的集成"""
 
     def setup_method(self) -> None:
-        self.clarifier = RequirementClarifier(use_mock=True)
+        self.clarifier = RequirementClarifier()
 
     def test_known_constraints_are_constraint_instances(self) -> None:
         """known_constraints 中的每个元素都是 Constraint 实例"""
@@ -628,7 +628,7 @@ class TestUnknownCategory:
     """未知分类的宽容处理"""
 
     def setup_method(self) -> None:
-        self.clarifier = RequirementClarifier(use_mock=True)
+        self.clarifier = RequirementClarifier()
 
     def test_unknown_category_does_not_raise(self) -> None:
         """未知分类不抛出异常"""
@@ -665,19 +665,9 @@ class TestUnknownCategory:
 class TestRequirementClarifierInit:
     """RequirementClarifier 初始化"""
 
-    def test_default_use_mock_true(self) -> None:
-        """默认 use_mock=True"""
+    def test_clarifier_returns_result(self) -> None:
+        """RequirementClarifier 返回 ClarificationResult"""
         clarifier = RequirementClarifier()
-        assert clarifier.use_mock is True
-
-    def test_use_mock_false(self) -> None:
-        """use_mock=False 可以设置（AI 模式预留）"""
-        clarifier = RequirementClarifier(use_mock=False)
-        assert clarifier.use_mock is False
-
-    def test_mock_false_still_returns_result(self) -> None:
-        """use_mock=False 当前等同于 mock，仍返回 ClarificationResult"""
-        clarifier = RequirementClarifier(use_mock=False)
         plan = _make_plan(_ldo_module({"v_in": "5", "v_out": "3.3"}))
         result = clarifier.clarify("LDO", plan)
         assert isinstance(result, ClarificationResult)

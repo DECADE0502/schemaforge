@@ -195,13 +195,13 @@ class TestBuckClarifier:
         )
 
     def test_complete_params_can_proceed(self):
-        clarifier = RequirementClarifier(use_mock=True)
+        clarifier = RequirementClarifier()
         plan = self._make_plan({"v_in": "12V", "v_out": "3.3V"})
         result = clarifier.clarify("12V转3.3V降压", plan)
         assert result.can_proceed
 
     def test_missing_v_in_blocks(self):
-        clarifier = RequirementClarifier(use_mock=True)
+        clarifier = RequirementClarifier()
         plan = self._make_plan({"v_out": "3.3V"})
         result = clarifier.clarify("转3.3V降压", plan)
         assert not result.can_proceed
@@ -209,7 +209,7 @@ class TestBuckClarifier:
         assert "v_in" in fields
 
     def test_missing_v_out_blocks(self):
-        clarifier = RequirementClarifier(use_mock=True)
+        clarifier = RequirementClarifier()
         plan = self._make_plan({"v_in": "12V"})
         result = clarifier.clarify("12V降压", plan)
         assert not result.can_proceed
@@ -217,7 +217,7 @@ class TestBuckClarifier:
         assert "v_out" in fields
 
     def test_optional_assumptions_generated(self):
-        clarifier = RequirementClarifier(use_mock=True)
+        clarifier = RequirementClarifier()
         plan = self._make_plan({"v_in": "12V", "v_out": "3.3V"})
         result = clarifier.clarify("12V转3.3V", plan)
         assumption_fields = {a.field for a in result.assumptions}
@@ -226,7 +226,7 @@ class TestBuckClarifier:
         assert "efficiency_target" in assumption_fields
 
     def test_confidence_complete(self):
-        clarifier = RequirementClarifier(use_mock=True)
+        clarifier = RequirementClarifier()
         plan = self._make_plan({"v_in": "12V", "v_out": "3.3V"})
         result = clarifier.clarify("12V转3.3V", plan)
         assert result.confidence > 0.5
@@ -572,7 +572,7 @@ class TestBuckE2EPipeline:
     def test_clarify_to_review_pipeline(self):
         store, tmp = _build_temp_store_with_buck()
         try:
-            planner = DesignPlanner(use_mock=True)
+            planner = DesignPlanner()
             plan = planner.plan("12V转3.3V Buck降压电路")
             assert len(plan.modules) >= 1
 
@@ -589,7 +589,7 @@ class TestBuckE2EPipeline:
                     parameters={"v_in": "12", "v_out": "3.3"},
                 )
 
-            clarifier = RequirementClarifier(use_mock=True)
+            clarifier = RequirementClarifier()
             clar_result = clarifier.clarify(
                 "12V转3.3V Buck降压",
                 DesignPlan(

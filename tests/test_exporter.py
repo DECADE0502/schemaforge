@@ -7,7 +7,7 @@ from schemaforge.core.exporter import _spice_value
 
 @pytest.fixture
 def engine():
-    return SchemaForgeEngine(use_mock=True)
+    return SchemaForgeEngine()
 
 
 class TestBOM:

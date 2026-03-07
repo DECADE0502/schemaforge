@@ -1,7 +1,7 @@
 """原理图设计页面
 
 DesignPage — 核心设计标签页，集成输入面板、SVG 预览、AI 对话、结果展示。
-支持两条后端链路：经典引擎 (core/engine) 和新主链 (workflows/design_session)。
+始终使用 SchemaForgeSession 真实 AI 链路。
 """
 
 from __future__ import annotations
@@ -13,6 +13,7 @@ from typing import Any
 from PySide6.QtCore import Qt, Slot
 from PySide6.QtWidgets import (
     QComboBox,
+    QFileDialog,
     QFrame,
     QHBoxLayout,
     QLabel,
@@ -27,19 +28,18 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from schemaforge.gui.pages.library_page import PdfImportDialog
+# PdfImportDialog no longer used directly — import flow goes through session
 from schemaforge.gui.widgets.chat_panel import ChatPanel
 from schemaforge.gui.widgets.progress_header import ProgressHeader
 from schemaforge.gui.widgets.svg_viewer import SvgZoomView
 from schemaforge.gui.workers.engine_worker import (
-    ClassicEngineWorker,
-    DesignSessionWorker,
-    RetryDesignWorker,
+    ConfirmImportWorker,
+    IngestAssetWorker,
     SchemaForgeOrchestratedWorker,
     SchemaForgeReviseWorker,
     SchemaForgeWorker,
 )
-from schemaforge.library.service import LibraryService
+# LibraryService no longer used directly — import flow goes through session
 from schemaforge.workflows.design_session import MissingModule
 
 logger = logging.getLogger(__name__)
@@ -72,7 +72,7 @@ class DesignPage(QWidget):
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
-        self._worker: ClassicEngineWorker | DesignSessionWorker | SchemaForgeWorker | SchemaForgeReviseWorker | SchemaForgeOrchestratedWorker | None = None
+        self._worker: SchemaForgeWorker | SchemaForgeReviseWorker | SchemaForgeOrchestratedWorker | None = None
         self._last_result: Any = None  # EngineResult | DesignSessionResult
 
         # --- 缺失器件待办状态 ---
@@ -82,8 +82,6 @@ class DesignPage(QWidget):
         self._missing_labels: dict[int, QLabel] = {}
         self._missing_buttons: dict[int, QPushButton] = {}
         self._original_input: str = ""
-        self._use_mock: bool = True
-        self._library_service: LibraryService | None = None
 
         # --- 统一工作台会话（多轮复用） ---
         self._sf_session: object | None = None  # SchemaForgeSession 实例
@@ -152,33 +150,11 @@ class DesignPage(QWidget):
             self._template_combo.addItem(desc, key)
         layout.addWidget(self._template_combo)
 
-        # 运行模式
-        mode_label = QLabel("运行模式")
-        layout.addWidget(mode_label)
-        self._mode_combo = QComboBox()
-        self._mode_combo.addItems(["离线Mock", "在线LLM"])
-        layout.addWidget(self._mode_combo)
-
-        # 后端链路
-        chain_label = QLabel("后端链路")
-        layout.addWidget(chain_label)
-        self._chain_combo = QComboBox()
-        self._chain_combo.addItems([
-            "经典链（模板驱动）",
-            "新主链（库驱动+IR+审查）",
-            "统一工作台（推荐）",
-        ])
-        self._chain_combo.setCurrentIndex(2)  # 默认选统一工作台
-        layout.addWidget(self._chain_combo)
-
         # 按钮行
         btn_row = QHBoxLayout()
         self._btn_generate = QPushButton("⚡ 生成")
         self._btn_generate.setMinimumHeight(36)
-        self._btn_demo = QPushButton("🎯 Demo")
-        self._btn_demo.setMinimumHeight(36)
         btn_row.addWidget(self._btn_generate)
-        btn_row.addWidget(self._btn_demo)
         layout.addLayout(btn_row)
 
         # 状态标签
@@ -290,7 +266,6 @@ class DesignPage(QWidget):
 
     def _connect_signals(self) -> None:
         self._btn_generate.clicked.connect(self._on_generate)
-        self._btn_demo.clicked.connect(self._on_demo)
         self._btn_fit.clicked.connect(self._svg_viewer.fit_to_view)
         self._btn_zoom_in.clicked.connect(self._svg_viewer.zoom_in)
         self._btn_zoom_out.clicked.connect(self._svg_viewer.zoom_out)
@@ -311,12 +286,6 @@ class DesignPage(QWidget):
         key = self._template_combo.itemData(index)
         if key and key in PRESETS:
             self._input_edit.setPlainText(PRESETS[key])
-
-    @Slot()
-    def _on_demo(self) -> None:
-        """Demo 按钮：填充预设需求并触发生成。"""
-        self._input_edit.setPlainText("5V转3.3V稳压电路，带绿色LED电源指示灯")
-        self._on_generate()
 
     @Slot(str)
     def _on_chat_send(self, message: str) -> None:
@@ -361,7 +330,7 @@ class DesignPage(QWidget):
 
     @Slot()
     def _on_generate(self) -> None:
-        """启动生成流程。"""
+        """启动生成流程（始终使用 SchemaForgeWorker 真实 AI 链路）。"""
         user_input = self._input_edit.toPlainText().strip()
         if not user_input:
             self._status_label.setText("⚠ 请输入电路需求描述")
@@ -381,45 +350,17 @@ class DesignPage(QWidget):
         self._progress_header.reset()
         self._tab_log.append(f"[启动] 输入: {user_input[:80]}…")
 
-        use_mock = self._mode_combo.currentIndex() == 0
-        chain_index = self._chain_combo.currentIndex()
-
         # 保存输入信息，供缺失器件重试时复用
         self._original_input = user_input
-        self._use_mock = use_mock
 
-        # 切换链路时清空会话状态
-        if chain_index != 2:
-            self._sf_session = None
-            self._has_design = False
-
-        if chain_index == 2:
-            # 统一工作台（推荐）— 复用已有会话
-            worker = SchemaForgeWorker(
-                user_input=user_input,
-                use_mock=use_mock,
-                session=self._sf_session,
-            )
-            worker.session_ready.connect(self._on_session_ready)
-            worker.progress.connect(self._on_worker_progress)
-            worker.finished.connect(self._on_sf_worker_finished)
-            worker.error.connect(self._on_worker_error)
-        elif chain_index == 1:
-            worker = DesignSessionWorker(
-                user_input=user_input,
-                use_mock=use_mock,
-            )
-            worker.progress.connect(self._on_worker_progress)
-            worker.finished.connect(self._on_worker_finished)
-            worker.error.connect(self._on_worker_error)
-        else:
-            worker = ClassicEngineWorker(
-                user_input=user_input,
-                use_mock=use_mock,
-            )
-            worker.progress.connect(self._on_worker_progress)
-            worker.finished.connect(self._on_worker_finished)
-            worker.error.connect(self._on_worker_error)
+        worker = SchemaForgeWorker(
+            user_input=user_input,
+            session=self._sf_session,
+        )
+        worker.session_ready.connect(self._on_session_ready)
+        worker.progress.connect(self._on_worker_progress)
+        worker.finished.connect(self._on_sf_worker_finished)
+        worker.error.connect(self._on_worker_error)
 
         self._worker = worker
         worker.start()
@@ -895,23 +836,123 @@ class DesignPage(QWidget):
         return card
 
     def _on_resolve_device(self, index: int) -> None:
-        """打开 PdfImportDialog 补录指定缺失器件。"""
+        """打开文件选择器，通过 SchemaForgeSession.ingest_asset 补录器件。"""
         missing = self._pending_missing.get(index)
         if missing is None:
             return
 
-        # 延迟初始化 LibraryService
-        if self._library_service is None:
-            self._library_service = LibraryService(store_dir="schemaforge/store")
+        if self._sf_session is None:
+            self._status_label.setText("⚠ 会话未初始化，请先发起设计请求")
+            return
 
-        dlg = PdfImportDialog(self._library_service, parent=self)
-        dlg._result_status.setText(
-            f"待补录: {missing.part_number} — {missing.description}"
-            if missing.part_number
-            else f"待补录: {missing.description or missing.role}"
+        if self._worker is not None:
+            self._status_label.setText("⚠ 正在运行中，请等待完成")
+            return
+
+        # 打开文件选择器
+        filepath, _ = QFileDialog.getOpenFileName(
+            self,
+            f"上传 {missing.part_number or '器件'} 的 Datasheet",
+            "",
+            "Datasheet 文件 (*.pdf *.png *.jpg *.jpeg *.bmp);;所有文件 (*)",
         )
-        dlg.device_imported.connect(partial(self._on_device_resolved, index))
-        dlg.exec()
+        if not filepath:
+            return  # 用户取消
+
+        self._status_label.setText(f"正在解析 {filepath.split('/')[-1]}…")
+        self._btn_generate.setEnabled(False)
+        self._tab_log.append(f"[导入] 上传资料: {filepath}")
+
+        worker = IngestAssetWorker(
+            session=self._sf_session,
+            filepath=filepath,
+        )
+        worker.progress.connect(self._on_worker_progress)
+        worker.finished.connect(partial(self._on_ingest_finished, index))
+        worker.error.connect(self._on_worker_error)
+
+        self._worker = worker
+        worker.start()
+
+    @Slot(object)
+    def _on_ingest_finished(self, index: int, result: Any) -> None:
+        """IngestAssetWorker 完成回调。"""
+        self._worker = None
+        self._btn_generate.setEnabled(True)
+
+        status = getattr(result, "status", "error")
+        message = getattr(result, "message", "")
+
+        if status == "needs_confirmation":
+            # 资料解析成功，展示预览并自动确认
+            self._tab_log.append(f"[导入] 解析成功: {message}")
+            self._chat_panel.add_message("assistant", f"✅ {message}")
+
+            # 自动确认导入（用户已通过文件选择表示意愿）
+            self._start_confirm_import(index)
+
+        elif status == "generated":
+            # 直接生成成功（罕见路径）
+            self._on_device_resolved(index)
+            bundle = getattr(result, "bundle", None)
+            if bundle is not None:
+                self._display_bundle(bundle)
+                self._has_design = True
+
+        else:
+            # 错误
+            self._status_label.setText(f"❌ 导入失败: {message}")
+            self._tab_log.append(f"[导入失败] {message}")
+            self._chat_panel.add_message("assistant", f"❌ {message}")
+
+    def _start_confirm_import(self, index: int) -> None:
+        """启动 ConfirmImportWorker 确认导入。"""
+        if self._sf_session is None or self._worker is not None:
+            return
+
+        self._status_label.setText("正在确认导入并生成设计…")
+        self._btn_generate.setEnabled(False)
+
+        worker = ConfirmImportWorker(
+            session=self._sf_session,
+            answers=None,  # 自动确认，无额外回答
+        )
+        worker.progress.connect(self._on_worker_progress)
+        worker.finished.connect(partial(self._on_confirm_import_finished, index))
+        worker.error.connect(self._on_worker_error)
+
+        self._worker = worker
+        worker.start()
+
+    @Slot(object)
+    def _on_confirm_import_finished(self, index: int, result: Any) -> None:
+        """ConfirmImportWorker 完成回调。"""
+        self._worker = None
+        self._btn_generate.setEnabled(True)
+
+        status = getattr(result, "status", "error")
+        message = getattr(result, "message", "")
+        bundle = getattr(result, "bundle", None)
+
+        if status == "generated" and bundle is not None:
+            # 入库成功 + 设计生成
+            self._on_device_resolved(index)
+            self._status_label.setText("✅ 器件导入并生成设计完成")
+            self._display_bundle(bundle)
+            self._has_design = True
+            self._chat_panel.add_message("assistant", f"✅ {message}")
+            self._tab_log.append(f"[导入完成] {message}")
+
+        elif status == "needs_confirmation":
+            # 校验未通过，需要补充信息
+            self._status_label.setText(f"⚠ 需要补充信息: {message}")
+            self._chat_panel.add_message("assistant", f"⚠ {message}")
+            self._tab_log.append(f"[需补充] {message}")
+
+        else:
+            self._status_label.setText(f"❌ 导入失败: {message}")
+            self._tab_log.append(f"[导入失败] {message}")
+            self._chat_panel.add_message("assistant", f"❌ {message}")
 
     def _on_device_resolved(self, index: int) -> None:
         """器件补录完成回调 — 更新卡片状态。"""
@@ -952,7 +993,7 @@ class DesignPage(QWidget):
             self._on_retry_design()
 
     def _on_retry_design(self) -> None:
-        """隐藏缺失面板，恢复 SVG 预览，启动 RetryDesignWorker。"""
+        """隐藏缺失面板，恢复 SVG 预览，重新运行（始终使用 SchemaForgeWorker）。"""
         if self._worker is not None:
             self._status_label.setText("⚠ 正在运行中，请等待完成")
             return
@@ -969,12 +1010,13 @@ class DesignPage(QWidget):
         self._progress_header.reset()
         self._tab_log.append(f"[重试] 补录完成，重新运行: {self._original_input[:80]}…")
 
-        worker = RetryDesignWorker(
+        worker = SchemaForgeWorker(
             user_input=self._original_input,
-            use_mock=self._use_mock,
+            session=self._sf_session,
         )
+        worker.session_ready.connect(self._on_session_ready)
         worker.progress.connect(self._on_worker_progress)
-        worker.finished.connect(self._on_worker_finished)
+        worker.finished.connect(self._on_sf_worker_finished)
         worker.error.connect(self._on_worker_error)
 
         self._worker = worker

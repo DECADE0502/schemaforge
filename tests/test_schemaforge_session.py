@@ -109,14 +109,14 @@ def test_session_get_orchestrator_returns_orchestrator(tmp_path: Path) -> None:
     """get_orchestrator() 返回 Orchestrator 实例。"""
     from schemaforge.agent.orchestrator import Orchestrator
 
-    session = SchemaForgeSession(tmp_path / "store", use_mock=True)
+    session = SchemaForgeSession(tmp_path / "store", )
     orch = session.get_orchestrator()
     assert isinstance(orch, Orchestrator)
 
 
 def test_session_get_orchestrator_merges_all_tools(tmp_path: Path) -> None:
     """Orchestrator 的注册表包含全局工具和会话工具。"""
-    session = SchemaForgeSession(tmp_path / "store", use_mock=True)
+    session = SchemaForgeSession(tmp_path / "store", )
     orch = session.get_orchestrator()
     # 全局工具
     assert orch.registry.get_tool("build_symbol") is not None
@@ -131,7 +131,7 @@ def test_session_get_orchestrator_system_prompt_has_tool_descriptions(
     tmp_path: Path,
 ) -> None:
     """Orchestrator 的 system prompt 包含工具描述。"""
-    session = SchemaForgeSession(tmp_path / "store", use_mock=True)
+    session = SchemaForgeSession(tmp_path / "store", )
     orch = session.get_orchestrator()
     # system_prompt 应包含工具名
     assert "start_design_request" in orch.system_prompt
@@ -140,7 +140,7 @@ def test_session_get_orchestrator_system_prompt_has_tool_descriptions(
 
 def test_session_get_orchestrator_is_cached(tmp_path: Path) -> None:
     """多次调用 get_orchestrator() 返回同一实例。"""
-    session = SchemaForgeSession(tmp_path / "store", use_mock=True)
+    session = SchemaForgeSession(tmp_path / "store", )
     orch1 = session.get_orchestrator()
     orch2 = session.get_orchestrator()
     assert orch1 is orch2
@@ -158,7 +158,7 @@ def test_revise_add_led_module(tmp_path: Path) -> None:
         DeviceModel(part_number="AMS1117-3.3", category="ldo",
                     specs={"v_out": "3.3V"})
     )
-    session = SchemaForgeSession(tmp_path / "store", use_mock=True)
+    session = SchemaForgeSession(tmp_path / "store", )
     session.start("用 AMS1117-3.3 搭一个 5V 转 3.3V 稳压电路")
 
     r = session.revise("加一个指示灯")
@@ -173,7 +173,7 @@ def test_revise_remove_led_module(tmp_path: Path) -> None:
         DeviceModel(part_number="AMS1117-3.3", category="ldo",
                     specs={"v_out": "3.3V"})
     )
-    session = SchemaForgeSession(tmp_path / "store", use_mock=True)
+    session = SchemaForgeSession(tmp_path / "store", )
     session.start("用 AMS1117-3.3 搭一个 5V 转 3.3V 稳压电路 带 LED 指示灯")
 
     r = session.revise("去掉指示灯模块")
@@ -188,7 +188,7 @@ def test_revise_add_decoupling_cap(tmp_path: Path) -> None:
         DeviceModel(part_number="AMS1117-3.3", category="ldo",
                     specs={"v_out": "3.3V"})
     )
-    session = SchemaForgeSession(tmp_path / "store", use_mock=True)
+    session = SchemaForgeSession(tmp_path / "store", )
     session.start("用 AMS1117-3.3 搭一个 5V 转 3.3V 稳压电路")
 
     r = session.revise("加一个去耦电容")
@@ -203,7 +203,7 @@ def test_revise_add_rc_filter(tmp_path: Path) -> None:
         DeviceModel(part_number="AMS1117-3.3", category="ldo",
                     specs={"v_out": "3.3V"})
     )
-    session = SchemaForgeSession(tmp_path / "store", use_mock=True)
+    session = SchemaForgeSession(tmp_path / "store", )
     session.start("用 AMS1117-3.3 搭一个 5V 转 3.3V 稳压电路")
 
     r = session.revise("加一个滤波器")
@@ -218,7 +218,7 @@ def test_revise_remove_filter(tmp_path: Path) -> None:
         DeviceModel(part_number="AMS1117-3.3", category="ldo",
                     specs={"v_out": "3.3V"})
     )
-    session = SchemaForgeSession(tmp_path / "store", use_mock=True)
+    session = SchemaForgeSession(tmp_path / "store", )
     session.start("用 AMS1117-3.3 搭一个 5V 转 3.3V 稳压电路")
 
     session.revise("加一个滤波器")
@@ -234,7 +234,7 @@ def test_revise_structural_ops_with_param_changes(tmp_path: Path) -> None:
         DeviceModel(part_number="AMS1117-3.3", category="ldo",
                     specs={"v_out": "3.3V"})
     )
-    session = SchemaForgeSession(tmp_path / "store", use_mock=True)
+    session = SchemaForgeSession(tmp_path / "store", )
     session.start("用 AMS1117-3.3 搭一个 5V 转 3.3V 稳压电路")
 
     # "输出电容改成 100uF" is a param change, structural ops would come from separate parsing
@@ -249,7 +249,7 @@ def test_revise_unsupported_structural_op_returns_warning(tmp_path: Path) -> Non
         DeviceModel(part_number="AMS1117-3.3", category="ldo",
                     specs={"v_out": "3.3V"})
     )
-    session = SchemaForgeSession(tmp_path / "store", use_mock=True)
+    session = SchemaForgeSession(tmp_path / "store", )
     session.start("用 AMS1117-3.3 搭一个 5V 转 3.3V 稳压电路")
 
     # 手动注入一个不支持的结构化操作（直接走 _execute_add_module）
@@ -381,7 +381,7 @@ def test_topology_draft_generator_llm_fallback_to_mock() -> None:
     from schemaforge.design.topology_draft import TopologyDraftGenerator
 
     device = DeviceModel(part_number="AMS1117-3.3", category="ldo")
-    gen = TopologyDraftGenerator(use_mock=False)
+    gen = TopologyDraftGenerator()
     # 因为真 AI 不可用（测试环境），应降级到 mock 而非 crash
     draft = gen.generate(device)
     assert draft.name == "ldo"
@@ -393,15 +393,15 @@ def test_topology_draft_generator_llm_fallback_to_mock() -> None:
 
 
 def test_clarifier_ai_path_returns_result() -> None:
-    """use_mock=False 时不再抛异常，返回有效结果。"""
+    """ 时不再抛异常，返回有效结果。"""
     from schemaforge.design.clarifier import RequirementClarifier
     from schemaforge.design.planner import DesignPlanner
 
-    planner = DesignPlanner(use_mock=True)
+    planner = DesignPlanner()
     plan = planner.plan("5V 转 3.3V 稳压电路")
 
     # AI 路径（真 AI 不可用时降级到 mock 结果）
-    clarifier = RequirementClarifier(use_mock=False)
+    clarifier = RequirementClarifier()
     result = clarifier.clarify("5V 转 3.3V 稳压电路", plan)
     # 应该返回有效的 ClarificationResult 而不是崩溃
     assert result is not None
@@ -437,14 +437,14 @@ def test_exact_part_resolver_supports_alias(tmp_path: Path) -> None:
 
 
 def test_session_returns_needs_asset_for_missing_exact_part(tmp_path: Path) -> None:
-    session = SchemaForgeSession(tmp_path / "store", use_mock=True)
+    session = SchemaForgeSession(tmp_path / "store", )
     result = session.start("帮我用 TPS54202 搭一个 20V 转 5V 的 DCDC 电路")
     assert result.status == "needs_asset"
     assert result.missing_part_number == "TPS54202"
 
 
 def test_session_import_and_generate_buck_design(tmp_path: Path) -> None:
-    session = SchemaForgeSession(tmp_path / "store", use_mock=True)
+    session = SchemaForgeSession(tmp_path / "store", )
     start = session.start("帮我用 TPS54202 搭一个 20V 转 5V 的 DCDC 电路")
     assert start.status == "needs_asset"
 
@@ -492,7 +492,7 @@ def test_session_import_and_generate_buck_design(tmp_path: Path) -> None:
 
 
 def test_session_revision_updates_output_cap_and_led(tmp_path: Path) -> None:
-    session = SchemaForgeSession(tmp_path / "store", use_mock=True)
+    session = SchemaForgeSession(tmp_path / "store", )
     store = ComponentStore(tmp_path / "store")
     store.save_device(
         DeviceModel(
@@ -525,7 +525,7 @@ def test_confirm_import_rejects_incomplete_draft_and_store_stays_empty(
     且 ComponentStore 中不应有脏数据残留。"""
     from schemaforge.library.validator import DeviceDraft
 
-    session = SchemaForgeSession(tmp_path / "store", use_mock=True)
+    session = SchemaForgeSession(tmp_path / "store", )
     session.start("帮我用 TPS54202 搭一个 20V 转 5V 的 DCDC 电路")
 
     # 直接注入一个空草稿，模拟 ingest_asset 解析出的不完整结果
@@ -895,7 +895,7 @@ class TestSchemaForgeSessionReviseEnhanced:
             DeviceModel(part_number="AMS1117-5.0", category="ldo",
                         specs={"v_out": "5.0V"})
         )
-        session = SchemaForgeSession(tmp_path / "store", use_mock=True)
+        session = SchemaForgeSession(tmp_path / "store", )
 
         # 初始设计
         r1 = session.start("用 AMS1117-3.3 搭一个 5V 转 3.3V 稳压电路")
@@ -916,7 +916,7 @@ class TestSchemaForgeSessionReviseEnhanced:
             DeviceModel(part_number="AMS1117-3.3", category="ldo",
                         specs={"v_out": "3.3V"})
         )
-        session = SchemaForgeSession(tmp_path / "store", use_mock=True)
+        session = SchemaForgeSession(tmp_path / "store", )
         session.start("用 AMS1117-3.3 搭一个 5V 转 3.3V 稳压电路")
 
         r = session.revise("换成 TPS5430")
@@ -930,7 +930,7 @@ class TestSchemaForgeSessionReviseEnhanced:
             DeviceModel(part_number="AMS1117-3.3", category="ldo",
                         specs={"v_out": "3.3V"})
         )
-        session = SchemaForgeSession(tmp_path / "store", use_mock=True)
+        session = SchemaForgeSession(tmp_path / "store", )
         session.start("用 AMS1117-3.3 搭一个 5V 转 3.3V 稳压电路")
 
         r = session.revise("开关频率改成 600kHz")
@@ -943,7 +943,7 @@ class TestSchemaForgeSessionReviseEnhanced:
             DeviceModel(part_number="AMS1117-3.3", category="ldo",
                         specs={"v_out": "3.3V"})
         )
-        session = SchemaForgeSession(tmp_path / "store", use_mock=True)
+        session = SchemaForgeSession(tmp_path / "store", )
         session.start("用 AMS1117-3.3 搭一个 5V 转 3.3V 稳压电路")
 
         r = session.revise("输出电容改成 100uF")

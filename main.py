@@ -1,9 +1,8 @@
 #!/usr/bin/env python3
-"""SchemaForge -- 约束驱动的AI原理图生成器
+"""SchemaForge -- AI驱动的原理图生成器
 
 CLI入口，支持：
 - 交互模式：输入电路需求，生成原理图
-- Demo模式：运行预设示例
 - 单次模式：命令行传入需求
 """
 
@@ -25,13 +24,9 @@ sys.path.insert(0, str(Path(__file__).parent))
 from rich.console import Console
 from rich.markdown import Markdown
 from rich.panel import Panel
-from rich.table import Table
 from rich.text import Text
 
-from schemaforge.core.engine import SchemaForgeEngine
-from schemaforge.core.templates import list_templates, get_template
-from schemaforge.render.composite import render_composite
-from schemaforge.workflows.design_session import DesignSession
+from schemaforge.workflows.schemaforge_session import SchemaForgeSession
 
 console = Console(force_terminal=True)
 
@@ -40,196 +35,157 @@ def print_banner() -> None:
     """打印欢迎横幅"""
     banner = Text()
     banner.append("SchemaForge", style="bold cyan")
-    banner.append(" -- 约束驱动的AI原理图生成器\n", style="dim")
+    banner.append(" -- AI驱动的原理图生成器\n", style="dim")
     banner.append(
         "输入自然语言电路需求，自动生成原理图SVG + BOM清单 + SPICE网表", style="dim"
     )
     console.print(Panel(banner, border_style="cyan"))
 
 
-def print_templates() -> None:
-    """打印可用模板列表"""
-    table = Table(title="可用电路模板", border_style="blue")
-    table.add_column("模板名", style="cyan")
-    table.add_column("显示名", style="green")
-    table.add_column("分类", style="yellow")
-    table.add_column("说明")
+def process_and_display_unified(user_input: str, sf_session: SchemaForgeSession) -> None:
+    """统一工作台处理并显示结果"""
+    console.print(
+        f"\n[bold yellow]处理中 (统一工作台)...[/bold yellow] 输入: {user_input}\n"
+    )
 
-    for name in list_templates():
-        t = get_template(name)
-        if t:
-            table.add_row(t.name, t.display_name, t.category, t.description)
+    result = sf_session.start(user_input)
 
-    console.print(table)
-    console.print()
-
-
-def process_and_display(user_input: str, engine: SchemaForgeEngine) -> None:
-    """处理用户输入并显示结果"""
-    console.print(f"\n[bold yellow]处理中...[/bold yellow] 输入: {user_input}\n")
-
-    result = engine.process(user_input)
-
-    if not result.success:
-        console.print(f"[bold red][ERROR][/bold red] 阶段: {result.stage}")
-        console.print(f"  {result.error}")
+    if result.status == "needs_asset":
+        console.print(
+            f"[bold yellow][MISSING][/bold yellow] {result.message}"
+        )
+        console.print(
+            f"  缺失器件: [bold]{result.missing_part_number}[/bold]"
+        )
+        console.print("  请使用 GUI 模式上传 datasheet 补录器件。")
         return
 
-    # 成功 -- 显示结果
+    if result.status != "generated" or result.bundle is None:
+        console.print(f"[bold red][ERROR][/bold red] {result.message}")
+        return
+
+    bundle = result.bundle
     console.print(
         Panel(
             f"[bold green][PASS] 设计完成[/bold green]\n"
-            f"[bold]{result.design_name}[/bold]\n"
-            f"{result.description}",
-            title="设计概要",
+            f"[bold]{bundle.device.part_number}[/bold] — {bundle.device.description}",
+            title="设计概要 (统一工作台)",
             border_style="green",
         )
     )
 
-    # SVG路径
-    if result.svg_paths:
-        console.print("\n[bold cyan][SVG] 原理图:[/bold cyan]")
-        for p in result.svg_paths:
-            console.print(f"  -> {p}")
+    if bundle.svg_path:
+        console.print(f"\n[bold cyan][SVG][/bold cyan] {bundle.svg_path}")
 
-    # ERC结果
-    if result.erc_errors:
-        erc_errors = [e for e in result.erc_errors if e.severity.value == "error"]
-        erc_warnings = [e for e in result.erc_errors if e.severity.value != "error"]
-        if erc_errors:
-            console.print(f"\n[bold red][ERC] 错误: {len(erc_errors)}[/bold red]")
-            for e in erc_errors[:5]:
-                console.print(f"  [X] {e.message}")
-        if erc_warnings:
-            console.print(f"\n[yellow][ERC] 警告: {len(erc_warnings)}[/yellow]")
-    else:
-        console.print("\n[green][ERC] 检查通过[/green]")
-
-    # BOM
-    if result.bom_text:
+    if bundle.bom_text:
         console.print("\n[bold cyan][BOM] 清单:[/bold cyan]")
-        console.print(Markdown(result.bom_text))
+        console.print(Markdown(bundle.bom_text))
 
-    # SPICE
-    if result.spice_text:
+    if bundle.spice_text:
         console.print("\n[bold cyan][SPICE] 网表:[/bold cyan]")
-        console.print(Panel(result.spice_text, title="SPICE", border_style="dim"))
+        console.print(Panel(bundle.spice_text, title="SPICE", border_style="dim"))
 
-    # 设计备注
-    if result.notes:
-        console.print("\n[bold cyan][NOTE] 设计备注:[/bold cyan]")
-        console.print(f"  {result.notes}")
+    if bundle.rationale:
+        console.print("\n[bold cyan][设计依据][/bold cyan]")
+        for r in bundle.rationale:
+            console.print(f"  • {r}")
 
     console.print()
 
 
-def process_and_display_session(user_input: str, session: DesignSession) -> None:
+def process_and_display_orchestrated(user_input: str, sf_session: SchemaForgeSession) -> None:
+    """AI 编排模式处理并显示结果"""
     console.print(
-        f"\n[bold yellow]处理中 (新主链)...[/bold yellow] 输入: {user_input}\n"
+        f"\n[bold yellow]AI 编排中...[/bold yellow] 输入: {user_input}\n"
     )
 
-    result = session.run(user_input)
+    step = sf_session.run_orchestrated(user_input)
 
-    if not result.success:
-        console.print(f"[bold red][ERROR][/bold red] 阶段: {result.stage}")
-        console.print(f"  {result.error}")
-        return
+    action_name = step.action.value if step.action is not None else "unknown"
 
-    design_name = result.plan.name if result.plan else "未命名"
-    console.print(
-        Panel(
-            f"[bold green][PASS] 设计完成[/bold green]\n[bold]{design_name}[/bold]",
-            title="设计概要 (新主链)",
-            border_style="green",
-        )
-    )
-
-    if result.svg_paths:
-        console.print("\n[bold cyan][SVG] 原理图:[/bold cyan]")
-        for p in result.svg_paths:
-            console.print(f"  -> {p}")
-
-    if result.bom_text:
-        console.print("\n[bold cyan][BOM] 清单:[/bold cyan]")
-        console.print(Markdown(result.bom_text))
-
-    if result.spice_text:
-        console.print("\n[bold cyan][SPICE] 网表:[/bold cyan]")
-        console.print(Panel(result.spice_text, title="SPICE", border_style="dim"))
-
-    for mr in result.modules:
-        d = mr.to_dict()
-        if d.get("solver_candidates", 0) > 0:
-            console.print(
-                f"  [dim]{d['role']}[/dim]: "
-                f"{d['device']} ({d['solver_candidates']} 候选方案, "
-                f"审查{'通过' if d.get('review_passed') else '未通过'})"
+    if action_name == "finalize":
+        console.print(
+            Panel(
+                f"[bold green][PASS] AI 编排完成[/bold green]\n{step.message}",
+                title="AI 编排结果",
+                border_style="green",
             )
-
-    if result.design_review is not None:
-        review = result.design_review
-        blocking = [i for i in review.issues if i.severity.value == "blocking"]
-        warnings = [i for i in review.issues if i.severity.value == "warning"]
-        console.print(
-            f"\n[bold cyan][REVIEW][/bold cyan] "
-            f"阻断: {len(blocking)}, 警告: {len(warnings)}, "
-            f"总计: {len(review.issues)} 条审查意见"
         )
+        bundle = sf_session.bundle
+        if bundle is not None:
+            if bundle.svg_path:
+                console.print(f"\n[bold cyan][SVG][/bold cyan] {bundle.svg_path}")
+            if bundle.bom_text:
+                console.print("\n[bold cyan][BOM] 清单:[/bold cyan]")
+                console.print(Markdown(bundle.bom_text))
 
-    if result.reference_design is not None:
-        console.print(
-            f"\n[bold cyan][REF][/bold cyan] "
-            f"匹配参考设计: {result.reference_design.name}"
-        )
+    elif action_name == "ask_user":
+        console.print(f"[bold yellow][AI 提问][/bold yellow] {step.message}")
+        questions = getattr(step, "questions", [])
+        for q in questions:
+            q_text = getattr(q, "text", str(q))
+            console.print(f"  ? {q_text}")
 
-    ir = session.ir
-    if ir is not None:
-        summary = ir.to_summary()
-        console.print(
-            f"\n[dim]IR: v{summary['version']}, "
-            f"{summary['module_count']} 模块, "
-            f"{summary['svg_count']} SVG, "
-            f"{summary['review_blocking']} 阻断, "
-            f"{summary['review_warnings']} 警告[/dim]"
-        )
+    elif action_name == "fail":
+        console.print(f"[bold red][FAIL][/bold red] {step.message}")
+
+    else:
+        console.print(f"[dim][AI {action_name}] {step.message}[/dim]")
 
     console.print()
 
 
-def run_demo(engine: SchemaForgeEngine) -> None:
-    """运行预设Demo"""
-    console.print("[bold magenta][DEMO] 运行Demo模式[/bold magenta]\n")
-
-    demos = [
-        ("5V转3.3V稳压电路，带绿色LED电源指示灯", "LDO+LED组合"),
-        ("12V到3.3V的分压采样电路", "电压分压器"),
-        ("1kHz低通滤波器", "RC低通滤波器"),
-    ]
-
-    for user_input, desc in demos:
-        console.rule(f"[bold]{desc}[/bold]")
-        process_and_display(user_input, engine)
-
-    # 额外渲染组合电路
-    console.rule("[bold]组合电路(LDO+LED一体化渲染)[/bold]")
-    path = render_composite()
-    console.print(f"[green][PASS] 组合电路SVG: {path}[/green]\n")
-
+def run_interactive_unified(sf_session: SchemaForgeSession) -> None:
+    """统一工作台交互模式，支持多轮修改。"""
     console.print(
-        "[bold green][DONE] Demo完成! 所有SVG文件在 schemaforge/output/ 目录下。[/bold green]"
+        "[bold]进入统一工作台交互模式[/bold] "
+        "(输入 'quit' 退出, 首条消息发起设计, 后续消息修改设计)\n"
     )
 
+    has_design = False
+    while True:
+        try:
+            prompt = "[bold cyan]修改指令 > [/bold cyan]" if has_design else "[bold cyan]电路需求 > [/bold cyan]"
+            user_input = console.input(prompt).strip()
+        except (KeyboardInterrupt, EOFError):
+            console.print("\n[dim]再见![/dim]")
+            break
 
-def run_interactive(
-    engine: SchemaForgeEngine,
-    session: DesignSession | None = None,
-) -> None:
-    console.print("[bold]进入交互模式[/bold] (输入 'quit' 退出, 'help' 查看帮助)\n")
+        if not user_input:
+            continue
+        if user_input.lower() in ("quit", "exit", "q"):
+            console.print("[dim]再见![/dim]")
+            break
+
+        if has_design:
+            # 多轮修改
+            console.print(f"\n[bold yellow]修改中...[/bold yellow] {user_input}\n")
+            result = sf_session.revise(user_input)
+            if result.status == "generated" and result.bundle is not None:
+                bundle = result.bundle
+                console.print(f"[bold green][PASS][/bold green] {result.message}")
+                if bundle.svg_path:
+                    console.print(f"  [cyan]SVG:[/cyan] {bundle.svg_path}")
+            else:
+                console.print(f"[bold red][ERROR][/bold red] {result.message}")
+            console.print()
+        else:
+            # 首次设计
+            process_and_display_unified(user_input, sf_session)
+            has_design = sf_session.bundle is not None
+
+
+def run_interactive_orchestrated(sf_session: SchemaForgeSession) -> None:
+    """AI 编排交互模式。"""
+    console.print(
+        "[bold]进入 AI 编排交互模式[/bold] "
+        "(输入 'quit' 退出, AI 自动执行工具循环)\n"
+    )
 
     while True:
         try:
             user_input = console.input(
-                "[bold cyan]请输入电路需求 > [/bold cyan]"
+                "[bold cyan]对话 > [/bold cyan]"
             ).strip()
         except (KeyboardInterrupt, EOFError):
             console.print("\n[dim]再见![/dim]")
@@ -240,98 +196,35 @@ def run_interactive(
         if user_input.lower() in ("quit", "exit", "q"):
             console.print("[dim]再见![/dim]")
             break
-        if user_input.lower() == "help":
-            print_templates()
-            console.print("示例输入:")
-            console.print("  * 设计一个5V转3.3V的稳压电路")
-            console.print("  * LED电源指示灯")
-            console.print("  * 12V到3.3V分压采样")
-            console.print("  * 1kHz低通滤波器\n")
-            continue
-        if user_input.lower() == "demo":
-            run_demo(engine)
-            continue
 
-        if session is not None:
-            process_and_display_session(user_input, session)
-        else:
-            process_and_display(user_input, engine)
+        process_and_display_orchestrated(user_input, sf_session)
 
 
 def main() -> None:
     """主入口"""
-    parser = argparse.ArgumentParser(
-        description="SchemaForge -- 约束驱动的AI原理图生成器",
-    )
-    parser.add_argument(
-        "--demo",
-        action="store_true",
-        help="运行预设Demo(离线模式)",
-    )
-    parser.add_argument(
-        "--online",
-        action="store_true",
-        help="使用真实LLM(需要API Key)",
-    )
-    parser.add_argument(
-        "--input",
-        "-i",
-        type=str,
-        default="",
-        help="直接传入电路需求(单次模式)",
-    )
-    parser.add_argument(
-        "--templates",
-        action="store_true",
-        help="列出所有可用模板",
-    )
-    parser.add_argument(
-        "--new-chain",
-        action="store_true",
-        help="使用新主链(DesignSession: 库驱动+IR+审查+多候选)",
-    )
-    parser.add_argument(
-        "--store",
-        type=str,
-        default="",
-        help="器件库路径(默认: schemaforge/store)",
-    )
-
+    parser = argparse.ArgumentParser(description="SchemaForge -- AI驱动的原理图生成器")
+    parser.add_argument("--orchestrated", action="store_true", help="使用AI编排模式")
+    parser.add_argument("-i", "--input", type=str, default="", help="直接传入电路需求(单次模式)")
+    parser.add_argument("--store", type=str, default="", help="器件库路径(默认: schemaforge/store)")
     args = parser.parse_args()
 
     print_banner()
+    store_dir = Path(args.store) if args.store else Path("schemaforge/store")
+    sf_session = SchemaForgeSession(store_dir=store_dir)
 
-    if args.templates:
-        print_templates()
-        return
+    chain_label = "AI 编排" if args.orchestrated else "统一工作台"
+    console.print(f"[dim]后端: {chain_label}[/dim]\n")
 
-    use_mock = not args.online
-    engine = SchemaForgeEngine(use_mock=use_mock)
-
-    session: DesignSession | None = None
-    if args.new_chain:
-        store_dir = Path(args.store) if args.store else Path("schemaforge/store")
-        session = DesignSession(
-            store_dir=store_dir,
-            use_mock=use_mock,
-            progress_callback=lambda msg, pct: console.print(
-                f"  [dim][{pct}%] {msg}[/dim]"
-            ),
-        )
-
-    chain_label = "新主链" if args.new_chain else "经典链"
-    mode = "离线Mock" if use_mock else "在线LLM"
-    console.print(f"[dim]模式: {mode} | 后端: {chain_label}[/dim]\n")
-
-    if args.demo:
-        run_demo(engine)
-    elif args.input:
-        if session is not None:
-            process_and_display_session(args.input, session)
+    if args.input:
+        if args.orchestrated:
+            process_and_display_orchestrated(args.input, sf_session)
         else:
-            process_and_display(args.input, engine)
+            process_and_display_unified(args.input, sf_session)
     else:
-        run_interactive(engine, session)
+        if args.orchestrated:
+            run_interactive_orchestrated(sf_session)
+        else:
+            run_interactive_unified(sf_session)
 
 
 if __name__ == "__main__":

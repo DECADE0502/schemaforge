@@ -8,7 +8,7 @@
 
 用法::
 
-    worker = SchemaForgeWorker("用 TPS54202 搭一个 20V转5V的DCDC电路", use_mock=True)
+    worker = SchemaForgeWorker("用 TPS54202 搭一个 20V转5V的DCDC电路")
     worker.progress.connect(on_progress)
     worker.finished.connect(on_done)
     worker.error.connect(on_error)
@@ -44,12 +44,10 @@ class ClassicEngineWorker(QThread):
     def __init__(
         self,
         user_input: str,
-        use_mock: bool = True,
         parent: object | None = None,
     ) -> None:
         super().__init__(parent)  # type: ignore[arg-type]
         self.user_input = user_input
-        self.use_mock = use_mock
 
     def _on_progress(self, message: str, percentage: int) -> None:
         """进度回调，从引擎线程转发信号。"""
@@ -60,7 +58,7 @@ class ClassicEngineWorker(QThread):
         try:
             from schemaforge.core.engine import SchemaForgeEngine
 
-            engine = SchemaForgeEngine(use_mock=self.use_mock)
+            engine = SchemaForgeEngine()
             result = engine.process(
                 self.user_input,
                 progress_callback=self._on_progress,
@@ -92,12 +90,10 @@ class DesignSessionWorker(QThread):
     def __init__(
         self,
         user_input: str,
-        use_mock: bool = True,
         parent: object | None = None,
     ) -> None:
         super().__init__(parent)  # type: ignore[arg-type]
         self.user_input = user_input
-        self.use_mock = use_mock
 
     def _on_progress(self, message: str, percentage: int) -> None:
         """进度回调，从会话线程转发信号。"""
@@ -110,7 +106,6 @@ class DesignSessionWorker(QThread):
 
             session = DesignSession(
                 store_dir=Path("schemaforge/store"),
-                use_mock=self.use_mock,
                 progress_callback=self._on_progress,
             )
             result = session.run(self.user_input)
@@ -160,13 +155,11 @@ class SchemaForgeWorker(QThread):
     def __init__(
         self,
         user_input: str,
-        use_mock: bool = True,
         session: object | None = None,
         parent: object | None = None,
     ) -> None:
         super().__init__(parent)  # type: ignore[arg-type]
         self.user_input = user_input
-        self.use_mock = use_mock
         self._session = session
 
     def run(self) -> None:
@@ -181,7 +174,6 @@ class SchemaForgeWorker(QThread):
             else:
                 session = SchemaForgeSession(
                     store_dir=Path("schemaforge/store"),
-                    use_mock=self.use_mock,
                 )
             self.session_ready.emit(session)
 
@@ -226,6 +218,85 @@ class SchemaForgeReviseWorker(QThread):
             self.progress.emit("正在应用修改…", 30)
             result = self._session.revise(self.user_input)  # type: ignore[union-attr]
             self.progress.emit("修改完成", 100)
+            self.finished.emit(result)
+        except Exception as exc:
+            tb = traceback.format_exc()
+            self.error.emit(f"{exc}\n\n{tb}")
+
+
+# ============================================================
+# SchemaForgeOrchestratedWorker — AI 多轮编排（高级模式）
+# ============================================================
+
+
+class IngestAssetWorker(QThread):
+    """在后台线程中运行 SchemaForgeSession.ingest_asset()。
+
+    用于器件补录：用户上传 PDF/图片 → AI 提取引脚与参数 → 返回预览。
+
+    Signals:
+        finished(object): 处理完成，携带 SchemaForgeTurnResult。
+        error(str): 处理异常，携带错误描述。
+        progress(str, int): 进度回调 (消息, 百分比)。
+    """
+
+    finished = Signal(object)
+    error = Signal(str)
+    progress = Signal(str, int)
+
+    def __init__(
+        self,
+        session: object,
+        filepath: str,
+        parent: object | None = None,
+    ) -> None:
+        super().__init__(parent)  # type: ignore[arg-type]
+        self._session = session
+        self.filepath = filepath
+
+    def run(self) -> None:
+        """执行资料导入流程。"""
+        try:
+            self.progress.emit("正在解析上传资料…", 20)
+            result = self._session.ingest_asset(self.filepath)  # type: ignore[union-attr]
+            self.progress.emit("资料解析完成", 100)
+            self.finished.emit(result)
+        except Exception as exc:
+            tb = traceback.format_exc()
+            self.error.emit(f"{exc}\n\n{tb}")
+
+
+class ConfirmImportWorker(QThread):
+    """在后台线程中运行 SchemaForgeSession.confirm_import()。
+
+    用于器件导入确认：用户确认预览信息后入库并续设计。
+
+    Signals:
+        finished(object): 处理完成，携带 SchemaForgeTurnResult。
+        error(str): 处理异常，携带错误描述。
+        progress(str, int): 进度回调 (消息, 百分比)。
+    """
+
+    finished = Signal(object)
+    error = Signal(str)
+    progress = Signal(str, int)
+
+    def __init__(
+        self,
+        session: object,
+        answers: dict | None = None,
+        parent: object | None = None,
+    ) -> None:
+        super().__init__(parent)  # type: ignore[arg-type]
+        self._session = session
+        self.answers = answers or {}
+
+    def run(self) -> None:
+        """执行导入确认流程。"""
+        try:
+            self.progress.emit("正在确认导入并生成设计…", 30)
+            result = self._session.confirm_import(self.answers)  # type: ignore[union-attr]
+            self.progress.emit("导入完成", 100)
             self.finished.emit(result)
         except Exception as exc:
             tb = traceback.format_exc()

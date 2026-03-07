@@ -77,7 +77,6 @@ def _load_extra_images(paths: list[str]) -> list[bytes]:
 def extract_from_pdf(
     filepath: str,
     hint: str = "",
-    use_mock: bool = False,
     tracker: ProgressTracker | None = None,
     page_limit: int | None = 10,
     extra_images: list[str] | None = None,
@@ -93,7 +92,6 @@ def extract_from_pdf(
     Args:
         filepath: PDF 文件路径
         hint: 用户提示 (如器件型号)
-        use_mock: 是否使用 mock AI
         tracker: 进度跟踪器
         page_limit: 最大解析页数
         extra_images: 用户附加的引脚图/封装图文件路径列表
@@ -140,7 +138,6 @@ def extract_from_pdf(
             text,
             all_image_bytes,
             hint=hint,
-            use_mock=use_mock,
         )
     else:
         if not text.strip():
@@ -148,7 +145,7 @@ def extract_from_pdf(
             return result
         if tracker:
             tracker.stage("AI分析文本", 30)
-        ai_result = analyze_datasheet_text(text, hint=hint, use_mock=use_mock)
+        ai_result = analyze_datasheet_text(text, hint=hint)
 
     if not ai_result.success:
         err = ai_result.error
@@ -195,7 +192,6 @@ def extract_from_pdf(
 def extract_from_image(
     image_source: str | bytes,
     hint: str = "",
-    use_mock: bool = False,
     tracker: ProgressTracker | None = None,
 ) -> ExtractionResult:
     """从图片提取器件信息
@@ -203,7 +199,6 @@ def extract_from_image(
     Args:
         image_source: 图片文件路径(str) 或 图片二进制数据(bytes)
         hint: 用户提示
-        use_mock: 是否使用 mock AI
         tracker: 进度跟踪器
 
     Returns:
@@ -216,9 +211,9 @@ def extract_from_image(
 
     # 调用 AI vision
     if isinstance(image_source, str):
-        ai_result = analyze_image_file(image_source, task_hint=hint, use_mock=use_mock)
+        ai_result = analyze_image_file(image_source, task_hint=hint)
     else:
-        ai_result = analyze_image(image_source, task_hint=hint, use_mock=use_mock)
+        ai_result = analyze_image(image_source, task_hint=hint)
 
     if not ai_result.success:
         err = ai_result.error

@@ -13,19 +13,19 @@ from schemaforge.core.engine import EngineResult, SchemaForgeEngine
 
 @pytest.fixture
 def engine():
-    return SchemaForgeEngine(use_mock=True)
+    return SchemaForgeEngine()
 
 
 class TestEngineE2E:
     """端到端流水线测试"""
 
     def test_ldo_led_combo(self, engine):
-        """LDO+LED组合 — 最复杂的默认Demo场景"""
+        """LDO+LED组合 — 完整流水线"""
         result = engine.process("5V转3.3V稳压电路，带绿色LED电源指示灯")
         assert result.success
-        assert result.design_name == "5V-3.3V稳压电源（带LED指示）"
-        assert len(result.circuits) == 2
-        assert len(result.svg_paths) == 2
+        assert result.design_name  # 非空
+        assert len(result.circuits) >= 1
+        assert len(result.svg_paths) >= 1
         assert result.bom_text
         assert result.spice_text
 
@@ -33,29 +33,26 @@ class TestEngineE2E:
         """单模块 — 分压器"""
         result = engine.process("12V分压到3.3V")
         assert result.success
-        assert "分压" in result.design_name
-        assert len(result.circuits) == 1
-        assert len(result.svg_paths) == 1
+        assert len(result.circuits) >= 1
+        assert len(result.svg_paths) >= 1
 
     def test_rc_filter(self, engine):
         """单模块 — RC滤波器"""
         result = engine.process("1kHz滤波器")
         assert result.success
-        assert "滤波" in result.design_name
-        assert len(result.circuits) == 1
+        assert len(result.circuits) >= 1
 
     def test_led_standalone(self, engine):
         """单模块 — 独立LED"""
         result = engine.process("LED指示灯")
         assert result.success
-        assert "LED" in result.design_name
-        assert len(result.circuits) == 1
+        assert len(result.circuits) >= 1
 
     def test_default_fallback(self, engine):
-        """未匹配关键词 — 默认返回LDO+LED"""
+        """未匹配关键词 — 默认返回结果"""
         result = engine.process("random input xyz")
         assert result.success
-        assert len(result.circuits) == 2
+        assert len(result.circuits) >= 1
 
 
 class TestEngineResult:

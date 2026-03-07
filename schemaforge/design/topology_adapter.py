@@ -105,16 +105,13 @@ class TopologyAdapter:
     """拓扑适配器
 
     将器件库数据 + 用户参数 → 可渲染/可导出的格式。
-
-    Args:
-        use_mock_draft: 当器件无拓扑时是否使用 mock 草稿生成器（默认 True）
     """
 
-    def __init__(self, use_mock_draft: bool = True) -> None:
+    def __init__(self) -> None:
         self._renderer = TopologyRenderer()
         from schemaforge.design.topology_draft import TopologyDraftGenerator
 
-        self._draft_generator = TopologyDraftGenerator(use_mock=use_mock_draft)
+        self._draft_generator = TopologyDraftGenerator()
 
     def adapt_single(
         self,

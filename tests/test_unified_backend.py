@@ -210,53 +210,41 @@ USER_QUERY = "5V转3.3V稳压电路，带绿色LED指示灯"
 
 
 class TestCLIMainPyStructure:
-    """Verify main.py source has correct --new-chain integration."""
-
-    def test_main_py_has_new_chain_arg(self):
-        source = _main_source()
-        assert '"--new-chain"' in source
+    """Verify main.py source has correct SchemaForgeSession integration."""
 
     def test_main_py_has_store_arg(self):
         source = _main_source()
         assert '"--store"' in source
 
-    def test_main_py_imports_design_session(self):
+    def test_main_py_imports_schemaforge_session(self):
         source = _main_source()
-        assert (
-            "from schemaforge.workflows.design_session import DesignSession" in source
-        )
+        assert "SchemaForgeSession" in source
 
-    def test_main_py_has_process_and_display_session(self):
+    def test_main_py_has_unified_display(self):
         source = _main_source()
-        assert "def process_and_display_session(" in source
+        assert "def process_and_display_unified(" in source
 
-    def test_main_py_run_interactive_accepts_session(self):
+    def test_main_py_has_interactive_unified(self):
         source = _main_source()
-        assert "session: DesignSession | None = None" in source
+        assert "def run_interactive_unified(" in source
 
-    def test_main_py_dispatches_by_new_chain(self):
+    def test_main_py_has_orchestrated_arg(self):
         source = _main_source()
-        assert "args.new_chain" in source
-        assert "DesignSession(" in source
+        assert '"--orchestrated"' in source
 
-    def test_main_py_passes_session_to_interactive(self):
-        source = _main_source()
-        assert "run_interactive(engine, session)" in source
-
-    def test_argparse_new_chain_flag(self):
+    def test_argparse_store_flag(self):
         parser = argparse.ArgumentParser()
-        parser.add_argument("--new-chain", action="store_true")
+        parser.add_argument("--orchestrated", action="store_true")
         parser.add_argument("--store", type=str, default="")
-        args = parser.parse_args(["--new-chain", "--store", "/some/path"])
-        assert args.new_chain is True
+        args = parser.parse_args(["--store", "/some/path"])
         assert args.store == "/some/path"
 
-    def test_argparse_default_no_new_chain(self):
+    def test_argparse_default_no_orchestrated(self):
         parser = argparse.ArgumentParser()
-        parser.add_argument("--new-chain", action="store_true")
+        parser.add_argument("--orchestrated", action="store_true")
         parser.add_argument("--store", type=str, default="")
         args = parser.parse_args([])
-        assert args.new_chain is False
+        assert args.orchestrated is False
         assert args.store == ""
 
 
@@ -269,11 +257,11 @@ class TestCLINewChainEndToEnd:
     """End-to-end test: DesignSession produces valid results."""
 
     def test_new_chain_creates_design_session(self, store_dir):
-        session = DesignSession(store_dir=store_dir, use_mock=True)
+        session = DesignSession(store_dir=store_dir, )
         assert session is not None
 
     def test_new_chain_session_runs_full_pipeline(self, store_dir):
-        session = DesignSession(store_dir=store_dir, use_mock=True)
+        session = DesignSession(store_dir=store_dir, )
         result = session.run(USER_QUERY)
 
         assert isinstance(result, DesignSessionResult)
@@ -283,17 +271,17 @@ class TestCLINewChainEndToEnd:
         assert result.plan is not None
 
     def test_classic_engine_still_works(self):
-        engine = SchemaForgeEngine(use_mock=True)
+        engine = SchemaForgeEngine()
         result = engine.process("5V转3.3V稳压电路")
         assert result.success is True
         assert len(result.svg_paths) >= 1
 
     def test_both_backends_produce_svg(self, store_dir):
-        engine = SchemaForgeEngine(use_mock=True)
+        engine = SchemaForgeEngine()
         old_result = engine.process("5V转3.3V稳压电路")
         assert old_result.svg_paths
 
-        session = DesignSession(store_dir=store_dir, use_mock=True)
+        session = DesignSession(store_dir=store_dir, )
         new_result = session.run(USER_QUERY)
         assert new_result.svg_paths
 
@@ -353,14 +341,13 @@ class TestGUIChainToggleLogic:
         if design_session is None:
             design_session = DesignSession(
                 store_dir=store_dir,
-                use_mock=True,
             )
         assert design_session is not None
         result = design_session.run(USER_QUERY)
         assert result.success is True
 
     def test_mode_change_resets_session(self, store_dir):
-        session = DesignSession(store_dir=store_dir, use_mock=True)
+        session = DesignSession(store_dir=store_dir, )
         assert session is not None
 
         session_after_reset: DesignSession | None = None
@@ -368,7 +355,6 @@ class TestGUIChainToggleLogic:
 
         session_after_reset = DesignSession(
             store_dir=store_dir,
-            use_mock=False,
         )
         assert session_after_reset is not None
 
@@ -380,7 +366,6 @@ class TestGUIChainToggleLogic:
 
         session = DesignSession(
             store_dir=store_dir,
-            use_mock=True,
             progress_callback=on_progress,
         )
         result = session.run(USER_QUERY)
@@ -394,19 +379,18 @@ class TestGUIChainToggleLogic:
 
 
 class TestUnifiedBackendConvergence:
-    """Both CLI and GUI converge on the same DesignSession class."""
+    """Both CLI and GUI converge on the same SchemaForgeSession class."""
 
     def test_both_entry_points_import_same_class(self):
         main_source = _main_source()
-        expected = "from schemaforge.workflows.design_session import DesignSession"
-        assert expected in main_source
-        # GUI imports DesignSession worker in design_page.py
+        assert "SchemaForgeSession" in main_source
+        # GUI imports SchemaForgeWorker which uses SchemaForgeSession
         design_source = _gui_design_source()
         if design_source:
-            assert "DesignSession" in design_source
+            assert "SchemaForgeWorker" in design_source
 
     def test_design_session_result_structure_stable(self, store_dir):
-        session = DesignSession(store_dir=store_dir, use_mock=True)
+        session = DesignSession(store_dir=store_dir, )
         result = session.run(USER_QUERY)
 
         assert hasattr(result, "success")
@@ -428,7 +412,7 @@ class TestUnifiedBackendConvergence:
             assert "review_passed" in d
 
     def test_ir_accessible_after_session_run(self, store_dir):
-        session = DesignSession(store_dir=store_dir, use_mock=True)
+        session = DesignSession(store_dir=store_dir, )
         result = session.run(USER_QUERY)
 
         assert result.success is True
@@ -438,7 +422,7 @@ class TestUnifiedBackendConvergence:
         assert summary["module_count"] >= 1
 
     def test_design_session_result_to_dict(self, store_dir):
-        session = DesignSession(store_dir=store_dir, use_mock=True)
+        session = DesignSession(store_dir=store_dir, )
         result = session.run(USER_QUERY)
         d = result.to_dict()
 

@@ -2,13 +2,9 @@
 
 将用户自然语言需求解析为结构化的模块需求列表。
 
-两种模式：
-- AI 模式: 调用 kimi-k2.5 解析复杂需求
-- Mock 模式: 关键字匹配，用于离线测试
-
 用法::
 
-    planner = DesignPlanner(use_mock=True)
+    planner = DesignPlanner()
     plan = planner.plan("5V转3.3V稳压电路，带LED指示灯")
     # plan.modules = [
     #   ModuleRequirement(role="main_regulator", category="ldo", ...),
@@ -150,10 +146,8 @@ class DesignPlanner:
 
     def __init__(
         self,
-        use_mock: bool = True,
         model: str = DEFAULT_MODEL,
     ) -> None:
-        self.use_mock = use_mock
         self.model = model
 
     def plan(self, user_input: str) -> DesignPlan:
@@ -165,8 +159,6 @@ class DesignPlanner:
         Returns:
             DesignPlan 结构化规划结果
         """
-        if self.use_mock:
-            return self._plan_mock(user_input)
         return self._plan_ai(user_input)
 
     # ----------------------------------------------------------
@@ -175,11 +167,19 @@ class DesignPlanner:
 
     def _plan_ai(self, user_input: str) -> DesignPlan:
         """调用 AI 进行设计规划"""
-        result = call_llm_json(
-            system_prompt=PLANNER_SYSTEM_PROMPT,
-            user_message=user_input,
-            model=self.model,
-        )
+        try:
+            result = call_llm_json(
+                system_prompt=PLANNER_SYSTEM_PROMPT,
+                user_message=user_input,
+                model=self.model,
+            )
+        except Exception as exc:
+            return DesignPlan(
+                name="规划失败",
+                description=f"AI 调用异常: {exc}",
+                raw_input=user_input,
+                notes="AI 规划失败（网络或接口异常），已回退为空规划",
+            )
         if result is None:
             return DesignPlan(
                 name="规划失败",
@@ -188,176 +188,6 @@ class DesignPlanner:
                 notes="AI 规划失败，请重试",
             )
         return self._parse_plan(result, user_input)
-
-    # ----------------------------------------------------------
-    # Mock 规划
-    # ----------------------------------------------------------
-
-    def _plan_mock(self, user_input: str) -> DesignPlan:
-        """基于关键字的 Mock 规划"""
-        text = user_input.lower()
-        modules: list[ModuleRequirement] = []
-
-        # 提取电压参数
-        v_in, v_out = _extract_voltages(user_input)
-
-        # ── 料号直接引用检测 ──
-        import re
-        _KEYWORD_ABBRS = {"LDO", "LED", "MCU", "ADC", "DAC", "USB", "SPI",
-                          "I2C", "CAN", "PWM", "GPIO", "UART", "BUCK"}
-        pn_match = re.search(
-            r"([A-Z][A-Z0-9]{2,}[-]?[A-Z0-9]*\d[A-Z0-9]*)", user_input,
-        )
-        detected_pn = ""
-        if pn_match and pn_match.group(1) not in _KEYWORD_ABBRS:
-            detected_pn = pn_match.group(1)
-
-        # ── 推断电路类别 ──
-        has_ldo = any(kw in text for kw in ["ldo", "稳压", "线性稳压"])
-        has_buck = any(kw in text for kw in [
-            "buck", "降压", "开关电源", "dcdc", "dc-dc",
-        ])
-
-        # 当检测到料号时，与电路类别合并为一个模块
-        if detected_pn:
-            # 从上下文推断 category（不硬编码为 "other"）
-            if has_buck:
-                category = "buck"
-            elif has_ldo:
-                category = "ldo"
-            else:
-                category = "other"
-
-            params: dict[str, str] = {}
-            if v_in:
-                params["v_in"] = v_in
-            if v_out:
-                params["v_out"] = v_out
-
-            modules.append(ModuleRequirement(
-                role="main_regulator",
-                category=category,
-                description=f"用户指定器件 {detected_pn}",
-                part_number=detected_pn,
-                parameters=params,
-            ))
-        elif has_ldo:
-            # 无料号的 LDO
-            params = {}
-            if v_in:
-                params["v_in"] = v_in
-            if v_out:
-                params["v_out"] = v_out
-            modules.append(ModuleRequirement(
-                role="main_regulator",
-                category="ldo",
-                description=f"LDO稳压器 {v_in or '?'}V→{v_out or '?'}V",
-                parameters=params,
-            ))
-        elif has_buck:
-            # 无料号的 Buck
-            params = {}
-            if v_in:
-                params["v_in"] = v_in
-            if v_out:
-                params["v_out"] = v_out
-            modules.append(ModuleRequirement(
-                role="main_regulator",
-                category="buck",
-                description=f"Buck降压转换器 {v_in or '?'}V→{v_out or '?'}V",
-                parameters=params,
-            ))
-
-        # LED
-        has_led = any(kw in text for kw in ["led", "指示灯", "指示"])
-        if has_led:
-            led_params: dict[str, str] = {}
-            # LED 电源来自稳压输出
-            if v_out:
-                led_params["v_supply"] = v_out
-            elif v_in:
-                led_params["v_supply"] = v_in
-
-            # 颜色
-            for color_cn, color_en in [
-                ("红", "red"), ("绿", "green"),
-                ("蓝", "blue"), ("白", "white"),
-            ]:
-                if color_cn in text or color_en in text:
-                    led_params["led_color"] = color_en
-                    break
-            else:
-                led_params["led_color"] = "green"
-
-            connections = []
-            if modules:
-                connections.append(modules[0].role)
-
-            modules.append(ModuleRequirement(
-                role="power_led",
-                category="led",
-                description="LED电源指示灯",
-                parameters=led_params,
-                connections_to=connections,
-            ))
-
-        # 分压器
-        has_divider = any(kw in text for kw in ["分压", "divider", "采样"])
-        if has_divider and not has_ldo and not has_buck:
-            params = {}
-            if v_in:
-                params["v_in"] = v_in
-            if v_out:
-                params["v_out"] = v_out
-            modules.append(ModuleRequirement(
-                role="voltage_sampler",
-                category="voltage_divider",
-                description=f"电压分压采样 {v_in or '?'}V→{v_out or '?'}V",
-                parameters=params,
-            ))
-
-        # RC 滤波
-        has_filter = any(kw in text for kw in ["滤波", "filter", "rc"])
-        if has_filter and not has_ldo and not has_buck:
-            modules.append(ModuleRequirement(
-                role="input_filter",
-                category="rc_filter",
-                description="RC低通滤波器",
-                parameters={"f_cutoff": "1000"},
-            ))
-
-        # 回退：如果没识别出任何模块，给一个通用 LDO
-        if not modules:
-            modules.append(ModuleRequirement(
-                role="main_regulator",
-                category="ldo",
-                description="默认LDO稳压电路",
-                parameters={"v_in": v_in or "5", "v_out": v_out or "3.3"},
-            ))
-
-        # 生成设计名
-        name_parts: list[str] = []
-        if v_in and v_out:
-            name_parts.append(f"{v_in}V→{v_out}V")
-        role_names = {
-            "main_regulator": "稳压电源",
-            "power_led": "LED指示",
-            "voltage_sampler": "分压采样",
-            "input_filter": "滤波器",
-        }
-        for m in modules:
-            rn = role_names.get(m.role, m.role)
-            if rn not in name_parts:
-                name_parts.append(rn)
-
-        design_name = " + ".join(name_parts) if name_parts else "电路设计"
-
-        return DesignPlan(
-            name=design_name,
-            description=user_input,
-            modules=modules,
-            raw_input=user_input,
-        )
 
     # ----------------------------------------------------------
     # 解析 AI 响应

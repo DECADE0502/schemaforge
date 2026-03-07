@@ -8,6 +8,7 @@ import json
 from pathlib import Path
 from typing import Any, Callable
 
+from schemaforge.design.review import DesignReviewEngine, ModuleReviewInput
 from schemaforge.design.synthesis import (
     DesignBundle,
     DesignRecipeSynthesizer,
@@ -95,11 +96,9 @@ class SchemaForgeSession:
     def __init__(
         self,
         store_dir: Path | str,
-        use_mock: bool = True,
         on_event: Callable[..., Any] | None = None,
     ) -> None:
         self.store_dir = Path(store_dir)
-        self.use_mock = use_mock
         self._on_event = on_event
         self._store = ComponentStore(self.store_dir)
         self._service = LibraryService(self.store_dir)
@@ -181,7 +180,7 @@ class SchemaForgeSession:
                 )
             return self._build_from_device(device, message=f"已精确命中 {device.part_number}。")
 
-        legacy = DesignSession(self.store_dir, use_mock=self.use_mock).run(user_input)
+        legacy = DesignSession(self.store_dir).run(user_input)
         matched = next((item for item in legacy.modules if item.device), None)
         if matched and matched.device:
             return self._build_from_device(
@@ -204,9 +203,9 @@ class SchemaForgeSession:
         path = Path(filepath)
         hint = self._request.part_number
         if path.suffix.lower() == ".pdf":
-            result = extract_from_pdf(str(path), hint=hint, use_mock=self.use_mock)
+            result = extract_from_pdf(str(path), hint=hint)
         else:
-            result = extract_from_image(str(path), hint=hint, use_mock=self.use_mock)
+            result = extract_from_image(str(path), hint=hint)
 
         if not result.success or result.draft is None:
             return SchemaForgeTurnResult(
@@ -546,11 +545,33 @@ class SchemaForgeSession:
         self._device = bundle.device
         self._bundle = bundle
         self._store.save_device(bundle.device)
+
+        # --- 工程审查 (42 条规则) ---
+        review_warnings: list[str] = []
+        try:
+            review_engine = DesignReviewEngine()
+            review_input = ModuleReviewInput(
+                role="main",
+                category=device.category or "",
+                device=device,
+                parameters=bundle.parameters,
+            )
+            review_result = review_engine.review_module(review_input)
+            for issue in review_result.issues:
+                severity = issue.severity.value if hasattr(issue.severity, "value") else str(issue.severity)
+                if severity == "blocking":
+                    review_warnings.append(f"[阻断] {issue.message}")
+                elif severity == "warning":
+                    review_warnings.append(f"[警告] {issue.message}")
+        except Exception:
+            pass  # 审查失败不影响设计输出
+
         return SchemaForgeTurnResult(
             status="generated",
             message=message,
             request=self._request,
             bundle=bundle,
+            warnings=review_warnings,
         )
 
     def _apply_draft_answers(

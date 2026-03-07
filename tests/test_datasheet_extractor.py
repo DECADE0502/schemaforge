@@ -53,7 +53,6 @@ class TestExtractFromImage:
         result = extract_from_image(
             str(img_file),
             hint="AMS1117",
-            use_mock=True,
         )
         assert result.success
         assert result.draft is not None
@@ -63,7 +62,7 @@ class TestExtractFromImage:
     def test_mock_image_bytes(self) -> None:
         """直接传入 bytes"""
         png_data = b"\x89PNG\r\n\x1a\n" + b"\x00" * 100
-        result = extract_from_image(png_data, use_mock=True)
+        result = extract_from_image(png_data, )
         assert result.success
         assert result.draft is not None
         assert len(result.draft.pins) > 0
@@ -73,7 +72,7 @@ class TestExtractFromImage:
         img_file = tmp_path / "test.png"
         img_file.write_bytes(b"\x89PNG\r\n\x1a\n" + b"\x00" * 100)
 
-        result = extract_from_image(str(img_file), use_mock=True)
+        result = extract_from_image(str(img_file), )
         assert result.needs_user_input
         assert len(result.questions) > 0
 

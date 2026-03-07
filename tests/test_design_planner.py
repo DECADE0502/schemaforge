@@ -13,7 +13,7 @@ class TestDesignPlanner:
     """规划器 Mock 模式测试"""
 
     def setup_method(self) -> None:
-        self.planner = DesignPlanner(use_mock=True)
+        self.planner = DesignPlanner()
 
     # --- LDO 识别 ---
 

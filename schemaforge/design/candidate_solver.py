@@ -130,13 +130,11 @@ class CandidateSolver:
 
     Args:
         store: 器件库存储
-        use_mock: 是否使用 Mock 模式（仅规则评分，不调用 AI）
     """
 
-    def __init__(self, store: ComponentStore, use_mock: bool = True) -> None:
+    def __init__(self, store: ComponentStore) -> None:
         self._store = store
         self._retriever = DeviceRetriever(store)
-        self._use_mock = use_mock
 
     def solve(
         self,

@@ -144,7 +144,7 @@ class TestTopologyDraft:
 
 class TestMockGeneration:
     def setup_method(self) -> None:
-        self.gen = TopologyDraftGenerator(use_mock=True)
+        self.gen = TopologyDraftGenerator()
 
     def test_generate_ldo(self) -> None:
         device = _make_ldo_no_topology()
@@ -204,7 +204,7 @@ class TestMockGeneration:
 
 class TestValidateDraft:
     def setup_method(self) -> None:
-        self.gen = TopologyDraftGenerator(use_mock=True)
+        self.gen = TopologyDraftGenerator()
 
     def test_valid_ldo_draft(self) -> None:
         device = _make_ldo_no_topology()
@@ -286,7 +286,7 @@ class TestValidateDraft:
 
 class TestDraftToTopology:
     def setup_method(self) -> None:
-        self.gen = TopologyDraftGenerator(use_mock=True)
+        self.gen = TopologyDraftGenerator()
 
     def test_ldo_converts_to_topology_def(self) -> None:
         device = _make_ldo_no_topology()
@@ -336,7 +336,7 @@ class TestAdapterFallback:
     def test_adapter_fallback_ldo(self) -> None:
         from schemaforge.design.topology_adapter import TopologyAdapter
 
-        adapter = TopologyAdapter(use_mock_draft=True)
+        adapter = TopologyAdapter()
         device = _make_ldo_no_topology()
         adapted = adapter.adapt_single(device, {"v_in": "5"})
         assert adapted is not None
@@ -345,7 +345,7 @@ class TestAdapterFallback:
     def test_adapter_fallback_unknown_raises(self) -> None:
         from schemaforge.design.topology_adapter import TopologyAdapter
 
-        adapter = TopologyAdapter(use_mock_draft=True)
+        adapter = TopologyAdapter()
         device = _make_unknown_no_topology()
         with pytest.raises(ValueError):
             adapter.adapt_single(device)

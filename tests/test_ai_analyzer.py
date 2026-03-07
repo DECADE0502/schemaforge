@@ -71,7 +71,6 @@ class TestAnalyzeDatasheetText:
         """已知器件型号 mock 分析"""
         result = analyze_datasheet_text(
             "TPS54202 datasheet ... 4.5V to 28V ...",
-            use_mock=True,
         )
         assert result.success
         data: TextAnalysisResult = result.data
@@ -83,7 +82,6 @@ class TestAnalyzeDatasheetText:
         result = analyze_datasheet_text(
             "some unknown text content",
             hint="LM7805",
-            use_mock=True,
         )
         assert result.success
         data: TextAnalysisResult = result.data
@@ -93,7 +91,6 @@ class TestAnalyzeDatasheetText:
         """AMS1117 mock 分析"""
         result = analyze_datasheet_text(
             "AMS1117 series ... low dropout regulator ...",
-            use_mock=True,
         )
         assert result.success
         data: TextAnalysisResult = result.data
@@ -102,26 +99,25 @@ class TestAnalyzeDatasheetText:
 
     def test_empty_text_fails(self) -> None:
         """空文本 → 失败"""
-        result = analyze_datasheet_text("", use_mock=True)
+        result = analyze_datasheet_text("", )
         assert not result.success
         assert result.error is not None
 
     def test_whitespace_text_fails(self) -> None:
         """纯空格文本 → 失败"""
-        result = analyze_datasheet_text("   \n  ", use_mock=True)
+        result = analyze_datasheet_text("   \n  ", )
         assert not result.success
 
-    def test_mock_has_warnings(self) -> None:
-        """Mock 结果应有警告"""
-        result = analyze_datasheet_text("some text", hint="IC1", use_mock=True)
+    def test_analysis_has_result(self) -> None:
+        """分析结果应返回成功"""
+        result = analyze_datasheet_text("some text", hint="IC1", )
         assert result.success
         data: TextAnalysisResult = result.data
-        assert len(data.warnings) > 0
-        assert "Mock" in data.warnings[0]
+        assert data is not None
 
-    def test_mock_has_missing_fields(self) -> None:
-        """Mock 结果应标记缺失字段"""
-        result = analyze_datasheet_text("TPS54202", use_mock=True)
+    def test_analysis_returns_fields(self) -> None:
+        """分析结果应包含字段"""
+        result = analyze_datasheet_text("TPS54202", )
         assert result.success
         data: TextAnalysisResult = result.data
         assert len(data.missing_fields) > 0
@@ -139,7 +135,7 @@ class TestAnalyzeImage:
         """Mock 图片分析"""
         # 创建最小有效 PNG
         png_header = b"\x89PNG\r\n\x1a\n" + b"\x00" * 100
-        result = analyze_image(png_header, use_mock=True)
+        result = analyze_image(png_header, )
         assert result.success
         data: ImageAnalysisResult = result.data
         assert len(data.pins) == 3
@@ -147,16 +143,16 @@ class TestAnalyzeImage:
 
     def test_empty_image_fails(self) -> None:
         """空图片 → 失败"""
-        result = analyze_image(b"", use_mock=True)
+        result = analyze_image(b"", )
         assert not result.success
 
-    def test_mock_has_warnings(self) -> None:
-        """Mock 图片分析有警告"""
+    def test_image_analysis_returns_result(self) -> None:
+        """图片分析返回结果"""
         png_header = b"\x89PNG\r\n\x1a\n" + b"\x00" * 100
-        result = analyze_image(png_header, use_mock=True)
+        result = analyze_image(png_header, )
         assert result.success
         data: ImageAnalysisResult = result.data
-        assert any("Mock" in w for w in data.warnings)
+        assert data is not None
 
 
 # ============================================================
@@ -168,7 +164,7 @@ class TestAnalyzeImageFile:
     """文件路径分析"""
 
     def test_file_not_found(self) -> None:
-        result = analyze_image_file("/nonexistent/file.png", use_mock=True)
+        result = analyze_image_file("/nonexistent/file.png", )
         assert not result.success
         assert result.error is not None
         assert "不存在" in result.error.message
@@ -178,5 +174,5 @@ class TestAnalyzeImageFile:
         img_file = tmp_path / "test.png"
         # 写一个最小 PNG
         img_file.write_bytes(b"\x89PNG\r\n\x1a\n" + b"\x00" * 100)
-        result = analyze_image_file(str(img_file), use_mock=True)
+        result = analyze_image_file(str(img_file), )
         assert result.success

@@ -189,9 +189,9 @@ USER_QUERY = "5V转3.3V稳压电路，带绿色LED指示灯"
 
 class TestStage1Clarify:
     def test_clarifier_produces_structured_result(self):
-        planner = DesignPlanner(use_mock=True)
+        planner = DesignPlanner()
         plan = planner.plan(USER_QUERY)
-        clarifier = RequirementClarifier(use_mock=True)
+        clarifier = RequirementClarifier()
         result = clarifier.clarify(USER_QUERY, plan)
 
         assert isinstance(result, ClarificationResult)
@@ -201,16 +201,16 @@ class TestStage1Clarify:
         assert result.confidence > 0
 
     def test_clarifier_identifies_ldo_constraints(self):
-        planner = DesignPlanner(use_mock=True)
+        planner = DesignPlanner()
         plan = planner.plan(USER_QUERY)
-        clarifier = RequirementClarifier(use_mock=True)
+        clarifier = RequirementClarifier()
         result = clarifier.clarify(USER_QUERY, plan)
 
         constraint_names = {c.name for c in result.known_constraints}
         assert "v_in" in constraint_names or "v_out" in constraint_names
 
     def test_plan_has_ldo_and_led_modules(self):
-        planner = DesignPlanner(use_mock=True)
+        planner = DesignPlanner()
         plan = planner.plan(USER_QUERY)
 
         categories = {m.category for m in plan.modules}
@@ -226,8 +226,8 @@ class TestStage1Clarify:
 class TestStage2CandidateSolve:
     def test_solver_generates_multiple_candidates_for_ldo(self, store_dir):
         store = ComponentStore(store_dir)
-        solver = CandidateSolver(store, use_mock=True)
-        planner = DesignPlanner(use_mock=True)
+        solver = CandidateSolver(store, )
+        planner = DesignPlanner()
         plan = planner.plan(USER_QUERY)
 
         ldo_mods = [m for m in plan.modules if m.category == "ldo"]
@@ -242,8 +242,8 @@ class TestStage2CandidateSolve:
 
     def test_solver_candidates_have_6_score_dimensions(self, store_dir):
         store = ComponentStore(store_dir)
-        solver = CandidateSolver(store, use_mock=True)
-        planner = DesignPlanner(use_mock=True)
+        solver = CandidateSolver(store, )
+        planner = DesignPlanner()
         plan = planner.plan(USER_QUERY)
 
         ldo_mod = next(m for m in plan.modules if m.category == "ldo")
@@ -329,7 +329,7 @@ class TestStage3Review:
 
 class TestStage4Render:
     def test_session_renders_svg_for_ldo_led(self, store_dir):
-        session = DesignSession(store_dir=store_dir, use_mock=True)
+        session = DesignSession(store_dir=store_dir, )
         result = session.run(USER_QUERY)
 
         assert result.success, f"Pipeline failed: {result.error}"
@@ -339,7 +339,7 @@ class TestStage4Render:
             assert Path(svg).stat().st_size > 0
 
     def test_session_produces_bom_and_spice(self, store_dir):
-        session = DesignSession(store_dir=store_dir, use_mock=True)
+        session = DesignSession(store_dir=store_dir, )
         result = session.run(USER_QUERY)
 
         assert result.success
@@ -354,7 +354,7 @@ class TestStage4Render:
 
 class TestStage5Patch:
     def test_patch_update_constraint_on_session_ir(self, store_dir):
-        session = DesignSession(store_dir=store_dir, use_mock=True)
+        session = DesignSession(store_dir=store_dir, )
         result = session.run(USER_QUERY)
         assert result.success
 
@@ -382,7 +382,7 @@ class TestStage5Patch:
         assert updated_constraints.get("v_in") == "12V"
 
     def test_patch_replace_device(self, store_dir):
-        session = DesignSession(store_dir=store_dir, use_mock=True)
+        session = DesignSession(store_dir=store_dir, )
         result = session.run(USER_QUERY)
         assert result.success
 
@@ -407,7 +407,7 @@ class TestStage5Patch:
         assert replaced_module.selection.selected.part_number == "ME6211-3.3"
 
     def test_patch_update_parameter(self, store_dir):
-        session = DesignSession(store_dir=store_dir, use_mock=True)
+        session = DesignSession(store_dir=store_dir, )
         result = session.run(USER_QUERY)
         assert result.success
 
@@ -431,7 +431,7 @@ class TestStage5Patch:
         assert mod.parameters.input_params.get("c_out") == "100uF"
 
     def test_patch_preserves_history(self, store_dir):
-        session = DesignSession(store_dir=store_dir, use_mock=True)
+        session = DesignSession(store_dir=store_dir, )
         session.run(USER_QUERY)
         ir: DesignIR = session.ir
 
@@ -448,7 +448,7 @@ class TestStage5Patch:
         assert result2.modified_ir.version >= 3
 
     def test_patch_preview(self, store_dir):
-        session = DesignSession(store_dir=store_dir, use_mock=True)
+        session = DesignSession(store_dir=store_dir, )
         session.run(USER_QUERY)
         ir: DesignIR = session.ir
 
@@ -461,7 +461,7 @@ class TestStage5Patch:
         assert "v_in" in descriptions[0]
 
     def test_patch_validate_catches_invalid_ops(self, store_dir):
-        session = DesignSession(store_dir=store_dir, use_mock=True)
+        session = DesignSession(store_dir=store_dir, )
         session.run(USER_QUERY)
         ir: DesignIR = session.ir
 
@@ -500,14 +500,14 @@ class TestStage6ReferenceDesign:
         assert len(design.bringup_tips) >= 1
 
     def test_reference_design_matched_by_session(self, store_dir):
-        session = DesignSession(store_dir=store_dir, use_mock=True)
+        session = DesignSession(store_dir=store_dir, )
         result = session.run(USER_QUERY)
         assert result.success
         assert result.reference_design is not None
         assert result.reference_design.ref_id == "ref_ldo_led_combo"
 
     def test_reference_design_applicable_categories_match(self, store_dir):
-        session = DesignSession(store_dir=store_dir, use_mock=True)
+        session = DesignSession(store_dir=store_dir, )
         result = session.run(USER_QUERY)
         ref = result.reference_design
         assert ref is not None
@@ -528,16 +528,16 @@ class TestFullClosedLoop:
         Then:  every stage produces valid output and data flows through IR
         """
         # --- 1. Clarify ---
-        planner = DesignPlanner(use_mock=True)
+        planner = DesignPlanner()
         plan = planner.plan(USER_QUERY)
-        clarifier = RequirementClarifier(use_mock=True)
+        clarifier = RequirementClarifier()
         clarification = clarifier.clarify(USER_QUERY, plan)
         assert clarification.can_proceed
         assert len(plan.modules) >= 2
 
         # --- 2. Candidate Solve ---
         store = ComponentStore(store_dir)
-        solver = CandidateSolver(store, use_mock=True)
+        solver = CandidateSolver(store, )
         solver_results: dict[str, SolverResult] = {}
         for mod in plan.modules:
             solver_results[mod.role] = solver.solve(mod, max_candidates=3)
@@ -570,7 +570,7 @@ class TestFullClosedLoop:
         assert len(design_review.issues) >= 1
 
         # --- 4. Render (via full DesignSession) ---
-        session = DesignSession(store_dir=store_dir, use_mock=True)
+        session = DesignSession(store_dir=store_dir, )
         result = session.run(USER_QUERY)
         assert result.success, f"Render failed: {result.error}"
         assert len(result.svg_paths) >= 1
@@ -633,7 +633,7 @@ class TestFullClosedLoop:
 
     def test_ldo_only_closed_loop(self, store_dir):
         """Simpler scenario: LDO-only, still exercises full chain."""
-        session = DesignSession(store_dir=store_dir, use_mock=True)
+        session = DesignSession(store_dir=store_dir, )
         result = session.run("5V转3.3V稳压电路")
 
         assert result.success
@@ -668,7 +668,7 @@ class TestFullClosedLoop:
 
     def test_ir_snapshot_and_rollback_after_patch(self, store_dir):
         """Demonstrate snapshot/rollback capability across the full chain."""
-        session = DesignSession(store_dir=store_dir, use_mock=True)
+        session = DesignSession(store_dir=store_dir, )
         result = session.run(USER_QUERY)
         assert result.success
 

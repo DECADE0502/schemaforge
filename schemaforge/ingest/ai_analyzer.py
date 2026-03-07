@@ -186,14 +186,12 @@ _IMAGE_ANALYSIS_PROMPT = """\
 def analyze_datasheet_text(
     text: str,
     hint: str = "",
-    use_mock: bool = False,
 ) -> ToolResult:
     """用 AI 分析 datasheet 文本内容
 
     Args:
         text: PDF 提取的文本内容
         hint: 附加提示 (如用户提供的器件型号)
-        use_mock: 是否使用 mock 模式
 
     Returns:
         ToolResult, data 为 TextAnalysisResult
@@ -214,9 +212,6 @@ def analyze_datasheet_text(
     user_msg = f"以下是 datasheet 文本内容:\n\n{text}"
     if hint:
         user_msg += f"\n\n用户提示: {hint}"
-
-    if use_mock:
-        return _mock_text_analysis(text, hint)
 
     try:
         from schemaforge.ai.client import call_llm, DEFAULT_MODEL, _extract_json
@@ -283,14 +278,12 @@ def analyze_datasheet_text(
 def analyze_image(
     image_bytes: bytes,
     task_hint: str = "",
-    use_mock: bool = False,
 ) -> ToolResult:
     """用 AI vision 分析引脚图/封装图
 
     Args:
         image_bytes: 图片二进制数据
         task_hint: 任务提示
-        use_mock: 是否使用 mock 模式
 
     Returns:
         ToolResult, data 为 ImageAnalysisResult
@@ -303,9 +296,6 @@ def analyze_image(
                 message="图片数据为空",
             ),
         )
-
-    if use_mock:
-        return _mock_image_analysis()
 
     import base64
 
@@ -389,7 +379,6 @@ def analyze_combined(
     text: str,
     image_list: list[bytes],
     hint: str = "",
-    use_mock: bool = False,
 ) -> ToolResult:
     """融合分析：PDF 文本 + 多张引脚图/封装图
 
@@ -399,7 +388,6 @@ def analyze_combined(
         text: PDF 提取的文本
         image_list: 图片二进制数据列表
         hint: 用户提示
-        use_mock: 是否使用 mock
 
     Returns:
         ToolResult, data 为 TextAnalysisResult
@@ -412,9 +400,6 @@ def analyze_combined(
                 message="文本和图片均为空",
             ),
         )
-
-    if use_mock:
-        return _mock_text_analysis(text, hint)
 
     import base64
 
@@ -450,7 +435,7 @@ def analyze_combined(
         )
 
     if len(content) < 2:
-        return analyze_datasheet_text(text, hint=hint, use_mock=use_mock)
+        return analyze_datasheet_text(text, hint=hint)
 
     try:
         from schemaforge.ai.client import DEFAULT_MODEL, _extract_json, get_client
@@ -519,14 +504,12 @@ def analyze_combined(
 def analyze_image_file(
     filepath: str,
     task_hint: str = "",
-    use_mock: bool = False,
 ) -> ToolResult:
     """从文件路径分析图片
 
     Args:
         filepath: 图片文件路径
         task_hint: 任务提示
-        use_mock: 是否使用 mock
 
     Returns:
         ToolResult
@@ -544,7 +527,7 @@ def analyze_image_file(
         )
 
     image_bytes = path.read_bytes()
-    return analyze_image(image_bytes, task_hint, use_mock)
+    return analyze_image(image_bytes, task_hint)
 
 
 # ============================================================

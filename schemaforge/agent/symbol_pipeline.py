@@ -188,7 +188,6 @@ def run_symbol_pipeline(
     pdf_path: str | None = None,
     image_paths: list[str] | None = None,
     hint: str = "",
-    use_mock: bool = False,
     skip_review: bool = False,
 ) -> SymbolPipelineResult:
     """执行完整的符号生成流水线
@@ -197,7 +196,6 @@ def run_symbol_pipeline(
         pdf_path: PDF datasheet 路径 (可选)
         image_paths: 引脚图/封装图路径列表 (可选)
         hint: 器件型号提示
-        use_mock: 是否使用 mock AI
         skip_review: 是否跳过审查阶段
 
     Returns:
@@ -207,7 +205,7 @@ def run_symbol_pipeline(
 
     # --- 阶段 1: 提取 ---
     logger.info("符号流水线: 阶段1 — 提取器件信息")
-    extraction = _run_extraction(pdf_path, image_paths, hint, use_mock)
+    extraction = _run_extraction(pdf_path, image_paths, hint)
     result.extraction = extraction
 
     if not extraction.success:
@@ -247,7 +245,7 @@ def run_symbol_pipeline(
     result.all_warnings.extend(build_result.warnings)
 
     # --- 布局建议 (可选，非阻塞) ---
-    if not use_mock and result.symbol_def:
+    if result.symbol_def:
         _run_layout_advice(result)
 
     # --- 阶段 3: 审查 ---
@@ -259,7 +257,6 @@ def run_symbol_pipeline(
             result.pins_data,
             build_result.data.get("pins", []),
             result.symbol_def,
-            use_mock=use_mock,
         )
         result.review = review_result
         result.all_warnings.extend(review_result.warnings)
@@ -295,7 +292,6 @@ def _run_extraction(
     pdf_path: str | None,
     image_paths: list[str] | None,
     hint: str,
-    use_mock: bool,
 ) -> PipelineStepResult:
     """阶段 1: 从 PDF/图片提取器件信息。"""
     step = PipelineStepResult(stage="extract")
@@ -307,7 +303,6 @@ def _run_extraction(
             extraction = extract_from_pdf(
                 filepath=pdf_path,
                 hint=hint,
-                use_mock=use_mock,
                 extra_images=image_paths,
             )
         elif image_paths:
@@ -316,7 +311,6 @@ def _run_extraction(
             extraction = extract_from_image(
                 image_source=image_paths[0],
                 hint=hint,
-                use_mock=use_mock,
             )
         else:
             step.error = "未提供 PDF 或图片"
@@ -485,21 +479,9 @@ def _run_review(
     original_pins: list[dict[str, str]],
     generated_pins: list[dict[str, str]],
     symbol_def: dict[str, Any],
-    use_mock: bool = False,
 ) -> PipelineStepResult:
     """阶段 3: AI 审查生成的符号。"""
     step = PipelineStepResult(stage="review")
-
-    if use_mock:
-        step.success = True
-        step.data = {
-            "passed": True,
-            "pin_count_match": True,
-            "issues": [],
-            "confidence": 0.8,
-            "summary": "(Mock) 审查通过",
-        }
-        return step
 
     # 格式化引脚信息
     orig_lines: list[str] = []

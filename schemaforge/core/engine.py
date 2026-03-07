@@ -9,7 +9,7 @@ import re
 from dataclasses import dataclass, field
 from typing import Any, Callable
 
-from schemaforge.ai.client import call_llm_json, call_llm_mock
+from schemaforge.ai.client import call_llm_json
 from schemaforge.ai.prompts import build_user_message, load_system_prompt
 from schemaforge.ai.validator import ValidationResult, validate_design_spec
 from schemaforge.core.calculator import (
@@ -66,13 +66,8 @@ class EngineResult:
 class SchemaForgeEngine:
     """SchemaForge 核心引擎"""
 
-    def __init__(self, use_mock: bool = True) -> None:
-        """初始化引擎
-
-        Args:
-            use_mock: 是否使用Mock LLM（离线模式）
-        """
-        self.use_mock = use_mock
+    def __init__(self) -> None:
+        """初始化引擎"""
         self.erc_checker = ERCChecker()
 
     def process(
@@ -99,16 +94,13 @@ class SchemaForgeEngine:
         _emit("正在调用AI模型...", 5)
         result.stage = "llm_call"
         try:
-            if self.use_mock:
-                design_data = call_llm_mock(user_input)
-            else:
-                system_prompt = load_system_prompt()
-                user_message = build_user_message(user_input)
-                design_data_or_none = call_llm_json(system_prompt, user_message)
-                if design_data_or_none is None:
-                    result.error = "LLM返回的内容无法解析为JSON"
-                    return result
-                design_data = design_data_or_none
+            system_prompt = load_system_prompt()
+            user_message = build_user_message(user_input)
+            design_data_or_none = call_llm_json(system_prompt, user_message)
+            if design_data_or_none is None:
+                result.error = "LLM返回的内容无法解析为JSON"
+                return result
+            design_data = design_data_or_none
         except Exception as e:
             result.error = f"LLM调用失败: {e}"
             return result

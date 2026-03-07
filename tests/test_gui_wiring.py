@@ -107,11 +107,6 @@ class TestDesignPageStructure:
         """生成完成后应该提示用户可以通过对话修改。"""
         assert "你可以在对话框中输入修改指令" in self.src
 
-    def test_chain_switch_resets_session(self) -> None:
-        """切换链路时应清空会话状态。"""
-        assert "chain_index != 2" in self.src
-
-
 class TestEngineWorkerStructure:
     """engine_worker.py 源码结构验证。"""
 
@@ -185,12 +180,10 @@ class TestSchemaForgeWorkerLogic:
 
         worker = SchemaForgeWorker(
             user_input="测试输入",
-            use_mock=True,
             session=None,
         )
         assert worker._session is None
         assert worker.user_input == "测试输入"
-        assert worker.use_mock is True
 
     def test_worker_reuses_session(self) -> None:
         """传入已有 session 时应复用。"""
@@ -199,7 +192,6 @@ class TestSchemaForgeWorkerLogic:
         mock_session = MagicMock()
         worker = SchemaForgeWorker(
             user_input="测试输入",
-            use_mock=True,
             session=mock_session,
         )
         assert worker._session is mock_session

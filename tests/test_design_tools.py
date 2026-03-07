@@ -33,7 +33,7 @@ def session_with_design(tmp_path: Path) -> tuple[SchemaForgeSession, object]:
             specs={"v_out": "3.3V"},
         )
     )
-    session = SchemaForgeSession(tmp_path / "store", use_mock=True)
+    session = SchemaForgeSession(tmp_path / "store", )
     registry = build_design_tool_registry(session)
 
     # 先启动设计，确保 bundle 存在
@@ -86,7 +86,7 @@ def session_with_recipe(tmp_path: Path) -> tuple[SchemaForgeSession, object]:
             design_recipe=recipe,
         )
     )
-    session = SchemaForgeSession(tmp_path / "store", use_mock=True)
+    session = SchemaForgeSession(tmp_path / "store", )
     registry = build_design_tool_registry(session)
 
     start_result = registry.execute(
@@ -111,7 +111,7 @@ def test_design_tool_registry_starts_design(tmp_path: Path) -> None:
             specs={"v_out": "3.3V"},
         )
     )
-    session = SchemaForgeSession(tmp_path / "store", use_mock=True)
+    session = SchemaForgeSession(tmp_path / "store", )
     registry = build_design_tool_registry(session)
 
     result = registry.execute(
@@ -131,7 +131,7 @@ class TestCalculateParameters:
     """calculate_parameters 工具测试。"""
 
     def test_no_bundle_returns_error(self, tmp_path: Path) -> None:
-        session = SchemaForgeSession(tmp_path / "store", use_mock=True)
+        session = SchemaForgeSession(tmp_path / "store", )
         registry = build_design_tool_registry(session)
         result = registry.execute("calculate_parameters", {})
         assert not result.success
@@ -206,7 +206,7 @@ class TestGenerateNetlist:
     """generate_netlist 工具测试。"""
 
     def test_no_bundle_returns_error(self, tmp_path: Path) -> None:
-        session = SchemaForgeSession(tmp_path / "store", use_mock=True)
+        session = SchemaForgeSession(tmp_path / "store", )
         registry = build_design_tool_registry(session)
         result = registry.execute("generate_netlist", {})
         assert not result.success
@@ -230,7 +230,7 @@ class TestRenderSchematic:
     """render_schematic 工具测试。"""
 
     def test_no_bundle_returns_error(self, tmp_path: Path) -> None:
-        session = SchemaForgeSession(tmp_path / "store", use_mock=True)
+        session = SchemaForgeSession(tmp_path / "store", )
         registry = build_design_tool_registry(session)
         result = registry.execute("render_schematic", {})
         assert not result.success
@@ -257,7 +257,7 @@ class TestValidateDesign:
     """validate_design 工具测试。"""
 
     def test_no_bundle_returns_error(self, tmp_path: Path) -> None:
-        session = SchemaForgeSession(tmp_path / "store", use_mock=True)
+        session = SchemaForgeSession(tmp_path / "store", )
         registry = build_design_tool_registry(session)
         result = registry.execute("validate_design", {})
         assert not result.success
@@ -284,7 +284,7 @@ class TestToolRegistration:
     """验证所有工具都正确注册。"""
 
     def test_all_nine_tools_registered(self, tmp_path: Path) -> None:
-        session = SchemaForgeSession(tmp_path / "store", use_mock=True)
+        session = SchemaForgeSession(tmp_path / "store", )
         registry = build_design_tool_registry(session)
         tools = registry.list_tools()
         tool_names = {t.name for t in tools}
@@ -302,7 +302,7 @@ class TestToolRegistration:
         assert tool_names == expected
 
     def test_all_tools_have_design_category(self, tmp_path: Path) -> None:
-        session = SchemaForgeSession(tmp_path / "store", use_mock=True)
+        session = SchemaForgeSession(tmp_path / "store", )
         registry = build_design_tool_registry(session)
         descriptions = registry.get_tool_descriptions()
         for desc in descriptions:

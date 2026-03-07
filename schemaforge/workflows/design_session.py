@@ -173,12 +173,11 @@ class DesignSession:
     def __init__(
         self,
         store_dir: Path | str,
-        use_mock: bool = True,
         progress_callback: Callable[[str, int], None] | None = None,
         tracker: ProgressTracker | None = None,
     ) -> None:
         self._store = ComponentStore(Path(store_dir))
-        self._planner = DesignPlanner(use_mock=use_mock)
+        self._planner = DesignPlanner()
         self._retriever = DeviceRetriever(self._store)
         self._adapter = TopologyAdapter()
         self._checker = RationalityChecker()
@@ -243,7 +242,7 @@ class DesignSession:
 
         from schemaforge.design.clarifier import RequirementClarifier
 
-        clarifier = RequirementClarifier(use_mock=self._planner.use_mock)
+        clarifier = RequirementClarifier()
         self._clarification = clarifier.clarify(user_input, plan)
 
         # === 阶段2: planning — 检索匹配 + 候选方案求解 ===
@@ -253,7 +252,7 @@ class DesignSession:
 
         from schemaforge.design.candidate_solver import CandidateSolver
 
-        solver = CandidateSolver(self._store, use_mock=self._planner.use_mock)
+        solver = CandidateSolver(self._store)
 
         module_results: list[ModuleResult] = []
         missing: list[MissingModule] = []
@@ -477,7 +476,7 @@ class DesignSession:
         clarification = self._clarification
         design_mode_assumption = Assumption(
             field="design_mode",
-            assumed_value="mock" if self._planner.use_mock else "ai",
+            assumed_value="ai",
             reason="规划器模式",
             risk="",
         )

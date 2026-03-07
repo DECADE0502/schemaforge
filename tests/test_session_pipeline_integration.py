@@ -171,7 +171,7 @@ def store_dir():
 
 
 def _run_session(store_dir: Path, query: str = "5V转3.3V稳压电路") -> tuple:
-    session = DesignSession(store_dir=store_dir, use_mock=True)
+    session = DesignSession(store_dir=store_dir, )
     result = session.run(query)
     return session, result
 
@@ -245,7 +245,7 @@ class TestCandidateSolverIntegration:
         empty_dir = Path(tempfile.mkdtemp())
         try:
             ComponentStore(empty_dir)
-            session = DesignSession(store_dir=empty_dir, use_mock=True)
+            session = DesignSession(store_dir=empty_dir, )
             result = session.run("5V转3.3V稳压电路")
             assert not result.success
             for mr in result.modules:

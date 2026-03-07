@@ -318,14 +318,11 @@ _MOCK_REGISTRY: dict[str, Any] = {
 class TopologyDraftGenerator:
     """拓扑草稿生成器
 
-    当器件库中没有预置拓扑时，利用 AI（或 mock）自动生成拓扑草稿。
-
-    Args:
-        use_mock: 是否使用 mock 预设（True=离线/测试，False=调用真实 LLM）
+    当器件库中没有预置拓扑时，利用 AI 自动生成拓扑草稿。
     """
 
-    def __init__(self, use_mock: bool = True) -> None:
-        self.use_mock = use_mock
+    def __init__(self) -> None:
+        pass
 
     # ----------------------------------------------------------
     # 公开接口
@@ -344,14 +341,8 @@ class TopologyDraftGenerator:
 
         Returns:
             TopologyDraft 草稿
-
-        Raises:
-            ValueError: 无法识别器件类型，且 use_mock=True 也没有对应预设
         """
-        if self.use_mock:
-            return self._mock_generate(device, context)
-        else:
-            return self._llm_generate(device, context)
+        return self._llm_generate(device, context)
 
     def validate_draft(
         self,
