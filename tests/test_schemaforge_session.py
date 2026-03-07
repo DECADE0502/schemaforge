@@ -1050,3 +1050,80 @@ def test_spice_uses_device_model_template() -> None:
     assert "L1" in spice
     # 应包含 .end
     assert ".end" in spice
+
+
+
+def test_parse_design_request_explicit_flag_overrides_env(monkeypatch) -> None:
+    monkeypatch.setenv("SCHEMAFORGE_SKIP_AI_PARSE", "1")
+
+    def _mock_call_llm_json(*args, **kwargs):
+        return {
+            "part_number": "TPS54202",
+            "category": "buck",
+            "v_in": "20",
+            "v_out": "5",
+            "i_out": "0.5",
+            "wants_led": False,
+            "led_color": "green",
+            "led_current_ma": "2",
+            "additional_devices": [
+                {"part_number": "AMS1117-3.3", "role": "post_regulator"},
+                {"part_number": "STM32F103C8T6", "role": "load"},
+            ],
+            "design_notes": "5V ???? 3.3V ? MCU ??",
+        }
+
+    monkeypatch.setattr("schemaforge.ai.client.call_llm_json", _mock_call_llm_json)
+
+    req = parse_design_request(
+        "20V????TPS54202???5V???AMS1117??3.3V??stm32f103c8t6??",
+        skip_ai_parse=False,
+    )
+
+    assert req.part_number == "TPS54202"
+    assert req.additional_devices == [
+        {"part_number": "AMS1117-3.3", "role": "post_regulator"},
+        {"part_number": "STM32F103C8T6", "role": "load"},
+    ]
+    assert "3.3V" in req.design_notes
+
+
+def test_schemaforge_session_explicit_ai_parse_ignores_skip_env(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("SCHEMAFORGE_SKIP_AI_PARSE", "1")
+
+    def _mock_call_llm_json(*args, **kwargs):
+        return {
+            "part_number": "TPS54202",
+            "category": "buck",
+            "v_in": "20",
+            "v_out": "5",
+            "i_out": "0.5",
+            "wants_led": False,
+            "led_color": "green",
+            "led_current_ma": "2",
+            "additional_devices": [
+                {"part_number": "AMS1117-3.3", "role": "post_regulator"},
+                {"part_number": "STM32F103C8T6", "role": "load"},
+            ],
+            "design_notes": "5V ???? 3.3V ? MCU ??",
+        }
+
+    monkeypatch.setattr("schemaforge.ai.client.call_llm_json", _mock_call_llm_json)
+
+    store = ComponentStore(tmp_path / "store")
+    store.save_device(
+        DeviceModel(
+            part_number="TPS54202",
+            category="buck",
+            specs={"v_in_max": "28V", "i_out_max": "2A", "fsw": "500kHz", "v_ref": "0.8V"},
+        )
+    )
+
+    session = SchemaForgeSession(tmp_path / "store", skip_ai_parse=False)
+    result = session.start("20V????TPS54202???5V???AMS1117??3.3V??stm32f103c8t6??")
+
+    assert result.status == "generated"
+    assert result.request is not None
+    assert len(result.request.additional_devices) == 2
+    assert any("AMS1117-3.3" in warning for warning in result.warnings)
+    assert any("STM32F103C8T6" in warning for warning in result.warnings)

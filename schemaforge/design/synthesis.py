@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field, replace
+import os
 import re
 
 from schemaforge.design.planner import _extract_voltages
@@ -31,6 +32,14 @@ _VALUE_RE = re.compile(
 )
 _CAP_SERIES = [1.0, 2.2, 4.7, 10.0, 22.0, 47.0, 100.0, 220.0]
 _INDUCTOR_SERIES = [1.0, 1.5, 2.2, 3.3, 4.7, 6.8, 10.0, 15.0, 22.0, 33.0, 47.0]
+
+
+def _should_skip_ai_parse(skip_ai_parse: bool | None = None) -> bool:
+    if skip_ai_parse is not None:
+        return skip_ai_parse
+
+    raw = os.environ.get("SCHEMAFORGE_SKIP_AI_PARSE", "")
+    return raw.strip().lower() not in {"", "0", "false", "no", "off"}
 
 
 @dataclass(slots=True)
@@ -140,10 +149,13 @@ def _parse_design_request_regex(user_input: str) -> UserDesignRequest:
     )
 
 
-def parse_design_request(user_input: str) -> UserDesignRequest:
+def parse_design_request(
+    user_input: str,
+    *,
+    skip_ai_parse: bool | None = None,
+) -> UserDesignRequest:
     """AI 驱动的需求解析，正则 fallback。"""
-    import os
-    if not os.environ.get("SCHEMAFORGE_SKIP_AI_PARSE"):
+    if not _should_skip_ai_parse(skip_ai_parse):
         try:
             from schemaforge.ai.client import call_llm_json
             from schemaforge.ai.prompts import PARSE_REQUEST_PROMPT
@@ -1331,10 +1343,13 @@ def _parse_revision_request_regex(user_input: str) -> RevisionResult:
     return result
 
 
-def parse_revision_request_v2(user_input: str) -> RevisionResult:
+def parse_revision_request_v2(
+    user_input: str,
+    *,
+    skip_ai_parse: bool | None = None,
+) -> RevisionResult:
     """AI 驱动的修改请求解析，正则 fallback。"""
-    import os
-    if not os.environ.get("SCHEMAFORGE_SKIP_AI_PARSE"):
+    if not _should_skip_ai_parse(skip_ai_parse):
         try:
             from schemaforge.ai.client import call_llm_json
             from schemaforge.ai.prompts import PARSE_REVISION_PROMPT

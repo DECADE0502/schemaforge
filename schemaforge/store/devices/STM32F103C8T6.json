@@ -1,0 +1,539 @@
+{
+  "part_number": "STM32F103C8T6",
+  "aliases": [],
+  "manufacturer": "STMicroelectronics",
+  "description": "基于Arm Cortex-M3的32位中密度性能线微控制器，64KB Flash，20KB SRAM，72MHz主频，支持USB、CAN、多路定时器和ADC",
+  "category": "mcu",
+  "specs": {
+    "core": "Arm Cortex-M3",
+    "max_frequency": "72 MHz",
+    "flash_memory": "64 Kbytes",
+    "sram": "20 Kbytes",
+    "voltage_range": "2.0 to 3.6 V",
+    "adc_channels": "10 channels",
+    "adc_resolution": "12-bit",
+    "timers": "7 (3个通用16位定时器, 1个高级控制PWM定时器, 2个看门狗定时器, 1个SysTick定时器)",
+    "communication_interfaces": "2x I2C, 2x SPI, 3x USART, 1x USB 2.0 FS, 1x CAN 2.0B",
+    "gpio_count": "37",
+    "operating_temperature": "-40 to +85°C / -40 to +105°C",
+    "dma_channels": "7"
+  },
+  "symbol": {
+    "pins": [
+      {
+        "name": "VBAT",
+        "pin_number": "1",
+        "side": "top",
+        "pin_type": "power_in",
+        "slot": "4/12",
+        "inverted": false,
+        "anchor_name": "",
+        "description": "RTC和备份寄存器备用电源"
+      },
+      {
+        "name": "PC13-TAMPER-RTC",
+        "pin_number": "2",
+        "side": "left",
+        "pin_type": "passive",
+        "slot": "9/12",
+        "inverted": false,
+        "anchor_name": "",
+        "description": "PC13，防篡改检测/RTC功能"
+      },
+      {
+        "name": "PC14-OSC32_IN",
+        "pin_number": "3",
+        "side": "left",
+        "pin_type": "input",
+        "slot": "10/12",
+        "inverted": false,
+        "anchor_name": "",
+        "description": "PC14，32.768kHz晶振输入"
+      },
+      {
+        "name": "PC15-OSC32_OUT",
+        "pin_number": "4",
+        "side": "top",
+        "pin_type": "output",
+        "slot": "3/12",
+        "inverted": false,
+        "anchor_name": "",
+        "description": "PC15，32.768kHz晶振输出"
+      },
+      {
+        "name": "PD0-OSC_IN",
+        "pin_number": "5",
+        "side": "left",
+        "pin_type": "input",
+        "slot": "11/12",
+        "inverted": false,
+        "anchor_name": "",
+        "description": "PD0，外部4-16MHz晶振输入"
+      },
+      {
+        "name": "PD1-OSC_OUT",
+        "pin_number": "6",
+        "side": "left",
+        "pin_type": "output",
+        "slot": "12/12",
+        "inverted": false,
+        "anchor_name": "",
+        "description": "PD1，外部4-16MHz晶振输出"
+      },
+      {
+        "name": "NRST",
+        "pin_number": "7",
+        "side": "left",
+        "pin_type": "input",
+        "slot": "1/12",
+        "inverted": false,
+        "anchor_name": "",
+        "description": "复位输入，低电平有效"
+      },
+      {
+        "name": "VSSA",
+        "pin_number": "8",
+        "side": "top",
+        "pin_type": "power_in",
+        "slot": "9/12",
+        "inverted": false,
+        "anchor_name": "",
+        "description": "模拟地"
+      },
+      {
+        "name": "VDDA",
+        "pin_number": "9",
+        "side": "top",
+        "pin_type": "power_in",
+        "slot": "5/12",
+        "inverted": false,
+        "anchor_name": "",
+        "description": "模拟电源2.0-3.6V"
+      },
+      {
+        "name": "PA0-WKUP",
+        "pin_number": "10",
+        "side": "left",
+        "pin_type": "passive",
+        "slot": "2/12",
+        "inverted": false,
+        "anchor_name": "",
+        "description": "PA0，唤醒输入/ADC通道0"
+      },
+      {
+        "name": "PA1",
+        "pin_number": "11",
+        "side": "left",
+        "pin_type": "passive",
+        "slot": "3/12",
+        "inverted": false,
+        "anchor_name": "",
+        "description": "PA1，通用I/O/ADC通道1"
+      },
+      {
+        "name": "PA2",
+        "pin_number": "12",
+        "side": "left",
+        "pin_type": "passive",
+        "slot": "4/12",
+        "inverted": false,
+        "anchor_name": "",
+        "description": "PA2，通用I/O/ADC通道2/USART2_TX"
+      },
+      {
+        "name": "PA3",
+        "pin_number": "13",
+        "side": "left",
+        "pin_type": "passive",
+        "slot": "5/12",
+        "inverted": false,
+        "anchor_name": "",
+        "description": "PA3，通用I/O/ADC通道3/USART2_RX"
+      },
+      {
+        "name": "PA4",
+        "pin_number": "14",
+        "side": "left",
+        "pin_type": "passive",
+        "slot": "6/12",
+        "inverted": false,
+        "anchor_name": "",
+        "description": "PA4，通用I/O/ADC通道4/SPI1_NSS"
+      },
+      {
+        "name": "PA5",
+        "pin_number": "15",
+        "side": "left",
+        "pin_type": "passive",
+        "slot": "7/12",
+        "inverted": false,
+        "anchor_name": "",
+        "description": "PA5，通用I/O/ADC通道5/SPI1_SCK"
+      },
+      {
+        "name": "PA6",
+        "pin_number": "16",
+        "side": "left",
+        "pin_type": "passive",
+        "slot": "8/12",
+        "inverted": false,
+        "anchor_name": "",
+        "description": "PA6，通用I/O/ADC通道6/SPI1_MISO"
+      },
+      {
+        "name": "PA7",
+        "pin_number": "17",
+        "side": "bottom",
+        "pin_type": "passive",
+        "slot": "1/12",
+        "inverted": false,
+        "anchor_name": "",
+        "description": "PA7，通用I/O/ADC通道7/SPI1_MOSI"
+      },
+      {
+        "name": "PB0",
+        "pin_number": "18",
+        "side": "bottom",
+        "pin_type": "passive",
+        "slot": "4/12",
+        "inverted": false,
+        "anchor_name": "",
+        "description": "PB0，通用I/O/ADC通道8"
+      },
+      {
+        "name": "PB1",
+        "pin_number": "19",
+        "side": "bottom",
+        "pin_type": "passive",
+        "slot": "5/12",
+        "inverted": false,
+        "anchor_name": "",
+        "description": "PB1，通用I/O/ADC通道9"
+      },
+      {
+        "name": "PB2",
+        "pin_number": "20",
+        "side": "bottom",
+        "pin_type": "passive",
+        "slot": "12/12",
+        "inverted": false,
+        "anchor_name": "",
+        "description": "PB2，通用I/O/BOOT1"
+      },
+      {
+        "name": "PB10",
+        "pin_number": "21",
+        "side": "bottom",
+        "pin_type": "passive",
+        "slot": "6/12",
+        "inverted": false,
+        "anchor_name": "",
+        "description": "PB10，通用I/O/I2C2_SCL/USART3_TX"
+      },
+      {
+        "name": "PB11",
+        "pin_number": "22",
+        "side": "bottom",
+        "pin_type": "passive",
+        "slot": "7/12",
+        "inverted": false,
+        "anchor_name": "",
+        "description": "PB11，通用I/O/I2C2_SDA/USART3_RX"
+      },
+      {
+        "name": "VSS_1",
+        "pin_number": "23",
+        "side": "top",
+        "pin_type": "power_in",
+        "slot": "10/12",
+        "inverted": false,
+        "anchor_name": "",
+        "description": "数字地"
+      },
+      {
+        "name": "VDD_1",
+        "pin_number": "24",
+        "side": "top",
+        "pin_type": "power_in",
+        "slot": "6/12",
+        "inverted": false,
+        "anchor_name": "",
+        "description": "数字电源2.0-3.6V"
+      },
+      {
+        "name": "PB12",
+        "pin_number": "25",
+        "side": "bottom",
+        "pin_type": "passive",
+        "slot": "8/12",
+        "inverted": false,
+        "anchor_name": "",
+        "description": "PB12，通用I/O/SPI2_NSS/I2C2_SMBA"
+      },
+      {
+        "name": "PB13",
+        "pin_number": "26",
+        "side": "bottom",
+        "pin_type": "passive",
+        "slot": "9/12",
+        "inverted": false,
+        "anchor_name": "",
+        "description": "PB13，通用I/O/SPI2_SCK"
+      },
+      {
+        "name": "PB14",
+        "pin_number": "27",
+        "side": "bottom",
+        "pin_type": "passive",
+        "slot": "10/12",
+        "inverted": false,
+        "anchor_name": "",
+        "description": "PB14，通用I/O/SPI2_MISO"
+      },
+      {
+        "name": "PB15",
+        "pin_number": "28",
+        "side": "bottom",
+        "pin_type": "passive",
+        "slot": "11/12",
+        "inverted": false,
+        "anchor_name": "",
+        "description": "PB15，通用I/O/SPI2_MOSI"
+      },
+      {
+        "name": "PA8",
+        "pin_number": "29",
+        "side": "bottom",
+        "pin_type": "passive",
+        "slot": "2/12",
+        "inverted": false,
+        "anchor_name": "",
+        "description": "PA8，通用I/O/MCO"
+      },
+      {
+        "name": "PA9",
+        "pin_number": "30",
+        "side": "bottom",
+        "pin_type": "passive",
+        "slot": "3/12",
+        "inverted": false,
+        "anchor_name": "",
+        "description": "PA9，通用I/O/USART1_TX"
+      },
+      {
+        "name": "PA10",
+        "pin_number": "31",
+        "side": "right",
+        "pin_type": "passive",
+        "slot": "2/12",
+        "inverted": false,
+        "anchor_name": "",
+        "description": "PA10，通用I/O/USART1_RX"
+      },
+      {
+        "name": "PA11",
+        "pin_number": "32",
+        "side": "right",
+        "pin_type": "passive",
+        "slot": "3/12",
+        "inverted": false,
+        "anchor_name": "",
+        "description": "PA11，通用I/O/USB_DM/CAN_RX"
+      },
+      {
+        "name": "PA12",
+        "pin_number": "33",
+        "side": "right",
+        "pin_type": "passive",
+        "slot": "4/12",
+        "inverted": false,
+        "anchor_name": "",
+        "description": "PA12，通用I/O/USB_DP/CAN_TX"
+      },
+      {
+        "name": "PA13",
+        "pin_number": "34",
+        "side": "right",
+        "pin_type": "passive",
+        "slot": "5/12",
+        "inverted": false,
+        "anchor_name": "",
+        "description": "PA13，通用I/O/SWDIO/JTMS"
+      },
+      {
+        "name": "VSS_2",
+        "pin_number": "35",
+        "side": "top",
+        "pin_type": "power_in",
+        "slot": "11/12",
+        "inverted": false,
+        "anchor_name": "",
+        "description": "数字地"
+      },
+      {
+        "name": "VDD_2",
+        "pin_number": "36",
+        "side": "top",
+        "pin_type": "power_in",
+        "slot": "7/12",
+        "inverted": false,
+        "anchor_name": "",
+        "description": "数字电源2.0-3.6V"
+      },
+      {
+        "name": "PA14",
+        "pin_number": "37",
+        "side": "right",
+        "pin_type": "passive",
+        "slot": "6/12",
+        "inverted": false,
+        "anchor_name": "",
+        "description": "PA14，通用I/O/SWCLK/JTCK"
+      },
+      {
+        "name": "PA15",
+        "pin_number": "38",
+        "side": "right",
+        "pin_type": "passive",
+        "slot": "7/12",
+        "inverted": false,
+        "anchor_name": "",
+        "description": "PA15，通用I/O/JTDI"
+      },
+      {
+        "name": "PB3",
+        "pin_number": "39",
+        "side": "right",
+        "pin_type": "passive",
+        "slot": "8/12",
+        "inverted": false,
+        "anchor_name": "",
+        "description": "PB3，通用I/O/JTDO/TRACESWO"
+      },
+      {
+        "name": "PB4",
+        "pin_number": "40",
+        "side": "right",
+        "pin_type": "passive",
+        "slot": "9/12",
+        "inverted": false,
+        "anchor_name": "",
+        "description": "PB4，通用I/O/JTRST"
+      },
+      {
+        "name": "PB5",
+        "pin_number": "41",
+        "side": "right",
+        "pin_type": "passive",
+        "slot": "10/12",
+        "inverted": false,
+        "anchor_name": "",
+        "description": "PB5，通用I/O/I2C1_SMBA"
+      },
+      {
+        "name": "PB6",
+        "pin_number": "42",
+        "side": "right",
+        "pin_type": "passive",
+        "slot": "11/12",
+        "inverted": false,
+        "anchor_name": "",
+        "description": "PB6，通用I/O/I2C1_SCL"
+      },
+      {
+        "name": "PB7",
+        "pin_number": "43",
+        "side": "right",
+        "pin_type": "passive",
+        "slot": "12/12",
+        "inverted": false,
+        "anchor_name": "",
+        "description": "PB7，通用I/O/I2C1_SDA"
+      },
+      {
+        "name": "BOOT0",
+        "pin_number": "44",
+        "side": "right",
+        "pin_type": "input",
+        "slot": "1/12",
+        "inverted": false,
+        "anchor_name": "",
+        "description": "启动模式选择0"
+      },
+      {
+        "name": "PB8",
+        "pin_number": "45",
+        "side": "top",
+        "pin_type": "passive",
+        "slot": "1/12",
+        "inverted": false,
+        "anchor_name": "",
+        "description": "PB8，通用I/O/CAN_RX"
+      },
+      {
+        "name": "PB9",
+        "pin_number": "46",
+        "side": "top",
+        "pin_type": "passive",
+        "slot": "2/12",
+        "inverted": false,
+        "anchor_name": "",
+        "description": "PB9，通用I/O/CAN_TX"
+      },
+      {
+        "name": "VSS_3",
+        "pin_number": "47",
+        "side": "top",
+        "pin_type": "power_in",
+        "slot": "12/12",
+        "inverted": false,
+        "anchor_name": "",
+        "description": "数字地"
+      },
+      {
+        "name": "VDD_3",
+        "pin_number": "48",
+        "side": "top",
+        "pin_type": "power_in",
+        "slot": "8/12",
+        "inverted": false,
+        "anchor_name": "",
+        "description": "数字电源2.0-3.6V"
+      }
+    ],
+    "size": [
+      15.0,
+      14.0
+    ],
+    "edge_pad_w": 0.5,
+    "edge_pad_h": 0.5,
+    "pin_spacing": 1.0,
+    "lead_len": 0.5,
+    "label_position": "top"
+  },
+  "topology": null,
+  "design_recipe": null,
+  "spice_model": "",
+  "spice_model_ref": "",
+  "lcsc_part": "",
+  "datasheet_url": "",
+  "easyeda_id": "",
+  "package": "LQFP-48",
+  "source": "pdf_parsed",
+  "confidence": 0.95,
+  "notes": "从 PDF 提取: D:/DESKTOP/C8734_单片机(MCU-MPU-SOC)_STM32F103C8T6_规格书_WJ115614.PDF",
+  "design_roles": [
+    "microcontroller",
+    "spi_flash",
+    "data_storage",
+    "sram",
+    "communication"
+  ],
+  "selection_hints": [],
+  "anti_patterns": [],
+  "required_companions": [],
+  "operating_constraints": {},
+  "layout_hints": [],
+  "failure_modes": [],
+  "review_rules": []
+}

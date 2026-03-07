@@ -338,7 +338,7 @@
       "GND": "ground"
     },
     "default_parameters": {
-      "v_in": "12",
+      "v_in": "24",
       "v_out": "3.3",
       "i_out_max": "2.1",
       "fsw": "500",
@@ -400,6 +400,69 @@
         "source_ref": "https://www.ti.com/lit/ds/symlink/tps5430.pdf",
         "page": null,
         "confidence": 0.85
+      },
+      {
+        "source_type": "formula_eval",
+        "summary": "公式驱动计算: 5 个参数由 recipe 公式求解",
+        "source_ref": "",
+        "page": null,
+        "confidence": 0.6
+      },
+      {
+        "source_type": "formula_eval",
+        "summary": "公式驱动计算: 5 个参数由 recipe 公式求解",
+        "source_ref": "",
+        "page": null,
+        "confidence": 0.6
+      },
+      {
+        "source_type": "formula_eval",
+        "summary": "公式驱动计算: 5 个参数由 recipe 公式求解",
+        "source_ref": "",
+        "page": null,
+        "confidence": 0.6
+      },
+      {
+        "source_type": "formula_eval",
+        "summary": "公式驱动计算: 5 个参数由 recipe 公式求解",
+        "source_ref": "",
+        "page": null,
+        "confidence": 0.6
+      },
+      {
+        "source_type": "formula_eval",
+        "summary": "公式驱动计算: 5 个参数由 recipe 公式求解",
+        "source_ref": "",
+        "page": null,
+        "confidence": 0.6
+      },
+      {
+        "source_type": "formula_eval",
+        "summary": "公式驱动计算: 5 个参数由 recipe 公式求解",
+        "source_ref": "",
+        "page": null,
+        "confidence": 0.6
+      },
+      {
+        "source_type": "formula_eval",
+        "summary": "公式驱动计算: 5 个参数由 recipe 公式求解",
+        "source_ref": "",
+        "page": null,
+        "confidence": 0.6
+      },
+      {
+        "source_type": "formula_eval",
+        "summary": "公式驱动计算: 5 个参数由 recipe 公式求解",
+        "source_ref": "",
+        "page": null,
+        "confidence": 0.6
+      },
+      {
+        "source_type": "formula_eval",
+        "summary": "公式驱动计算: 5 个参数由 recipe 公式求解",
+        "source_ref": "",
+        "page": null,
+        "confidence": 0.6
       },
       {
         "source_type": "formula_eval",

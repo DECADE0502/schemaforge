@@ -230,8 +230,8 @@
       "BOOT": "bootstrap"
     },
     "default_parameters": {
-      "v_in": "20",
-      "v_out": "5",
+      "v_in": "3.7",
+      "v_out": "12",
       "i_out_max": "1.4",
       "fsw": "500",
       "ic_model": "TPS54202",
@@ -292,6 +292,13 @@
         "source_ref": "",
         "page": null,
         "confidence": 0.85
+      },
+      {
+        "source_type": "formula_eval",
+        "summary": "公式驱动计算: 5 个参数由 recipe 公式求解",
+        "source_ref": "",
+        "page": null,
+        "confidence": 0.6
       }
     ]
   },

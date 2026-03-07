@@ -31,9 +31,6 @@ os.environ["TMPDIR"] = str(_TMP_ROOT)
 tempfile.tempdir = str(_TMP_ROOT)
 
 # 测试环境跳过 AI 驱动解析，确保解析走正则 fallback，不受网络状态影响。
-os.environ.setdefault("SCHEMAFORGE_SKIP_AI_PARSE", "1")
-
-
 def _safe_mkdtemp(
     suffix: str | None = None,
     prefix: str | None = None,
@@ -62,6 +59,15 @@ class _SafeTemporaryDirectory:
 
 tempfile.mkdtemp = _safe_mkdtemp
 tempfile.TemporaryDirectory = _SafeTemporaryDirectory
+
+
+@pytest.fixture(autouse=True)
+def _default_skip_ai_parse(monkeypatch, request):
+    """???????? fallback????????????"""
+    if request.node.get_closest_marker("real_ai"):
+        monkeypatch.delenv("SCHEMAFORGE_SKIP_AI_PARSE", raising=False)
+    else:
+        monkeypatch.setenv("SCHEMAFORGE_SKIP_AI_PARSE", "1")
 
 
 @pytest.fixture(autouse=True)

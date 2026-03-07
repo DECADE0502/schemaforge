@@ -214,7 +214,7 @@ def main() -> None:
 
     print_banner()
     store_dir = Path(args.store) if args.store else Path("schemaforge/store")
-    sf_session = SchemaForgeSession(store_dir=store_dir)
+    sf_session = SchemaForgeSession(store_dir=store_dir, skip_ai_parse=False)
 
     chain_label = "AI 编排" if args.orchestrated else "统一工作台"
     console.print(f"[dim]后端: {chain_label}[/dim]\n")

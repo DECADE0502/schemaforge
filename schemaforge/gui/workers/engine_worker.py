@@ -73,6 +73,7 @@ class SchemaForgeWorker(QThread):
             else:
                 session = SchemaForgeSession(
                     store_dir=Path("schemaforge/store"),
+                    skip_ai_parse=False,
                 )
             self.session_ready.emit(session)
 

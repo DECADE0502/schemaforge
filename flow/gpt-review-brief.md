@@ -1,121 +1,362 @@
-# SchemaForge — GPT 验收审查指令
+# SchemaForge 当前交接简报
 
-你是一个严格的技术审查官。你的任务是对 SchemaForge 项目进行**毫不留情的验收审查**，找出所有问题、缺陷、遗漏，并提出新需求。
+更新时间：2026-03-07
 
-**你不是来夸人的，你是来挑刺的。**
+## 1. 结论
 
----
+- 当前**没有达到最终目标**。
+- 项目已经有一条新的后端骨架链路，但仍处于“可演示部分流程、尚不能稳定兑现最终愿景”的阶段。
+- 现阶段最关键的问题不是继续加功能，而是先修掉 4 个已经明确复现的高优先级阻塞点。
 
-## 一、项目简介
+## 2. 最终愿景回顾
 
-SchemaForge 是一个 AI 驱动的电子原理图设计工具。用户用自然语言描述电路需求，系统自动生成完整原理图（SVG + BOM + SPICE）。
+目标是把 SchemaForge 做成：
 
-核心流程：
+- 用户一句自然语言需求
+- 系统精确识别器件型号
+- 本地库命中则直接用
+- 本地库缺失则引导上传 PDF / 图片并自动提取器件信息
+- 根据 datasheet / 典型应用计算外围器件
+- 输出完整原理图、SVG、BOM、SPICE
+- 支持多轮修改，不推倒重来
+- 不局限于 Buck / LDO，而是能从 datasheet 和参考设计推导结构
+
+核心哲学：**AI 负责理解与决策，本地工具负责执行。**
+
+## 3. 已完成内容
+
+### 3.1 仓库与测试基线
+
+- 已读过现有代码，确认当前仓库同时存在两条链路：
+  - 老链路：`core/*`
+  - 新链路：`design/* + workflows/*`
+- 已修复本环境下 pytest 临时目录 / cache 权限问题。
+- 已新增：
+  - `pytest.ini`
+  - `tests/conftest.py` 的临时目录兜底逻辑
+  - `.gitignore` 中测试运行产生目录的忽略项
+
+### 3.2 新后端主链路骨架
+
+已新增或扩展以下模块：
+
+- `schemaforge/design/synthesis.py`
+- `schemaforge/workflows/schemaforge_session.py`
+- `schemaforge/agent/design_tools.py`
+- `schemaforge/library/models.py`
+
+这条链路已经具备以下能力：
+
+- 从自然语言里抽取精确型号、输入输出电压、电流、是否加 LED
+- 精确命中本地器件，支持 alias 命中
+- 本地缺件时进入资料导入流程
+- 可基于 Buck / LDO 的规则化 recipe 生成 SVG / BOM / SPICE
+- 支持简单多轮修改，例如改输出电容、加 LED
+
+### 3.3 已有测试
+
+已新增测试文件：
+
+- `tests/test_schemaforge_session.py`
+- `tests/test_design_tools.py`
+
+已覆盖的行为包括：
+
+- 精确料号提取
+- alias 命中
+- 缺料时返回 `needs_asset`
+- 图片导入后确认再生成 Buck
+- 修改输出电容与增加 LED
+- 工具注册表触发设计流程
+
+### 3.4 最近一次完整质量门结果
+
+在上一个稳定检查点，以下命令是通过的：
+
+- `python -m pytest -q`
+- `python -m ruff check schemaforge gui.py tests main.py`
+
+其中 pytest 结果为：
+
+- `935 passed`
+
+## 4. 必须保留的硬约束
+
+`schemaforge/ai/client.py` 中以下三行**必须保留**，不能删除：
+
+```python
+DEFAULT_API_KEY = "sk-sp-396701e02c95411783e01557524e4366"
+DEFAULT_BASE_URL = "https://coding.dashscope.aliyuncs.com/v1"
+DEFAULT_MODEL = "kimi-k2.5"
 ```
-自然语言 → AI 解析需求 → 查器件库
-  → 有器件 → 公式计算外围参数 → 42条审查 → 渲染原理图
-  → 没器件 → 引导上传 PDF → AI 提取引脚/参数 → 入库 → 续设计
-  → 多轮修改 → 改电压/换器件/加模块
-```
 
-技术栈：Python + PySide6 + kimi-k2.5 + schemdraw + Pydantic v2
+其他内容可以改。
 
-刚完成的改造：
-- 删除全部 Mock/Demo/离线模式，始终走真实 AI
-- 统一到单一后端 SchemaForgeSession
-- AI 驱动需求解析（正则 fallback）
-- 多模块分解（Planner 自动拆解）
-- PDF 导入闭环（已验证 TPS54202 Buck + TPS61023 Boost）
-- 42 条工程审查规则集成
-- 1186 tests passed, ruff 全绿
+## 5. 当前明确存在的 4 个关键阻塞点
 
----
+### P0-1 导入确认流程不安全
 
-## 二、你的审查维度
+位置：`schemaforge/workflows/schemaforge_session.py`
 
-### 2.1 架构审查（狠一点）
+问题：
 
-- 单器件架构的根本局限：当前 `_build_from_device()` 只处理一个主器件，"多模块分解"其实只是匹配了一个主器件 + 把 LED 当参数附加。真正的多器件系统设计（MCU + 电源 + 传感器 + 连接器）能跑吗？
-- `SchemaForgeSession` 是不是变成了上帝类？它同时负责 start/revise/ingest/confirm/orchestrate，违反 SRP 了吗？
-- Orchestrator 和 SchemaForgeSession 是什么关系？session.run_orchestrated() 内部创建 Orchestrator，Orchestrator 又调用 session 的工具。这个循环依赖合理吗？
-- Design IR 号称是"唯一中间真值"，但统一工作台路径完全绕过了 IR，直接用 DesignBundle。IR 还有存在的必要吗？
-- `core/engine.py` 还在吗？删干净了吗？如果还在，为什么？
+- `confirm_import()` 在上一稳定版本中会先调用：
+  - `add_device_from_draft(..., force=True, skip_validation=True)`
+- 也就是先把 OCR / 图像提取出来的半成品器件写入库，再去建 symbol / 继续生成设计。
+- 如果后续渲染失败，坏数据已经进入本地库。
 
-### 2.2 功能缺陷审查（找 bug）
+已复现现象：
 
-- 多轮修改时 session 状态管理：如果用户先设计 LDO，再改成 Buck（换器件），器件类型变了但 request.category 更新了吗？
-- PDF 导入时 AI 提取的引脚信息准确度如何？有没有做过与 datasheet 的人工对比验证？
-- `parse_design_request` AI 解析失败时 fallback 到正则，但正则路径现在还能正确工作吗？（之前是 `_plan_mock` 的一部分，删了以后呢？）
-- `confirm_import()` 之后自动续设计，如果入库的器件没有 topology 定义怎么办？会崩溃还是会走通用布局？
-- 审查规则产出的 warnings 现在在 Chat 里显示，但用户没有办法忽略/确认这些 warnings 继续设计。是不是应该有个"忽略警告继续"的机制？
+- 执行图片导入后，调用 `confirm_import({})`
+- 报错：`KeyError 'inL1'`
+- 但不完整的 `TPS54202` 已经被写入 store
 
-### 2.3 用户体验审查（当自己是用户）
+影响：
 
-- 打开 GUI，第一眼看到什么？空白一片？有没有引导？
-- 用户输入"帮我设计一个电源"这种模糊需求，系统会怎样？会报错还是会引导追问？
-- 器件导入时用户只看到"确认导入"，看不到 AI 提取了什么引脚。ImportPreview 有预览但 GUI 上显示了吗？
-- 多轮修改时，Chat 面板有历史记录吗？还是每次都清空？
-- BOM 输出是 Markdown 表格文本，能导出为 CSV/Excel 吗？
-- SPICE 网表能直接被 LTspice/ngspice 加载吗？还是只是占位符？
-- SVG 原理图的美观度如何？专业工程师看了会怎么评价？
+- 会污染器件库
+- 后续再命中同料号时可能持续出错
+- 与“丝滑导入”目标相反
 
-### 2.4 测试覆盖审查
+正确修复方向：
 
-- 1186 个测试全部用 mock AI，没有一个真正调用 kimi-k2.5 的集成测试。这算"测试充分"吗？
-- conftest.py 里的全局 AI mock 会不会掩盖真实的 AI 解析问题？
-- 有没有对"AI 返回格式错误"的容错测试？
-- 有没有对"网络超时"的容错测试？
-- GUI 测试只验证了源码结构（字符串匹配），没有真正的 UI 自动化测试。这够吗？
+- 改成“先补全草稿 → 校验 → 生成 symbol → 预检 build_bundle / render → 成功后再落库”
+- 必须引入一种“staging candidate”概念，先在内存里验证，再持久化
 
-### 2.5 安全与工程规范审查
+### P0-2 recipe 缓存导致不同请求复用旧参数
 
-- API Key 硬编码在 `ai/client.py` 里。这个 key 已经泄露在 git 历史中。
-- 器件库 JSON 文件有没有做输入校验？恶意构造的 JSON 会不会导致代码注入？
-- PDF 解析有没有做文件大小/类型限制？上传 1GB 文件会怎样？
-- `eval()` 或 `exec()` 有没有用在任何地方？公式计算引擎安全吗？
+位置：`schemaforge/design/synthesis.py`
 
----
+问题：
 
-## 三、你要产出的内容
+- `prepare_device()` 里对 `device.design_recipe` 做了直接复用
+- 但 `design_recipe.default_parameters` 里包含了按工况算出来的参数，如：
+  - `l_value`
+  - `r_fb_upper`
+  - `r_fb_lower`
+- 这样同一芯片第一次算出来的值，会污染后续不同 `Vin/Vout/Iout` 请求
 
-1. **缺陷清单**（按严重程度 P0-P3 排序）
-2. **架构改进建议**（至少 3 条，要具体可执行）
-3. **新功能需求**（至少 5 条，按优先级排序）
-4. **测试改进建议**
-5. **总体评分**（满分 10 分，不要客气）
+已复现现象：
 
----
+- 第一次：`TPS5430 12V -> 5V`
+- 第二次：`TPS5430 24V -> 3.3V`
+- 结果两次都得到同样的 `l_value` 和 `r_fb_upper`
 
-## 四、关键文件清单（供你参考）
+影响：
 
-| 文件 | 说明 |
-|------|------|
-| `schemaforge/workflows/schemaforge_session.py` | 统一工作台（唯一后端），start/revise/ingest/confirm |
-| `schemaforge/design/synthesis.py` | AI 需求解析 + 公式计算 + 渲染打包 |
-| `schemaforge/design/review.py` | 42 条工程审查规则 |
-| `schemaforge/design/planner.py` | AI 规划器（多模块分解） |
-| `schemaforge/agent/orchestrator.py` | AI 编排器（多轮工具调用循环） |
-| `schemaforge/ingest/datasheet_extractor.py` | PDF/图片 → 器件导入 |
-| `schemaforge/gui/pages/design_page.py` | GUI 核心设计页面 |
-| `schemaforge/gui/workers/engine_worker.py` | 5 个 QThread Worker |
-| `schemaforge/ai/client.py` | LLM 客户端（kimi-k2.5 硬编码） |
-| `schemaforge/ai/prompts.py` | AI 提示词（需求解析/修改解析） |
-| `schemaforge/schematic/topology.py` | 原理图布局策略（5种+通用） |
-| `schemaforge/library/models.py` | DeviceModel（8 个设计知识字段） |
-| `tests/conftest.py` | 全局 AI mock fixture |
-| `main.py` | CLI 入口（3 个参数） |
-| `README.md` | 项目说明 |
-| `flow/schemaforge-tasks.md` | 任务拆分（8 个已完成） |
+- 设计参数错误
+- 直接违背“从 datasheet 和工况推导外围”的目标
 
----
+正确修复方向：
 
-## 五、你可以要求开发者做的事
+- Buck / LDO 等按工况敏感的 recipe，每次请求都必须重新计算
+- 不要把“器件级静态知识”和“单次设计计算结果”混存到同一个 `design_recipe.default_parameters`
 
-- 跑一段代码给你看结果
-- 截图 GUI 某个场景
-- 展示某个文件的具体代码
-- 运行特定测试用例
-- 做一次真实 AI 调用展示输出
-- 解释某个设计决策的理由
+### P1-3 SPICE 网表没有真实反映 topology 与器件模型
 
-**记住：你的目标不是确认"做完了"，而是找出"还差什么"。越严格越好。**
+位置：`schemaforge/design/synthesis.py`
+
+问题：
+
+- `_render_spice()` 目前基本是硬编码模板
+- 没有优先使用 `device.spice_model`
+- 没有依据 `TopologyDef.connections` 真正映射器件引脚与外部元件网络
+
+已知例子：
+
+- `schemaforge/store/devices/TPS5430.json` 已带有：
+  - `XU{ref} {VIN} {GND} {EN} {BST} {SW} {FB} TPS5430`
+- 但当前生成逻辑没有按这个模板和 topology 来出网表
+
+影响：
+
+- SPICE 文本看起来像网表，但经常并不真实可仿真
+- 与“输出完整原理图 + SPICE 网表”的目标仍有距离
+
+正确修复方向：
+
+- 优先渲染 `device.spice_model`
+- 用 `TopologyDef.connections` 组装网络映射
+- 用 `external_components` 生成 `CIN/COUT/L1/RFB1/RFB2/...`
+- 没有模板时再退回保底逻辑
+
+### P1-4 Buck 默认工况错误地使用 absolute max
+
+位置：`schemaforge/design/synthesis.py`
+
+问题：
+
+- `_build_buck_recipe()` 里当用户没给完整工况时，会回落到：
+  - `v_in_max`
+  - `i_out_max`
+- 这把器件额定上限错当成了默认设计点
+
+已复现现象：
+
+- `Use TPS54202 to build a 5V buck converter`
+- 会默认得到 `v_in = 28`、`i_out_max = 2`
+
+影响：
+
+- 计算结果偏激，参数不合理
+- 不符合工程直觉
+
+正确修复方向：
+
+- 默认工况优先：
+  - `v_in_typ`
+  - `v_in_nom`
+  - `i_out_typ`
+  - 典型应用值
+- 实在缺失再用保守通用值，比如 `12V / 1A`
+- 绝不能默认拿 absolute max 当运行点
+
+## 6. 这轮实际工作状态
+
+本轮并没有把上面 4 个问题修完。
+
+### 已完成
+
+- 再次复查了仓库现状
+- 重新定位了关键函数和问题位置
+- 已明确后续怎么修
+- 已经把需要新增的回归测试思路整理清楚
+
+### 未完成
+
+- `confirm_import()` 安全改造未落地
+- recipe 陈旧缓存修复未落地
+- SPICE topology-aware 改造未落地
+- 默认工况修复未落地
+
+### 当前工作树唯一代码差异
+
+当前 `git diff` 里，只有一个未收尾改动：
+
+- `schemaforge/library/service.py`
+
+内容是：
+
+- `add_device_from_draft()` 新增了一个 `persist: bool = True` 参数
+
+注意：
+
+- 这个改动只是接口入口加了参数
+- 方法体还没有完全按 `persist` 语义收尾
+- 所以下一个 AI 要么把它做完，要么先回退，避免误导
+
+## 7. 当前工作树状态
+
+已修改：
+
+- `schemaforge/library/service.py`
+
+未跟踪目录：
+
+- `.review-tmp/`
+- `.review-tmp-2/`
+- `.review-tmp-3/`
+- `.review-tmp-4/`
+- `schemaforge/web/`
+
+说明：
+
+- `.review-tmp-*` 是复现问题时用的临时目录
+- `schemaforge/web/` 当前未处理，不应在这次 handoff 里误判为新改动重点
+
+## 8. 下一个 AI 应该怎么接手
+
+推荐按以下顺序推进。
+
+### Step 1：先处理 `persist` 半成品接口
+
+文件：`schemaforge/library/service.py`
+
+做法二选一：
+
+- 要么把 `persist=False` 的完整语义补完
+- 要么先把这个参数回退掉，回到纯稳定状态
+
+### Step 2：修 `confirm_import()` 的安全导入链路
+
+文件：`schemaforge/workflows/schemaforge_session.py`
+
+目标：
+
+- `confirm_import()` 不允许再先落库后验证
+- 对不完整 active 器件，返回 `needs_confirmation`，并给出 warnings
+- 只有预检成功，才真正入库并生成设计
+
+建议实现形态：
+
+- `_complete_import_draft()`
+- `_prepare_import_candidate()`
+- `_build_import_preview()`
+- `_finalize_bundle()`
+
+### Step 3：修 `prepare_device()` 的陈旧缓存
+
+文件：`schemaforge/design/synthesis.py`
+
+目标：
+
+- 对 `buck` / `ldo` 每次按请求重算 recipe
+- 只对真正静态 topology / generic 结构复用已有数据
+
+### Step 4：修 SPICE 生成
+
+文件：`schemaforge/design/synthesis.py`
+
+目标：
+
+- 优先用 `device.spice_model`
+- 从 `TopologyDef.connections` 推导 pin-net 映射
+- 从 `external_components` 生成外围器件语句
+
+### Step 5：修 Buck 默认工况
+
+文件：`schemaforge/design/synthesis.py`
+
+目标：
+
+- 不再使用 `v_in_max / i_out_max` 作为默认运行点
+- 优先典型值，其次保守通用值
+
+### Step 6：补回归测试
+
+建议新增测试：
+
+- 不完整导入确认不落库
+- 同一芯片不同工况会重算 `l_value` 与 `r_fb_upper`
+- 默认工况不使用 absolute max
+- SPICE 按模板和 topology 输出正确网络
+
+### Step 7：重新跑质量门
+
+必须重新跑：
+
+- `python -m pytest -q`
+- `python -m ruff check schemaforge gui.py tests main.py`
+
+## 9. 建议新增的回归测试示例
+
+建议加入到 `tests/test_schemaforge_session.py`：
+
+- `test_confirm_import_rejects_incomplete_active_device_without_saving`
+- `test_session_recomputes_recipe_for_different_requests`
+- `test_buck_defaults_do_not_use_absolute_max_as_operating_point`
+- `test_spice_uses_device_template_and_topology_nets`
+
+## 10. 对下一个 AI 的一句话交接
+
+请基于当前分支继续，优先修：
+
+1. `SchemaForgeSession.confirm_import()` 的安全落库问题
+2. `DesignRecipeSynthesizer.prepare_device()` 的陈旧 recipe 复用问题
+3. `_render_spice()` 对 `device.spice_model + topology.connections` 的真实映射
+4. `_build_buck_recipe()` 错用 absolute max 作为默认工况的问题
+
+当前工作树里只有一个半成品代码差异：
+
+- `schemaforge/library/service.py` 增加了 `persist` 参数，但还没有完整收尾
+
+除此之外，请以最近绿色检查点为准继续推进。

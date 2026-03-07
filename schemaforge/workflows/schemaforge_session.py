@@ -96,9 +96,11 @@ class SchemaForgeSession:
         self,
         store_dir: Path | str,
         on_event: Callable[..., Any] | None = None,
+        skip_ai_parse: bool | None = None,
     ) -> None:
         self.store_dir = Path(store_dir)
         self._on_event = on_event
+        self._skip_ai_parse = skip_ai_parse
         self._store = ComponentStore(self.store_dir)
         self._service = LibraryService(self.store_dir)
         self._resolver = ExactPartResolver(self._store)
@@ -161,7 +163,7 @@ class SchemaForgeSession:
         return orch.run_turn(user_input)
 
     def start(self, user_input: str) -> SchemaForgeTurnResult:
-        request = parse_design_request(user_input)
+        request = parse_design_request(user_input, skip_ai_parse=self._skip_ai_parse)
         self._request = request
         self._parameter_overrides = {}
 
@@ -443,7 +445,7 @@ class SchemaForgeSession:
                 message="当前还没有可修改的设计。",
             )
 
-        revision = parse_revision_request_v2(user_input)
+        revision = parse_revision_request_v2(user_input, skip_ai_parse=self._skip_ai_parse)
 
         # 检查是否有任何可执行的修改
         has_changes = bool(

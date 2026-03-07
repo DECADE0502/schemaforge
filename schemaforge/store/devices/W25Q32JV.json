@@ -1,13 +1,17 @@
 {
   "part_number": "W25Q32JV",
+  "aliases": [],
   "manufacturer": "Winbond",
-  "description": "3V 32M位串行闪存，支持双路/四路SPI接口，工业级及工业增强级",
+  "description": "3V 32M位串行闪存，支持双通道/四通道SPI接口",
   "category": "other",
   "specs": {
-    "vcc_typ": "3V",
-    "memory_capacity": "32M-bit (4M-byte)",
-    "interface": "Standard SPI / Dual SPI / Quad SPI",
-    "operating_temperature_grade": "Industrial & Industrial Plus Grade"
+    "v_in_max": "3.6V",
+    "v_out_typ": "",
+    "i_out_max": "",
+    "capacity": "32M-bit (4M-byte)",
+    "vcc_range": "2.7V - 3.6V",
+    "interface": "Standard/Dual/Quad SPI",
+    "operating_temp": "Industrial & Industrial Plus Grade"
   },
   "symbol": {
     "pins": [
@@ -16,7 +20,7 @@
         "pin_number": "1",
         "side": "left",
         "pin_type": "input",
-        "slot": "1/4",
+        "slot": "2/4",
         "inverted": true,
         "anchor_name": "",
         "description": "片选输入，低电平有效，用于使能/禁用器件操作"
@@ -25,28 +29,28 @@
         "name": "DO (IO1)",
         "pin_number": "2",
         "side": "left",
-        "pin_type": "input",
+        "pin_type": "output",
         "slot": "4/4",
         "inverted": false,
         "anchor_name": "",
-        "description": "数据输出（数据输入输出1），标准SPI时为单向输出，双路/四路SPI时为双向IO"
+        "description": "数据输出（数据输入输出1），标准SPI时为单向输出，双/四SPI时为双向IO"
       },
       {
         "name": "/WP (IO2)",
         "pin_number": "3",
-        "side": "right",
+        "side": "left",
         "pin_type": "input",
-        "slot": "2/2",
+        "slot": "3/4",
         "inverted": true,
         "anchor_name": "",
-        "description": "写保护输入（数据输入输出2），低电平有效，用于硬件保护状态寄存器；四路SPI时变为IO2"
+        "description": "写保护输入（数据输入输出2），低电平有效，用于硬件保护状态寄存器；四SPI模式下变为IO2"
       },
       {
         "name": "GND",
         "pin_number": "4",
-        "side": "bottom",
+        "side": "left",
         "pin_type": "ground",
-        "slot": "1/1",
+        "slot": "1/4",
         "inverted": false,
         "anchor_name": "",
         "description": "地"
@@ -54,47 +58,47 @@
       {
         "name": "DI (IO0)",
         "pin_number": "5",
-        "side": "left",
+        "side": "right",
         "pin_type": "input",
-        "slot": "3/4",
+        "slot": "4/4",
         "inverted": false,
         "anchor_name": "",
-        "description": "数据输入（数据输入输出0），标准SPI时为单向输入，双路/四路SPI时为双向IO"
+        "description": "数据输入（数据输入输出0），标准SPI时为单向输入，双/四SPI时为双向IO"
       },
       {
         "name": "CLK",
         "pin_number": "6",
-        "side": "left",
+        "side": "right",
         "pin_type": "input",
-        "slot": "2/4",
+        "slot": "3/4",
         "inverted": false,
         "anchor_name": "",
-        "description": "串行时钟输入，为串行输入输出操作提供时序"
+        "description": "串行时钟输入，提供串行输入输出操作的时序"
       },
       {
-        "name": "/HOLD (IO3) or /RESET (IO3)",
+        "name": "/HOLD or /RESET (IO3)",
         "pin_number": "7",
         "side": "right",
         "pin_type": "input",
-        "slot": "1/2",
+        "slot": "2/4",
         "inverted": true,
         "anchor_name": "",
-        "description": "保持或复位输入（数据输入输出3），低电平有效；四路SPI时变为IO3，/HOLD功能不可用"
+        "description": "保持或复位输入（数据输入输出3），低电平有效；标准/双SPI时用于暂停操作，四SPI时变为IO3"
       },
       {
         "name": "VCC",
         "pin_number": "8",
-        "side": "top",
+        "side": "right",
         "pin_type": "power_in",
-        "slot": "1/1",
+        "slot": "1/4",
         "inverted": false,
         "anchor_name": "",
-        "description": "电源供电"
+        "description": "电源供电，3V"
       }
     ],
     "size": [
       7.0,
-      6.0
+      5.0
     ],
     "edge_pad_w": 0.5,
     "edge_pad_h": 0.5,
@@ -103,16 +107,22 @@
     "label_position": "top"
   },
   "topology": null,
+  "design_recipe": null,
   "spice_model": "",
   "spice_model_ref": "",
   "lcsc_part": "",
   "datasheet_url": "",
   "easyeda_id": "",
-  "package": "SOIC-8/PDIP-8/WSON/XSON/TFBGA/SOIC-16",
+  "package": "SOIC-8/PDIP-8",
   "source": "pdf_parsed",
-  "confidence": 0.85,
+  "confidence": 0.92,
   "notes": "从 PDF 提取: D:/DESKTOP/C179173_NOR+FLASH_W25Q32JVSSIQ_规格书_WJ323642.PDF",
-  "design_roles": ["spi_flash", "data_storage", "spi_device"],
+  "design_roles": [
+    "spi_flash",
+    "data_storage",
+    "communication",
+    "spi_device"
+  ],
   "selection_hints": [],
   "anti_patterns": [],
   "required_companions": [],
