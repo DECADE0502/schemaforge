@@ -953,3 +953,100 @@ class TestSchemaForgeSessionReviseEnhanced:
         r = session.revise("输出电容改成 100uF")
         assert r.status == "generated"
         assert "c_out" in r.message
+
+
+# ============================================================
+# GPT Review 回归测试
+# ============================================================
+
+
+def test_confirm_import_validates_before_persisting(tmp_path) -> None:
+    """P0-1: confirm_import 先校验后落库，part_number 为空的草稿触发 ERROR 不写盘。"""
+    from schemaforge.workflows.schemaforge_session import SchemaForgeSession
+    from schemaforge.design.synthesis import parse_design_request
+
+    session = SchemaForgeSession(store_dir=tmp_path)
+    session._request = parse_design_request("TPS99999 Buck")
+
+    # 设置一个 part_number 为空的草稿 — validate_draft 会产生 ERROR 级问题
+    from schemaforge.library.validator import DeviceDraft
+    session._pending_draft = DeviceDraft(
+        part_number="",  # ERROR: 料号不能为空
+        category="buck",
+        pin_count=0,
+        pins=[],
+    )
+
+    result = session.confirm_import()
+    # 校验失败应返回 needs_confirmation 或 error，不是 generated
+    assert result.status in ("needs_confirmation", "error")
+    # 器件不应被写入库
+    assert session._service.get("TPS99999") is None
+
+
+def test_different_operating_points_produce_different_params(tmp_path) -> None:
+    """P0-2: 同一芯片不同工况应产生不同的计算参数。"""
+    import shutil
+    from pathlib import Path
+    from schemaforge.workflows.schemaforge_session import SchemaForgeSession
+
+    # 复制 store 到 tmp 避免污染
+    src = Path("schemaforge/store")
+    dst = tmp_path / "store"
+    shutil.copytree(src, dst)
+
+    s1 = SchemaForgeSession(store_dir=dst)
+    r1 = s1.start("用 TPS5430 搭一个 12V转5V 的 DCDC 电路")
+    assert r1.status == "generated"
+    rfb1 = r1.bundle.parameters.get("r_fb_upper", "")
+
+    s2 = SchemaForgeSession(store_dir=dst)
+    r2 = s2.start("用 TPS5430 搭一个 24V转3.3V 的 DCDC 电路")
+    assert r2.status == "generated"
+    rfb2 = r2.bundle.parameters.get("r_fb_upper", "")
+
+    # 不同 Vout 必须导致不同的反馈电阻
+    assert rfb1 != rfb2, f"r_fb_upper should differ: {rfb1} vs {rfb2}"
+
+
+def test_buck_defaults_do_not_use_absolute_max() -> None:
+    """P1-4: 默认 v_in 不使用 absolute max，应使用保守典型值。"""
+    from schemaforge.design.synthesis import DesignRecipeSynthesizer, UserDesignRequest
+    from schemaforge.library.models import DeviceModel
+
+    device = DeviceModel(
+        part_number="TEST_BUCK_NOVIN",
+        category="buck",
+        specs={"v_in_max": "36V", "i_out_max": "3A", "fsw": "500kHz"},
+    )
+    request = UserDesignRequest(raw_text="Buck converter", category="buck")
+    # v_in and i_out not specified in request
+
+    synth = DesignRecipeSynthesizer()
+    enriched, recipe = synth.prepare_device(device, request)
+    v_in = float(recipe.default_parameters.get("v_in", 0))
+    i_out = float(recipe.default_parameters.get("i_out_max", 0))
+
+    # v_in 不应等于 36 (abs max) 或 21.6 (60% derate)
+    assert v_in <= 12.0, f"v_in={v_in} should not use absolute max"
+    # i_out 不应等于 3 (abs max) 或 2.1 (70% derate)
+    assert i_out <= 1.0, f"i_out={i_out} should not use absolute max"
+
+
+def test_spice_uses_device_model_template() -> None:
+    """P1-3: SPICE 应使用 device.spice_model 模板生成 IC 行。"""
+    from pathlib import Path
+    from schemaforge.workflows.schemaforge_session import SchemaForgeSession
+
+    s = SchemaForgeSession(store_dir=Path("schemaforge/store"))
+    r = s.start("用 TPS5430 搭一个 12V转3.3V 的 DCDC 电路")
+    assert r.status == "generated"
+    spice = r.bundle.spice_text
+
+    # 应包含 TPS5430 的 SPICE model 引用
+    assert "TPS5430" in spice
+    # 应包含外围元件
+    assert "C1" in spice or "CIN" in spice
+    assert "L1" in spice
+    # 应包含 .end
+    assert ".end" in spice
