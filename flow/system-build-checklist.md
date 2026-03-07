@@ -98,29 +98,29 @@
 
 ## 阶段 8：重做全局实例、编号、BOM、SPICE
 
-- [ ] T071 新建 `schemaforge/system/instances.py`
-- [ ] T072 实现 `create_component_instances`
-- [ ] T073 实现 `allocate_global_references`
-- [ ] T074 实现编号稳定器
-- [ ] T075 新建 `schemaforge/system/export_bom.py`
-- [ ] T076 实现 Markdown BOM 导出
-- [ ] T077 实现 CSV BOM 导出
-- [ ] T078 新建 `schemaforge/system/export_spice.py`
-- [ ] T079 实现共享节点 SPICE 导出
-- [ ] T080 补 BOM/SPICE 回归测试
+- [x] T071 新建 `schemaforge/system/instances.py`
+- [x] T072 实现 `create_component_instances`
+- [x] T073 实现 `allocate_global_references`
+- [x] T074 实现编号稳定器
+- [x] T075 新建 `schemaforge/system/export_bom.py`
+- [x] T076 实现 Markdown BOM 导出
+- [x] T077 实现 CSV BOM 导出
+- [x] T078 新建 `schemaforge/system/export_spice.py`
+- [x] T079 实现共享节点 SPICE 导出
+- [x] T080 补 BOM/SPICE 回归测试
 
 ## 阶段 9：重做系统级渲染
 
-- [ ] T081 新建 `schemaforge/system/rendering.py`
-- [ ] T082 把模块 layout 改成"画到同一个 Drawing"
-- [ ] T083 实现主电源链布局器
-- [ ] T084 实现控制/外设支路布局器
-- [ ] T085 实现模块 anchor 返回
-- [ ] T086 实现跨模块连线
-- [ ] T087 实现 net label 绘制
-- [ ] T088 实现 GND 策略渲染
-- [ ] T089 输出单张系统 SVG
-- [ ] T090 补黄金 SVG 测试
+- [x] T081 新建 `schemaforge/system/rendering.py`
+- [x] T082 把模块 layout 改成"画到同一个 Drawing"
+- [x] T083 实现主电源链布局器
+- [x] T084 实现控制/外设支路布局器
+- [x] T085 实现模块 anchor 返回
+- [x] T086 实现跨模块连线
+- [x] T087 实现 net label 绘制
+- [x] T088 实现 GND 策略渲染
+- [x] T089 输出单张系统 SVG
+- [x] T090 补黄金 SVG 测试
 
 ## 阶段 10：Session、Revision、GUI 收口
 
