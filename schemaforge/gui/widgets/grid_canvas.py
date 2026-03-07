@@ -196,7 +196,33 @@ class ModuleBlockItem(QGraphicsRectItem):
     # ----------------------------------------------------------
 
     def _classify_pins(self, instance: ModuleInstance) -> None:
-        """Split resolved ports into left (inputs) and right (outputs)."""
+        """Classify pins into left/right using device symbol (preferred) or resolved ports."""
+        dev = instance.device
+
+        # Priority 1: Use device symbol pins (correct left/right/top/bottom from library)
+        if dev is not None:
+            symbol = getattr(dev, "symbol", None)
+            if symbol is not None:
+                pins = getattr(symbol, "pins", [])
+                if pins:
+                    for pin in pins:
+                        side = getattr(pin, "side", None)
+                        name = getattr(pin, "name", "?")
+                        side_val = side.value if hasattr(side, "value") else str(side)
+                        if side_val in ("left",):
+                            self._left_pins.append(name)
+                        elif side_val in ("right",):
+                            self._right_pins.append(name)
+                        elif side_val == "top":
+                            # Top pins go to left side (displayed first)
+                            self._left_pins.insert(0, f"{name}")
+                        elif side_val == "bottom":
+                            # Bottom pins go to right side (GND etc)
+                            self._right_pins.append(f"{name}")
+                    if self._left_pins or self._right_pins:
+                        return
+
+        # Priority 2: Use resolved ports
         input_roles = {"power_in", "input", "enable", "ground"}
         for role, port in instance.resolved_ports.items():
             name = port.pin_name or role
@@ -204,22 +230,6 @@ class ModuleBlockItem(QGraphicsRectItem):
                 self._left_pins.append(name)
             else:
                 self._right_pins.append(name)
-
-        # If no ports resolved, try device pins
-        if not self._left_pins and not self._right_pins:
-            dev = instance.device
-            if dev is not None:
-                symbol = getattr(dev, "symbol", None)
-                if symbol is not None:
-                    pins = getattr(symbol, "pins", [])
-                    for pin in pins:
-                        side = getattr(pin, "side", None)
-                        name = getattr(pin, "name", "?")
-                        side_val = side.value if hasattr(side, "value") else str(side)
-                        if side_val in ("left", "top"):
-                            self._left_pins.append(name)
-                        else:
-                            self._right_pins.append(name)
 
         # Fallback: at least show something
         if not self._left_pins and not self._right_pins:
@@ -686,6 +696,8 @@ class GridCanvas(QGraphicsView):
     # External components
     # ==========================================================
 
+    _ref_counter: dict[str, int] = {}
+
     def _add_external_components(
         self,
         block: ModuleBlockItem,
@@ -695,10 +707,25 @@ class GridCanvas(QGraphicsView):
         block_h = block.rect().height()
         x_offset = 0.0
 
+        # Ref prefix by role
+        _ROLE_PREFIX: dict[str, str] = {
+            "input_cap": "C", "output_cap": "C", "boot_cap": "C",
+            "decoupling_cap": "C", "bulk_cap": "C",
+            "inductor": "L",
+            "fb_upper": "R", "fb_lower": "R", "led_resistor": "R",
+            "catch_diode": "D", "diode": "D",
+        }
+
         for comp in components:
-            ref = comp.get("ref", "?")
+            ref = comp.get("ref", "")
             role = comp.get("role", "")
             value = comp.get("value", "")
+
+            # Auto-assign ref if missing
+            if not ref or ref == "?":
+                prefix = _ROLE_PREFIX.get(role, "X")
+                self._ref_counter[prefix] = self._ref_counter.get(prefix, 0) + 1
+                ref = f"{prefix}{self._ref_counter[prefix]}"
 
             ComponentItem(
                 ref=ref,
@@ -840,6 +867,7 @@ class GridCanvas(QGraphicsView):
         self._module_blocks.clear()
         self._connections.clear()
         self._connection_data.clear()
+        self._ref_counter.clear()
         self._current_ir = None
         self.resetTransform()
         self._current_zoom = 1.0
