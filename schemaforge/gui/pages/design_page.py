@@ -687,34 +687,15 @@ class DesignPage(QWidget):
 
     def _display_bundle(self, bundle: Any, warnings: list[str] | None = None) -> None:
         """提取 DesignBundle 的内容并展示到各标签页。"""
-        # Prefer interactive grid canvas when design_ir is available
-        design_ir = getattr(bundle, "design_ir", None)
-        if design_ir is not None and hasattr(design_ir, "get_resolved_modules"):
-            resolved = design_ir.get_resolved_modules()
-            if resolved:
-                self._grid_canvas.load_system_design(design_ir)
+        # 始终用 SVG 渲染（标准电路符号，比网格方块专业）
+        svg_path = getattr(bundle, "svg_path", "")
+        if svg_path:
+            loaded = self._grid_canvas.load_file(svg_path)
+            if loaded:
                 self._grid_canvas.fit_to_view()
-                self._tab_log.append(f"[Grid] 已加载交互式原理图 ({len(resolved)} 模块)")
+                self._tab_log.append(f"[SVG] 已加载: {svg_path}")
             else:
-                # Fallback to SVG if no resolved modules
-                svg_path = getattr(bundle, "svg_path", "")
-                if svg_path:
-                    loaded = self._grid_canvas.load_file(svg_path)
-                    if loaded:
-                        self._grid_canvas.fit_to_view()
-                        self._tab_log.append(f"[SVG] 已加载: {svg_path}")
-                    else:
-                        self._tab_log.append(f"[SVG] 加载失败: {svg_path}")
-        else:
-            # No design_ir: fall back to SVG file loading
-            svg_path = getattr(bundle, "svg_path", "")
-            if svg_path:
-                loaded = self._grid_canvas.load_file(svg_path)
-                if loaded:
-                    self._grid_canvas.fit_to_view()
-                    self._tab_log.append(f"[SVG] 已加载: {svg_path}")
-                else:
-                    self._tab_log.append(f"[SVG] 加载失败: {svg_path}")
+                self._tab_log.append(f"[SVG] 加载失败: {svg_path}")
 
         # BOM / SPICE
         bom_text = getattr(bundle, "bom_text", "")
