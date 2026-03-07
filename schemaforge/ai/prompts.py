@@ -138,16 +138,23 @@ _BUILTIN_USER_TEMPLATE = """用户的电路需求如下：
 PARSE_REQUEST_PROMPT = """\
 你是电路需求解析助手。从用户的自然语言描述中提取结构化字段。
 
+用户可能描述了多级电路（如"TPS54202降压到5V，再用AMS1117降到3.3V"），
+你需要识别**主电路**（第一级/最关键的模块）的参数，并在 additional_devices 中列出其他器件。
+
 请严格按以下 JSON 格式输出，不要输出其他内容：
 {
-  "part_number": "用户指定的器件型号（如 TPS54202），没有则留空",
-  "category": "电路类别: buck/ldo/boost/flyback/sepic/charge_pump/opamp/mcu/sensor/connector/mosfet/diode/led/voltage_divider/rc_filter/other",
-  "v_in": "输入电压（纯数字字符串，如 '12'），没有则留空",
-  "v_out": "输出电压（纯数字字符串，如 '3.3'），没有则留空",
-  "i_out": "输出电流（纯数字字符串，单位A，如 '2'），没有则留空",
+  "part_number": "主器件型号（第一个/最关键的），没有则留空",
+  "category": "主器件电路类别: buck/ldo/boost/flyback/sepic/charge_pump/opamp/mcu/sensor/connector/mosfet/diode/led/voltage_divider/rc_filter/other",
+  "v_in": "主器件输入电压（纯数字字符串），没有则留空",
+  "v_out": "主器件输出电压（纯数字字符串），没有则留空",
+  "i_out": "输出电流（纯数字字符串，单位A），没有则留空",
   "wants_led": false,
   "led_color": "LED颜色(red/green/blue/white)，没有则留空",
-  "led_current_ma": "LED电流mA（纯数字），没有则留空"
+  "led_current_ma": "LED电流mA（纯数字），没有则留空",
+  "additional_devices": [
+    {"part_number": "其他器件型号", "role": "角色描述", "category": "类别"}
+  ],
+  "design_notes": "用户需求中的额外信息，如 GPIO 控制、信号连接关系等"
 }
 
 规则：
@@ -155,7 +162,9 @@ PARSE_REQUEST_PROMPT = """\
 2. 从上下文推断 category（如"DCDC"→buck，"稳压"→ldo，"升压"→boost）
 3. 如果用户提到了 LED/指示灯，设 wants_led=true
 4. 只提取用户明确给出的参数，不要猜测
-5. 只输出 JSON，不要有任何其他文字
+5. additional_devices 列出除主器件外所有用户提到的器件
+6. design_notes 记录多器件间的连接关系、GPIO 分配等额外信息
+7. 只输出 JSON，不要有任何其他文字
 """
 
 PARSE_REVISION_PROMPT = """\

@@ -44,6 +44,8 @@ class UserDesignRequest:
     wants_led: bool = False
     led_color: str = "green"
     led_current_ma: str = "2"
+    additional_devices: list[dict[str, str]] = field(default_factory=list)
+    design_notes: str = ""
 
 
 @dataclass(slots=True)
@@ -151,6 +153,9 @@ def parse_design_request(user_input: str) -> UserDesignRequest:
                 user_message=user_input,
             )
             if result is not None:
+                extra_devs = result.get("additional_devices", [])
+                if not isinstance(extra_devs, list):
+                    extra_devs = []
                 return UserDesignRequest(
                     raw_text=user_input,
                     part_number=str(result.get("part_number", "")).strip(),
@@ -161,6 +166,8 @@ def parse_design_request(user_input: str) -> UserDesignRequest:
                     wants_led=bool(result.get("wants_led", False)),
                     led_color=str(result.get("led_color", "")).strip(),
                     led_current_ma=str(result.get("led_current_ma", "")).strip(),
+                    additional_devices=extra_devs,
+                    design_notes=str(result.get("design_notes", "")).strip(),
                 )
         except Exception:
             pass

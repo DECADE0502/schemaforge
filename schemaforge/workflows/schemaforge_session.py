@@ -644,6 +644,24 @@ class SchemaForgeSession:
         except Exception:
             pass  # 审查失败不影响设计输出
 
+        # --- 多器件提示：告知用户检测到但未处理的额外器件 ---
+        if self._request.additional_devices:
+            extra_parts = []
+            for dev_info in self._request.additional_devices:
+                pn = dev_info.get("part_number", "")
+                role = dev_info.get("role", "")
+                if pn:
+                    extra_parts.append(f"{pn}({role})" if role else pn)
+            if extra_parts:
+                review_warnings.append(
+                    f"[提示] 检测到额外器件尚未设计: {', '.join(extra_parts)}。"
+                    "请分步设计每个模块，或使用多轮对话逐一添加。"
+                )
+        if self._request.design_notes:
+            review_warnings.append(
+                f"[提示] 设计备注: {self._request.design_notes}"
+            )
+
         return SchemaForgeTurnResult(
             status="generated",
             message=message,
