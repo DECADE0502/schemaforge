@@ -893,7 +893,7 @@ def render_system_svg(
         draw_gnd_symbols(d, all_anchors)
 
         # C68: 未解析连接可视提示
-        _draw_unresolved_hints(d, ir, all_anchors)
+        # _draw_unresolved_hints(d, ir, all_anchors)  # 暂时禁用避免乱码
 
     logger.info("System SVG rendered: %s", filepath)
     return filepath
