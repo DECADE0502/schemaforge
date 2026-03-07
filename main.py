@@ -10,8 +10,12 @@ from __future__ import annotations
 
 import argparse
 import io
+import os
 import sys
 from pathlib import Path
+
+# 确保 CLI 模式下始终使用真实 AI
+os.environ.pop("SCHEMAFORGE_SKIP_AI_PARSE", None)
 
 # 修复Windows终端编码问题
 if sys.platform == "win32":
