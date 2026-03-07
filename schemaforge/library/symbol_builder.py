@@ -178,19 +178,79 @@ def _normalize_pin_name(name: str) -> str:
     return stripped.upper()
 
 
+# 双列封装模式（SOIC/DIP/SOP/TSSOP 等）— 按物理引脚编号排列
+_DUAL_INLINE_PATTERNS: set[str] = {
+    "soic", "sop", "dip", "pdip", "tssop", "ssop", "msop",
+    "tdfn", "dfn", "qfn",  # 部分小封装也适用
+}
+
+
+def _is_dual_inline_package(package: str, pin_count: int) -> bool:
+    """判断是否为双列封装（按物理编号分左右）。
+
+    双列封装特征：封装名匹配 + 引脚数为偶数且 ≤ 24。
+    """
+    pkg_lower = package.strip().lower().replace("-", "").replace("_", "")
+    if pin_count < 4 or pin_count > 24 or pin_count % 2 != 0:
+        return False
+    return any(pat in pkg_lower for pat in _DUAL_INLINE_PATTERNS)
+
+
+def _assign_dual_inline_sides(
+    pins: list[dict[str, str]],
+) -> list[tuple[dict[str, str], PinSide]] | None:
+    """双列封装物理引脚排列：奇数引脚→左侧，偶数引脚→右侧（按编号排序）。
+
+    标准 SOIC/DIP 布局：
+    - 左侧: pin 1, 2, ..., N/2 (从上到下)
+    - 右侧: pin N, N-1, ..., N/2+1 (从上到下)
+
+    返回 None 表示无法按物理编号排列（引脚编号不完整）。
+    """
+    # 检查所有引脚是否有有效编号
+    numbered: list[tuple[int, dict[str, str]]] = []
+    for pin in pins:
+        num_str = pin.get("number", "").strip()
+        try:
+            num = int(num_str)
+            numbered.append((num, pin))
+        except (ValueError, TypeError):
+            return None  # 有引脚无法解析编号，放弃物理排列
+
+    if not numbered:
+        return None
+
+    total = len(numbered)
+    half = total // 2
+    numbered.sort(key=lambda x: x[0])
+
+    results: list[tuple[dict[str, str], PinSide]] = []
+    for num, pin in numbered:
+        if num <= half:
+            results.append((pin, PinSide.LEFT))
+        else:
+            results.append((pin, PinSide.RIGHT))
+
+    return results
+
+
 def assign_pin_sides(
     pins: list[dict[str, str]],
     category: str = "",
+    package: str = "",
     is_power_converter: bool = False,
 ) -> list[tuple[dict[str, str], PinSide]]:
     """确定性引脚方位分配
 
-    根据引脚名称模式和类型，按优先级规则分配方位。
-    电源转换器 (LDO/Buck/Boost) 有特殊规则：电源输入→LEFT，电源输出→RIGHT。
+    优先级:
+    1. 电源转换器 (LDO/Buck/Boost) → 按名称模式分配（功能导向）
+    2. 双列封装 (SOIC/DIP) 非电源转换器 → 按物理引脚编号分配
+    3. 其他 → 按名称模式分配
 
     Args:
         pins: 引脚字典列表，每项含 name, pin_type, 可选 number/description
         category: 器件类别 (ldo, buck, boost 等)
+        package: 封装类型 (SOIC-8, DIP-14 等)
         is_power_converter: 是否为电源转换器（也可从 category 自动推断）
 
     Returns:
@@ -199,8 +259,14 @@ def assign_pin_sides(
     cat_lower = category.strip().lower()
     is_converter = is_power_converter or cat_lower in _POWER_CONVERTER_CATEGORIES
 
-    results: list[tuple[dict[str, str], PinSide]] = []
+    # 电源转换器始终按功能分配（VIN→left, VOUT→right, GND→bottom 等）
+    if not is_converter and _is_dual_inline_package(package, len(pins)):
+        dual_result = _assign_dual_inline_sides(pins)
+        if dual_result is not None:
+            return dual_result
 
+    # 按名称模式分配
+    results: list[tuple[dict[str, str], PinSide]] = []
     for pin in pins:
         name_raw = pin.get("name", "").strip()
         name_upper = _normalize_pin_name(name_raw)
@@ -455,7 +521,7 @@ def build_symbol(
         pin["_mapped_type"] = _map_ai_pin_type(ai_type, pin.get("name", ""))
 
     # --- 3. 分配方位 ---
-    sided = assign_pin_sides(cleaned, category=category)
+    sided = assign_pin_sides(cleaned, category=category, package=package)
 
     # --- 4. 构建 SymbolPin 列表 ---
     symbol_pins: list[SymbolPin] = []
