@@ -488,8 +488,9 @@ class DesignPage(QWidget):
         message = getattr(result, "message", "")
         bundle = getattr(result, "bundle", None)
 
-        if status == "generated" and bundle is not None:
-            self._status_label.setText("✅ 生成完成")
+        if status in ("generated", "partial") and bundle is not None:
+            label = "✅ 系统设计完成" if status == "generated" else "⚠ 部分设计完成（部分器件缺失）"
+            self._status_label.setText(label)
             warnings = getattr(result, "warnings", [])
             self._display_bundle(bundle, warnings=warnings)
             if warnings:
@@ -515,6 +516,9 @@ class DesignPage(QWidget):
         elif status == "needs_asset":
             # 缺失器件 → 显示导入提示
             missing_pn = getattr(result, "missing_part_number", "")
+            missing_modules = getattr(result, "missing_modules", [])
+            if not missing_pn and missing_modules:
+                missing_pn = ", ".join(missing_modules)
             self._status_label.setText(f"⚠ 器件缺失: {missing_pn or '未知型号'}")
             self._progress_header.update_progress("等待补录器件", 50)
             self._tab_log.append(f"[缺失] 需要器件: {missing_pn}")
@@ -702,16 +706,37 @@ class DesignPage(QWidget):
             self._tab_erc.setPlainText("✅ 工程审查通过，无问题")
 
         # 设计概要
-        device = getattr(bundle, "device", None)
-        params = getattr(bundle, "parameters", {})
-        rationale = getattr(bundle, "rationale", [])
         summary_parts: list[str] = []
-        if device:
-            summary_parts.append(f"器件: {device.part_number}")
-            summary_parts.append(f"分类: {device.category or '—'}")
-        summary_parts.append(f"参数数量: {len(params)}")
-        for key, val in params.items():
-            summary_parts.append(f"  {key}: {val}")
+
+        # SystemBundle (多器件) — 从 design_ir 提取
+        design_ir = getattr(bundle, "design_ir", None)
+        if design_ir is not None:
+            ir_summary = design_ir.to_summary() if hasattr(design_ir, "to_summary") else {}
+            summary_parts.append(f"模块数: {ir_summary.get('total_modules', 0)}")
+            summary_parts.append(f"已解析: {ir_summary.get('resolved_modules', 0)}")
+            summary_parts.append(f"连接数: {ir_summary.get('connections', 0)}")
+            summary_parts.append(f"网络数: {ir_summary.get('nets', 0)}")
+            # 列出各模块
+            instances = getattr(design_ir, "module_instances", {})
+            for mid, inst in instances.items():
+                dev = getattr(inst, "device", None)
+                pn = dev.part_number if dev else "未解析"
+                role = getattr(inst, "role", "")
+                status = getattr(inst, "status", "")
+                status_val = status.value if hasattr(status, "value") else str(status)
+                summary_parts.append(f"  {mid}: {pn} ({role}) [{status_val}]")
+        else:
+            # DesignBundle (单器件兼容)
+            device = getattr(bundle, "device", None)
+            params = getattr(bundle, "parameters", {})
+            if device:
+                summary_parts.append(f"器件: {device.part_number}")
+                summary_parts.append(f"分类: {device.category or '—'}")
+            summary_parts.append(f"参数数量: {len(params)}")
+            for key, val in params.items():
+                summary_parts.append(f"  {key}: {val}")
+
+        rationale = getattr(bundle, "rationale", [])
         if rationale:
             summary_parts.append("")
             summary_parts.append("设计依据:")

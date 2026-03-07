@@ -62,25 +62,25 @@ class SchemaForgeWorker(QThread):
         self._session = session
 
     def run(self) -> None:
-        """执行统一工作台设计流程。"""
+        """执行系统级设计流程（多器件）。"""
         try:
             self.progress.emit("正在解析设计需求…", 10)
 
-            from schemaforge.workflows.schemaforge_session import SchemaForgeSession
+            from schemaforge.system.session import SystemDesignSession
 
-            if isinstance(self._session, SchemaForgeSession):
+            if isinstance(self._session, SystemDesignSession):
                 session = self._session
             else:
-                session = SchemaForgeSession(
+                session = SystemDesignSession(
                     store_dir=Path("schemaforge/store"),
                     skip_ai_parse=False,
                 )
             self.session_ready.emit(session)
 
-            self.progress.emit("正在匹配器件并生成设计…", 40)
+            self.progress.emit("正在解析器件并生成系统设计…", 40)
             result = session.start(self.user_input)
 
-            self.progress.emit("设计完成", 100)
+            self.progress.emit("系统设计完成", 100)
             self.finished.emit(result)
         except Exception as exc:
             tb = traceback.format_exc()
