@@ -33,68 +33,68 @@
 
 ## 阶段 3：截图与审稿素材生成 (V021-V030)
 
-- [ ] V021 实现 `render_review_images()`
-- [ ] V022 输出整图 PNG
-- [ ] V023 输出高 DPI 整图 PNG
-- [ ] V024 输出每个模块的局部裁剪图
-- [ ] V025 输出模块间连接区域裁剪图
-- [ ] V026 输出文字密集区域裁剪图
-- [ ] V027 实现 `build_review_manifest()`
-- [ ] V028 把模块列表写入 manifest
-- [ ] V029 把关键连接写入 manifest
-- [ ] V030 把 unresolved 项写入 manifest
+- [x] V021 实现 `render_review_images()`
+- [x] V022 输出整图 PNG
+- [x] V023 输出高 DPI 整图 PNG
+- [x] V024 输出每个模块的局部裁剪图
+- [x] V025 输出模块间连接区域裁剪图
+- [x] V026 输出文字密集区域裁剪图
+- [x] V027 实现 `build_review_manifest()`
+- [x] V028 把模块列表写入 manifest
+- [x] V029 把关键连接写入 manifest
+- [x] V030 把 unresolved 项写入 manifest
 
 ## 阶段 4：AI 审稿接口 (V031-V040)
 
-- [ ] V031 新建 `schemaforge/visual_review/critic.py`
-- [ ] V032 定义 AI 审稿 prompt
-- [ ] V033 实现 `review_rendered_schematic()`
-- [ ] V034 要求 AI 输出结构化 JSON
-- [ ] V035 支持多图输入（全图 + 局部图）
-- [ ] V036 把 manifest 一并提供给 AI
-- [ ] V037 实现 `validate_visual_review_report()`
-- [ ] V038 对非法建议做拒收
-- [ ] V039 对缺字段做兜底
-- [ ] V040 为 AI 审稿接口写 mock 测试
+- [x] V031 新建 `schemaforge/visual_review/critic.py`
+- [x] V032 定义 AI 审稿 prompt
+- [x] V033 实现 `review_rendered_schematic()`
+- [x] V034 要求 AI 输出结构化 JSON
+- [x] V035 支持多图输入（全图 + 局部图）
+- [x] V036 把 manifest 一并提供给 AI
+- [x] V037 实现 `validate_visual_review_report()`
+- [x] V038 对非法建议做拒收
+- [x] V039 对缺字段做兜底
+- [x] V040 为 AI 审稿接口写 mock 测试
 
 ## 阶段 5：本地硬指标评分器 (V041-V050)
 
-- [ ] V041 新建 `schemaforge/visual_review/scoring.py`
-- [ ] V042 实现模块是否全部可见检查
-- [ ] V043 实现标签重叠检查
-- [ ] V044 实现标签越界检查
-- [ ] V045 实现模块边界重叠检查
-- [ ] V046 实现线交叉数统计
-- [ ] V047 实现最小间距检查
-- [ ] V048 实现关键连接可视性检查
-- [ ] V049 实现 `score_render_quality()`
-- [ ] V050 写评分器测试
+- [x] V041 新建 `schemaforge/visual_review/scoring.py`
+- [x] V042 实现模块是否全部可见检查
+- [x] V043 实现标签重叠检查
+- [x] V044 实现标签越界检查
+- [x] V045 实现模块边界重叠检查
+- [x] V046 实现线交叉数统计
+- [x] V047 实现最小间距检查
+- [x] V048 实现关键连接可视性检查
+- [x] V049 实现 `score_render_quality()`
+- [x] V050 写评分器测试
 
 ## 阶段 6：Patch 规划器 (V051-V060)
 
-- [ ] V051 新建 `schemaforge/visual_review/patch_planner.py`
-- [ ] V052 实现 `plan_visual_patches()`
-- [ ] V053 支持 `increase_module_spacing`
-- [ ] V054 支持 `move_module`
-- [ ] V055 支持 `move_label`
-- [ ] V056 支持 `reroute_connection`
-- [ ] V057 支持 `expand_canvas`
-- [ ] V058 支持 `add_net_label`
-- [ ] V059 拒绝越权 patch
-- [ ] V060 写 patch 规划测试
+- [x] V051 新建 `schemaforge/visual_review/patch_planner.py`
+- [x] V052 实现 `plan_visual_patches()`
+- [x] V053 支持 `increase_module_spacing`
+- [x] V054 支持 `move_module`
+- [x] V055 支持 `move_label`
+- [x] V056 支持 `reroute_connection`
+- [x] V057 支持 `expand_canvas`
+- [x] V058 支持 `add_net_label`
+- [x] V059 拒绝越权 patch
+- [x] V060 写 patch 规划测试
 
 ## 阶段 7：Patch 执行器 (V061-V070)
 
-- [ ] V061 新建 `schemaforge/visual_review/patch_executor.py`
-- [ ] V062 实现 `apply_visual_patches()`
-- [ ] V063 实现模块位置调整
-- [ ] V064 实现标签位置调整
-- [ ] V065 实现画布尺寸调整
-- [ ] V066 实现正交连线风格切换
-- [ ] V067 实现局部重新布局
-- [ ] V068 保证 patch 不修改系统 IR 电气语义
-- [ ] V069 实现 patch 前后 diff 记录
-- [ ] V070 写 patch 执行测试
+- [x] V061 新建 `schemaforge/visual_review/patch_executor.py`
+- [x] V062 实现 `apply_visual_patches()`
+- [x] V063 实现模块位置调整
+- [x] V064 实现标签位置调整
+- [x] V065 实现画布尺寸调整
+- [x] V066 实现正交连线风格切换
+- [x] V067 实现局部重新布局
+- [x] V068 保证 patch 不修改系统 IR 电气语义
+- [x] V069 实现 patch 前后 diff 记录
+- [x] V070 写 patch 执行测试
 
 ## 阶段 8：重渲染闭环 (V071-V080)
 

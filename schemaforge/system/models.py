@@ -251,6 +251,15 @@ class RenderMetadata:
         default_factory=dict,
     )
     # module_id → {port_role: (x, y)}
+    label_bboxes: dict[str, tuple[float, float, float, float]] = field(
+        default_factory=dict,
+    )
+    # label_id → (x, y, width, height)
+    wire_paths: list[tuple[str, str, list[tuple[float, float]]]] = field(
+        default_factory=list,
+    )
+    # [(src_module, dst_module, [(x1,y1), (x2,y2), ...])]
+    canvas_size: tuple[float, float] = (20.0, 15.0)
 
 
 @dataclass
