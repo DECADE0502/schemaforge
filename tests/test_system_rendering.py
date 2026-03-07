@@ -688,13 +688,15 @@ class TestRenderSystemSvg:
         assert "buck1" in ir.module_instances
 
     def test_default_filename(self) -> None:
-        """默认文件名为 system_design.svg。"""
+        """默认文件名以 system_design_ 开头，.svg 结尾（含时间戳防缓存）。"""
         buck = _make_buck_instance()
         ir = _make_ir(modules={"buck1": buck})
 
         filepath = render_system_svg(ir)
 
-        assert filepath.endswith("system_design.svg")
+        basename = os.path.basename(filepath)
+        assert basename.startswith("system_design_")
+        assert basename.endswith(".svg")
         assert os.path.exists(filepath)
 
     def test_empty_ir_no_crash(self) -> None:

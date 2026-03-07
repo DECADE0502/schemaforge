@@ -11,8 +11,12 @@
 
 from __future__ import annotations
 
-from PySide6.QtCore import Qt, Signal
+import base64
+
+from PySide6.QtCore import Qt, QBuffer, QIODevice, QTimer, Signal
+from PySide6.QtGui import QKeySequence, QPixmap
 from PySide6.QtWidgets import (
+    QApplication,
     QFrame,
     QHBoxLayout,
     QLabel,
@@ -20,6 +24,7 @@ from PySide6.QtWidgets import (
     QPushButton,
     QScrollArea,
     QSizePolicy,
+    QTextEdit,
     QVBoxLayout,
     QWidget,
 )
@@ -35,6 +40,34 @@ _TEXT_COLOR = "#cccccc"
 _BUBBLE_RADIUS = 8
 _BUBBLE_PADDING = "10px 14px"
 _MAX_BUBBLE_WIDTH = 420
+_THUMBNAIL_MAX = 200  # px
+
+
+# ============================================================
+# 图片感知输入框
+# ============================================================
+
+
+class ImageAwareTextEdit(QTextEdit):
+    """QTextEdit that detects image paste from clipboard."""
+
+    image_pasted = Signal(str)  # base64 PNG
+
+    def keyPressEvent(self, event) -> None:  # type: ignore[override]
+        if event.matches(QKeySequence.StandardKey.Paste):
+            clipboard = QApplication.clipboard()
+            mime = clipboard.mimeData()
+            if mime and mime.hasImage():
+                image = clipboard.image()
+                if not image.isNull():
+                    buf = QBuffer()
+                    buf.open(QIODevice.OpenModeFlag.WriteOnly)
+                    image.save(buf, "PNG")
+                    b64 = base64.b64encode(buf.data().data()).decode("ascii")
+                    buf.close()
+                    self.image_pasted.emit(b64)
+                    return
+        super().keyPressEvent(event)
 
 
 # ============================================================
@@ -106,6 +139,63 @@ class _MessageBubble(QFrame):
         layout.addWidget(label)
 
 
+class _ImageBubble(QFrame):
+    """显示图片缩略图的消息气泡。"""
+
+    def __init__(
+        self,
+        role: str,
+        base64_png: str,
+        parent: QWidget | None = None,
+    ) -> None:
+        super().__init__(parent)
+        self._role = role
+        self._setup_ui(base64_png)
+
+    def _setup_ui(self, base64_png: str) -> None:
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(8, 4, 8, 4)
+
+        img_label = QLabel()
+        img_label.setAlignment(Qt.AlignmentFlag.AlignLeft)
+
+        try:
+            raw = base64.b64decode(base64_png)
+            pixmap = QPixmap()
+            pixmap.loadFromData(raw, "PNG")
+            if not pixmap.isNull():
+                scaled = pixmap.scaled(
+                    _THUMBNAIL_MAX,
+                    _THUMBNAIL_MAX,
+                    Qt.AspectRatioMode.KeepAspectRatio,
+                    Qt.TransformationMode.SmoothTransformation,
+                )
+                img_label.setPixmap(scaled)
+            else:
+                img_label.setText("[图片加载失败]")
+        except Exception:
+            img_label.setText("[图片加载失败]")
+
+        if self._role == "user":
+            self.setStyleSheet(
+                f"_ImageBubble {{"
+                f"  background-color: {_USER_BG};"
+                f"  border-radius: {_BUBBLE_RADIUS}px;"
+                f"  padding: {_BUBBLE_PADDING};"
+                f"}}"
+            )
+        else:
+            self.setStyleSheet(
+                f"_ImageBubble {{"
+                f"  background-color: {_AI_BG};"
+                f"  border-radius: {_BUBBLE_RADIUS}px;"
+                f"  padding: {_BUBBLE_PADDING};"
+                f"}}"
+            )
+
+        layout.addWidget(img_label)
+
+
 # ============================================================
 # ChatPanel
 # ============================================================
@@ -116,9 +206,11 @@ class ChatPanel(QWidget):
 
     Signals:
         message_sent(str): 用户发送消息时发出。
+        image_pasted(str): 用户粘贴图片时发出 base64 PNG 字符串。
     """
 
     message_sent = Signal(str)
+    image_pasted = Signal(str)  # base64 PNG
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -161,7 +253,7 @@ class ChatPanel(QWidget):
         input_layout.setSpacing(6)
 
         self._input_field = QLineEdit()
-        self._input_field.setPlaceholderText("输入消息...")
+        self._input_field.setPlaceholderText("输入消息... (Ctrl+V 可粘贴图片)")
         self._input_field.returnPressed.connect(self._on_send)
         input_layout.addWidget(self._input_field, 1)
 
@@ -170,7 +262,41 @@ class ChatPanel(QWidget):
         self._send_button.clicked.connect(self._on_send)
         input_layout.addWidget(self._send_button)
 
+        # 隐藏的 ImageAwareTextEdit，仅用于捕获 Ctrl+V 图片
+        self._image_input = ImageAwareTextEdit()
+        self._image_input.setMaximumHeight(0)
+        self._image_input.setVisible(False)
+        self._image_input.image_pasted.connect(self._on_image_pasted)
+        input_layout.addWidget(self._image_input)
+
         root_layout.addWidget(input_frame)
+
+        # 安装事件过滤器以捕获 QLineEdit 的 Ctrl+V
+        self._input_field.installEventFilter(self)
+
+    # ----------------------------------------------------------
+    # 事件过滤
+    # ----------------------------------------------------------
+
+    def eventFilter(self, watched, event) -> bool:  # type: ignore[override]
+        from PySide6.QtCore import QEvent
+
+        if watched is self._input_field and event.type() == QEvent.Type.KeyPress:
+            key_event = event  # type: QKeyEvent
+            if key_event.matches(QKeySequence.StandardKey.Paste):
+                clipboard = QApplication.clipboard()
+                mime = clipboard.mimeData()
+                if mime and mime.hasImage():
+                    image = clipboard.image()
+                    if not image.isNull():
+                        buf = QBuffer()
+                        buf.open(QIODevice.OpenModeFlag.WriteOnly)
+                        image.save(buf, "PNG")
+                        b64 = base64.b64encode(buf.data().data()).decode("ascii")
+                        buf.close()
+                        self._on_image_pasted(b64)
+                        return True
+        return super().eventFilter(watched, event)
 
     # ----------------------------------------------------------
     # 公开 API
@@ -184,8 +310,39 @@ class ChatPanel(QWidget):
             text: 消息文本。
         """
         bubble = _MessageBubble(role, text, self._messages_container)
+        self._insert_bubble(role, bubble)
 
-        # 对齐方式
+    def add_image_message(self, role: str, base64_png: str) -> None:
+        """在聊天历史中展示图片缩略图。
+
+        Args:
+            role: 角色，"user" / "ai" / "system"。
+            base64_png: base64 编码的 PNG 字符串。
+        """
+        bubble = _ImageBubble(role, base64_png, self._messages_container)
+        self._insert_bubble(role, bubble)
+
+    def clear(self) -> None:
+        """移除所有消息。"""
+        # 删除 stretch 之前的所有项目
+        while self._messages_layout.count() > 1:
+            item = self._messages_layout.takeAt(0)
+            if item is not None:
+                widget = item.widget()
+                if widget is not None:
+                    widget.deleteLater()
+                else:
+                    # 嵌套 layout
+                    sub_layout = item.layout()
+                    if sub_layout is not None:
+                        self._clear_layout(sub_layout)
+
+    # ----------------------------------------------------------
+    # 内部方法
+    # ----------------------------------------------------------
+
+    def _insert_bubble(self, role: str, bubble: QFrame) -> None:
+        """将气泡插入消息区，对齐方式按角色决定。"""
         wrapper = QHBoxLayout()
         wrapper.setContentsMargins(0, 0, 0, 0)
 
@@ -207,25 +364,6 @@ class ChatPanel(QWidget):
         # 自动滚动到底部
         self._scroll_to_bottom()
 
-    def clear(self) -> None:
-        """移除所有消息。"""
-        # 删除 stretch 之前的所有项目
-        while self._messages_layout.count() > 1:
-            item = self._messages_layout.takeAt(0)
-            if item is not None:
-                widget = item.widget()
-                if widget is not None:
-                    widget.deleteLater()
-                else:
-                    # 嵌套 layout
-                    sub_layout = item.layout()
-                    if sub_layout is not None:
-                        self._clear_layout(sub_layout)
-
-    # ----------------------------------------------------------
-    # 内部方法
-    # ----------------------------------------------------------
-
     def _on_send(self) -> None:
         """处理发送动作。"""
         text = self._input_field.text().strip()
@@ -235,11 +373,14 @@ class ChatPanel(QWidget):
         self.add_message("user", text)
         self.message_sent.emit(text)
 
+    def _on_image_pasted(self, b64: str) -> None:
+        """处理图片粘贴动作。"""
+        self.add_image_message("user", b64)
+        self.add_message("system", "[图片已粘贴]")
+        self.image_pasted.emit(b64)
+
     def _scroll_to_bottom(self) -> None:
         """滚动到消息区域底部。"""
-        # 使用 singleShot 确保在布局更新后执行
-        from PySide6.QtCore import QTimer
-
         QTimer.singleShot(10, self._do_scroll_bottom)
 
     def _do_scroll_bottom(self) -> None:

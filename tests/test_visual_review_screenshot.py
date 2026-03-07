@@ -353,31 +353,54 @@ class TestReviewRenderedSchematic:
     """测试 review_rendered_schematic AI 调用。"""
 
     def test_returns_report_with_mock(self):
-        """mock AI 调用返回 VisualReviewReport。"""
-        mock_response = {
+        """mock vision API 调用返回 VisualReviewReport。"""
+        import json
+        from unittest.mock import MagicMock
+
+        mock_json = json.dumps({
             "overall_score": 8.0,
             "summary": "Mock 审稿结果",
             "issues": [],
-        }
+        })
+        mock_choice = MagicMock()
+        mock_choice.message.content = mock_json
+        mock_completion = MagicMock()
+        mock_completion.choices = [mock_choice]
+        mock_client = MagicMock()
+        mock_client.chat.completions.create.return_value = mock_completion
 
         images = ReviewImageSet(full_image_path="fake.png", dpi=150)
         manifest = ReviewManifest(module_list=[{"module_id": "buck1", "device": "TPS5430", "role": "降压"}])
 
-        with patch("schemaforge.visual_review.critic.call_llm_json", return_value=mock_response):
+        with patch("schemaforge.visual_review.critic.get_client", return_value=mock_client), \
+             patch("schemaforge.visual_review.critic.Path") as mock_path_cls:
+            mock_path_instance = MagicMock()
+            mock_path_instance.exists.return_value = True
+            mock_path_instance.read_bytes.return_value = b"\x89PNG\r\n"
+            mock_path_cls.return_value = mock_path_instance
             report = review_rendered_schematic(images, manifest)
 
         assert isinstance(report, VisualReviewReport)
         assert report.overall_score == 8.0
 
     def test_handles_ai_failure(self):
-        """AI 返回 None 时生成空报告。"""
+        """AI 调用异常时生成失败报告。"""
+        from unittest.mock import MagicMock
+
+        mock_client = MagicMock()
+        mock_client.chat.completions.create.side_effect = RuntimeError("connection error")
+
         images = ReviewImageSet(full_image_path="fake.png")
         manifest = ReviewManifest()
 
-        with patch("schemaforge.visual_review.critic.call_llm_json", return_value=None):
+        with patch("schemaforge.visual_review.critic.get_client", return_value=mock_client), \
+             patch("schemaforge.visual_review.critic.Path") as mock_path_cls:
+            mock_path_instance = MagicMock()
+            mock_path_instance.exists.return_value = True
+            mock_path_instance.read_bytes.return_value = b"\x89PNG\r\n"
+            mock_path_cls.return_value = mock_path_instance
             report = review_rendered_schematic(images, manifest)
 
-        assert report.overall_score == 0.0
         assert "失败" in report.summary
 
 

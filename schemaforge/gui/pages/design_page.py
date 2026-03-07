@@ -274,6 +274,7 @@ class DesignPage(QWidget):
         self._grid_canvas.zoom_changed.connect(self._on_zoom_changed)
         self._template_combo.currentIndexChanged.connect(self._on_template_selected)
         self._chat_panel.message_sent.connect(self._on_chat_send)
+        self._chat_panel.image_pasted.connect(self._on_image_pasted)
 
     # ==========================================================
     # 事件处理
@@ -307,6 +308,11 @@ class DesignPage(QWidget):
             # --- 新设计路径 ---
             self._input_edit.setPlainText(text)
             self._on_generate()
+
+    @Slot(str)
+    def _on_image_pasted(self, base64_png: str) -> None:
+        """对话面板粘贴图片时的视觉反馈处理。"""
+        self._tab_log.append("[图片] 用户粘贴了图片（base64 PNG）")
 
     def _start_revise(self, message: str) -> None:
         """启动多轮修改流程（对话面板 → SchemaForgeReviseWorker）。"""

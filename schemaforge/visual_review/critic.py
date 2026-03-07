@@ -20,7 +20,7 @@ import logging
 from pathlib import Path
 from typing import Any
 
-from schemaforge.ai.client import call_llm_json
+from schemaforge.ai.client import DEFAULT_MODEL, _extract_json, get_client
 from schemaforge.visual_review.models import (
     FORBIDDEN_ACTIONS,
     IssueSeverity,
@@ -83,47 +83,8 @@ _ALLOWED_FIXES: frozenset[str] = frozenset(a.value for a in PatchActionType)
 
 
 # ============================================================
-# V032-V035: 图片编码 + AI 调用
+# V032-V035: AI 响应解析
 # ============================================================
-
-
-def _encode_image_base64(image_path: str) -> str:
-    """将 PNG 图片编码为 base64 字符串。"""
-    with open(image_path, "rb") as f:
-        return base64.b64encode(f.read()).decode("utf-8")
-
-
-def _build_user_message(
-    images: ReviewImageSet,
-    manifest: ReviewManifest,
-) -> str:
-    """构建发给 AI 的用户消息（文本 + 图片信息）。
-
-    如果 AI 不支持视觉输入，则只发送清单文本。
-    图片以 base64 编码附在消息中，供支持视觉的模型使用。
-    """
-    parts: list[str] = []
-
-    # 清单文本
-    parts.append("=== 设计清单 ===")
-    parts.append(manifest.to_text())
-
-    # 图片信息
-    if images.full_image_path and Path(images.full_image_path).exists():
-        parts.append("\n=== 原理图截图 ===")
-        parts.append(f"[整图 DPI={images.dpi}] {images.full_image_path}")
-        try:
-            b64 = _encode_image_base64(images.full_image_path)
-            parts.append(f"[base64] data:image/png;base64,{b64[:100]}...")
-        except OSError:
-            parts.append("[图片读取失败]")
-
-    if images.module_crops:
-        parts.append(f"\n模块裁剪图: {len(images.module_crops)} 张")
-        for mid, path in images.module_crops.items():
-            parts.append(f"  {mid}: {path}")
-
-    return "\n".join(parts)
 
 
 def _parse_ai_response(raw: dict[str, Any]) -> VisualReviewReport:
@@ -164,7 +125,7 @@ def review_rendered_schematic(
     images: ReviewImageSet,
     manifest: ReviewManifest,
 ) -> VisualReviewReport:
-    """将截图 + 清单发送给 AI 进行视觉审稿。
+    """将截图 + 清单发送给 AI 视觉 API 进行视觉审稿。
 
     Args:
         images: 截图集合
@@ -173,31 +134,69 @@ def review_rendered_schematic(
     Returns:
         VisualReviewReport 结构化审稿报告
     """
-    user_message = _build_user_message(images, manifest)
+    # Select best available PNG image
+    image_path = images.full_image_path or images.full_image_hd_path
+    if not image_path or not Path(image_path).exists():
+        logger.warning("无可用截图，生成空报告")
+        return VisualReviewReport(summary="无截图可审查")
 
-    logger.info("发送视觉审稿请求...")
-    raw = call_llm_json(
-        system_prompt=VISUAL_REVIEW_PROMPT,
-        user_message=user_message,
-        temperature=0.1,
-    )
+    image_bytes = Path(image_path).read_bytes()
+    b64_image = base64.b64encode(image_bytes).decode("ascii")
 
-    if raw is None:
-        logger.warning("AI 审稿返回 None，生成空报告")
-        return VisualReviewReport(
-            summary="AI 审稿失败：无法解析响应",
-            raw_ai_response="",
+    client = get_client()
+    manifest_text = manifest.to_text()
+
+    messages = [
+        {"role": "system", "content": VISUAL_REVIEW_PROMPT},
+        {
+            "role": "user",
+            "content": [
+                {
+                    "type": "text",
+                    "text": f"请审查以下原理图的视觉布局质量。\n\n设计清单:\n{manifest_text}",
+                },
+                {
+                    "type": "image_url",
+                    "image_url": {
+                        "url": f"data:image/png;base64,{b64_image}",
+                    },
+                },
+            ],
+        },
+    ]
+
+    logger.info("发送视觉审稿请求 (vision API)...")
+    try:
+        response = client.chat.completions.create(
+            model=DEFAULT_MODEL,
+            messages=messages,  # type: ignore[arg-type]
+            temperature=0.3,
+            max_tokens=2048,
         )
-
-    report = _parse_ai_response(raw)
-    logger.info(
-        "AI 审稿完成: score=%.1f, issues=%d (critical=%d, warning=%d)",
-        report.overall_score,
-        len(report.issues),
-        report.critical_count,
-        report.warning_count,
-    )
-    return report
+        raw_text = response.choices[0].message.content or ""
+        data = _extract_json(raw_text)
+        if data is None:
+            logger.warning("AI 审稿响应无法解析为 JSON，返回部分报告")
+            return VisualReviewReport(
+                overall_score=5.0,
+                summary=raw_text[:200],
+                raw_ai_response=raw_text,
+            )
+        report = _parse_ai_response(data)
+        logger.info(
+            "AI 审稿完成: score=%.1f, issues=%d (critical=%d, warning=%d)",
+            report.overall_score,
+            len(report.issues),
+            report.critical_count,
+            report.warning_count,
+        )
+        return report
+    except Exception as exc:
+        logger.error("AI 视觉审查失败: %s", exc)
+        return VisualReviewReport(
+            summary=f"AI 视觉审查失败: {exc}",
+            raw_ai_response=str(exc),
+        )
 
 
 # ============================================================
