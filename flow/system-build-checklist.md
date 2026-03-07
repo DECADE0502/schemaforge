@@ -124,13 +124,13 @@
 
 ## 阶段 10：Session、Revision、GUI 收口
 
-- [ ] T091 新建 `schemaforge/system/session.py`
-- [ ] T092 让 session 保存 `SystemDesignIR`
-- [ ] T093 实现 `start_system_design`
-- [ ] T094 实现 `revise_system_design`
-- [ ] T095 实现模块替换
-- [ ] T096 实现模块新增/删除
-- [ ] T097 GUI 增加模块树与 unresolved 面板
-- [ ] T098 GUI 增加系统级 BOM / SPICE / warnings 视图
-- [ ] T099 跑完整场景：`20V -> TPS54202 -> AMS1117 -> STM32 + PA1控LED`
-- [ ] T100 以这个完整场景作为里程碑验收并锁回归
+- [x] T091 新建 `schemaforge/system/session.py`
+- [x] T092 让 session 保存 `SystemDesignIR`
+- [x] T093 实现 `start_system_design`
+- [x] T094 实现 `revise_system_design`
+- [x] T095 实现模块替换
+- [x] T096 实现模块新增/删除
+- [x] T097 GUI 增加模块树与 unresolved 面板
+- [x] T098 GUI 增加系统级 BOM / SPICE / warnings 视图
+- [x] T099 跑完整场景：`20V -> TPS54202 -> AMS1117 -> STM32 + PA1控LED`
+- [x] T100 以这个完整场景作为里程碑验收并锁回归
