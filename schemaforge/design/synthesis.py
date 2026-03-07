@@ -118,6 +118,13 @@ def parse_design_request(user_input: str) -> UserDesignRequest:
     )
 
 
+def _has_evaluable_formula(formula_text: str) -> bool:
+    """检查公式文本是否包含可求解的代数表达式（不是纯常量/约束）。"""
+    from schemaforge.design.formula_eval import normalize_formula_expression
+
+    return normalize_formula_expression(formula_text) is not None
+
+
 class ExactPartResolver:
     """精确型号解析器。"""
 
@@ -157,7 +164,16 @@ class DesignRecipeSynthesizer:
     ) -> tuple[DeviceModel, DesignRecipe]:
         category = (device.category or request.category).lower()
 
-        # 对 buck/ldo 总是按当前请求参数重新计算，避免复用陈旧缓存
+        # 优先尝试 datasheet 驱动的公式计算（器件已有 recipe + 可求解公式时）
+        recipe_result = self._try_recipe_driven_build(device, request, category)
+        if recipe_result is not None:
+            recipe, topology = recipe_result
+            enriched = device.model_copy(
+                update={"topology": topology, "design_recipe": recipe}
+            )
+            return enriched, recipe
+
+        # 回退到内置硬编码计算
         if category == "buck":
             recipe, topology = self._build_buck_recipe(device, request)
         elif category == "ldo":
@@ -172,6 +188,145 @@ class DesignRecipeSynthesizer:
             update={"topology": topology, "design_recipe": recipe}
         )
         return enriched, recipe
+
+    def _try_recipe_driven_build(
+        self,
+        device: DeviceModel,
+        request: UserDesignRequest,
+        category: str,
+    ) -> tuple[DesignRecipe, TopologyDef] | None:
+        """尝试用器件自带的 design_recipe 公式驱动参数计算。
+
+        仅当器件已有 recipe 且 recipe 含有可求解公式时才使用。
+        返回 None 表示不满足条件，应回退到硬编码计算。
+        """
+        if device.design_recipe is None or device.topology is None:
+            return None
+
+        recipe = device.design_recipe
+        has_evaluable = any(
+            comp.formula and _has_evaluable_formula(comp.formula)
+            for comp in recipe.sizing_components
+        )
+        if not has_evaluable and not recipe.formulas:
+            return None
+
+        # 构建求解上下文
+        from schemaforge.design.formula_eval import FormulaEvaluator
+
+        context = self._build_eval_context(device, request, category)
+        evaluator = FormulaEvaluator()
+        eval_result = evaluator.evaluate_recipe(recipe, context)
+
+        if not eval_result.computed_params:
+            return None
+
+        # 将求解结果合并到 recipe 的 default_parameters
+        merged_params = dict(recipe.default_parameters)
+
+        # 基础参数
+        if request.v_in:
+            merged_params["v_in"] = request.v_in
+        if request.v_out:
+            merged_params["v_out"] = request.v_out
+        if request.i_out:
+            merged_params["i_out_max"] = request.i_out
+        merged_params["ic_model"] = device.part_number
+
+        # 公式求解的元件值覆盖默认值
+        _ROLE_TO_PARAM: dict[str, str] = {
+            "input_cap": "c_in",
+            "output_cap": "c_out",
+            "inductor": "l_value",
+            "boot_cap": "c_boot",
+            "fb_upper": "r_fb_upper",
+            "fb_lower": "r_fb_lower",
+        }
+        for role, formatted_value in eval_result.computed_params.items():
+            param_key = _ROLE_TO_PARAM.get(role, role)
+            merged_params[param_key] = formatted_value
+
+        # 更新 recipe 的 default_parameters 和 sizing_components 的 value
+        updated_components = []
+        for comp in recipe.sizing_components:
+            if comp.role in eval_result.computed_params:
+                updated_components.append(
+                    comp.model_copy(update={"value": eval_result.computed_params[comp.role]})
+                )
+            else:
+                updated_components.append(comp)
+
+        # 追加公式驱动的 evidence
+        evidence_list = list(recipe.evidence)
+        evidence_list.append(RecipeEvidence(
+            source_type="formula_eval",
+            summary=f"公式驱动计算: {len(eval_result.computed_params)} 个参数由 recipe 公式求解",
+            confidence=0.9 if eval_result.success else 0.6,
+        ))
+
+        updated_recipe = recipe.model_copy(update={
+            "default_parameters": merged_params,
+            "sizing_components": updated_components,
+            "evidence": evidence_list,
+        })
+
+        return updated_recipe, device.topology
+
+    def _build_eval_context(
+        self,
+        device: DeviceModel,
+        request: UserDesignRequest,
+        category: str,
+    ) -> dict[str, float]:
+        """从设备 specs 和用户请求构建公式求解的变量上下文。"""
+        context: dict[str, float] = {}
+
+        # 从用户请求
+        v_in = _coalesce_numeric(
+            request.v_in,
+            device.specs.get("v_in_typ"),
+            _derate_abs_max(device.specs.get("v_in_max"), 0.6),
+            12.0,
+        )
+        v_out = _coalesce_numeric(
+            request.v_out,
+            device.specs.get("v_out_typ"),
+            device.specs.get("v_out"),
+            3.3 if category == "ldo" else 5.0,
+        )
+        i_out = _coalesce_numeric(
+            request.i_out,
+            device.specs.get("i_out_typ"),
+            _derate_abs_max(device.specs.get("i_out_max"), 0.7),
+            1.0,
+        )
+
+        context["v_in"] = v_in
+        context["v_out"] = v_out
+        context["i_out"] = i_out
+
+        # 开关频率
+        fsw = _coalesce_numeric(device.specs.get("fsw"), 500000.0)
+        if fsw < 10000:
+            fsw *= 1000.0
+        context["fsw"] = fsw
+
+        # 参考电压
+        v_ref = _coalesce_numeric(
+            device.operating_constraints.get("v_fb"),
+            device.specs.get("v_ref"),
+            0.8,
+        )
+        context["v_ref"] = v_ref
+
+        # 所有 specs 中的数值参数也注入上下文
+        for key, value in device.specs.items():
+            if key not in context:
+                parsed = _parse_engineering_value(value)
+                if parsed is not None:
+                    context[key] = parsed
+
+        return context
 
     def build_bundle(
         self,

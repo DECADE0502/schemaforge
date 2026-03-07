@@ -10,7 +10,16 @@ from schemaforge.design.synthesis import (
     UserDesignRequest,
     parse_design_request,
 )
-from schemaforge.library.models import DeviceModel
+from schemaforge.library.models import (
+    DesignRecipe,
+    DeviceModel,
+    ExternalComponent,
+    RecipeComponent,
+    RecipeEvidence,
+    RecipeFormula,
+    TopologyConnection,
+    TopologyDef,
+)
 from schemaforge.library.store import ComponentStore
 from schemaforge.workflows.schemaforge_session import SchemaForgeSession
 
@@ -256,3 +265,146 @@ def test_spice_with_device_spice_model_template() -> None:
     assert "XU1" in spice
     # 未映射的 {EN} 应被替换为 0（默认）
     assert "XU1 VIN 0 0 BST SW FB TPS5430" in spice
+
+
+# ============================================================
+# P3: Datasheet 驱动的公式求解
+# ============================================================
+
+
+def test_recipe_driven_calculation_uses_formula_eval() -> None:
+    """当器件自带含可求解公式的 design_recipe 时，应用 FormulaEvaluator 计算参数"""
+    device = DeviceModel(
+        part_number="TEST_BUCK_DS",
+        category="buck",
+        specs={"fsw": "500kHz", "v_ref": "0.8"},
+        topology=TopologyDef(
+            circuit_type="buck",
+            external_components=[
+                ExternalComponent(role="input_cap", ref_prefix="C",
+                                  default_value="10uF", value_expression="{c_in}",
+                                  schemdraw_element="Capacitor"),
+                ExternalComponent(role="output_cap", ref_prefix="C",
+                                  default_value="22uF", value_expression="{c_out}",
+                                  schemdraw_element="Capacitor"),
+                ExternalComponent(role="inductor", ref_prefix="L",
+                                  default_value="10uH", value_expression="{l_value}",
+                                  schemdraw_element="Inductor2"),
+            ],
+            connections=[
+                TopologyConnection(net_name="VIN", device_pin="VIN",
+                                   external_refs=["input_cap.1"], is_power=True),
+                TopologyConnection(net_name="VOUT",
+                                   external_refs=["inductor.2", "output_cap.1"],
+                                   is_power=True),
+                TopologyConnection(net_name="GND", device_pin="GND",
+                                   external_refs=["input_cap.2", "output_cap.2"],
+                                   is_ground=True),
+            ],
+        ),
+        design_recipe=DesignRecipe(
+            topology_family="buck",
+            summary="Datasheet-driven Buck recipe with formulas",
+            formulas=[
+                RecipeFormula(
+                    name="duty",
+                    expression="D = v_out / v_in",
+                    rationale="占空比",
+                ),
+                RecipeFormula(
+                    name="delta_il",
+                    expression="delta_il = i_out * 0.3",
+                    rationale="30% 纹波",
+                ),
+            ],
+            sizing_components=[
+                RecipeComponent(
+                    role="inductor",
+                    formula="L = v_out * (1 - duty) / (fsw * delta_il)",
+                    rationale="按纹波设计",
+                ),
+                RecipeComponent(
+                    role="output_cap",
+                    formula="Cout = delta_il / (8 * fsw * 0.01 * v_out)",
+                    rationale="按 1% 纹波",
+                ),
+                RecipeComponent(
+                    role="input_cap",
+                    value="10uF",
+                    formula="Cin ≥ 10μF",
+                    rationale="推荐最小值",
+                ),
+            ],
+            default_parameters={"v_in": "12", "v_out": "5"},
+            evidence=[
+                RecipeEvidence(source_type="datasheet", summary="从 datasheet 提取"),
+            ],
+        ),
+    )
+
+    synthesizer = DesignRecipeSynthesizer()
+    request = UserDesignRequest(raw_text="12V转5V", v_in="12", v_out="5", category="buck")
+    enriched, recipe = synthesizer.prepare_device(device, request)
+
+    # 应走公式驱动路径
+    assert any(e.source_type == "formula_eval" for e in recipe.evidence)
+
+    # 参数应被公式计算覆盖
+    params = recipe.default_parameters
+    assert "l_value" in params or "inductor" in params
+    # 电感值应是计算出来的，不是默认的 "10uH"
+    l_key = "l_value" if "l_value" in params else "inductor"
+    assert params[l_key] != "10uH"  # 不应是原始默认值
+
+    # 输入电容应保持推荐值
+    assert params.get("c_in") == "10uF"
+
+    # ic_model 应被设置
+    assert params.get("ic_model") == "TEST_BUCK_DS"
+
+
+def test_recipe_driven_falls_back_when_no_evaluable_formulas() -> None:
+    """当 recipe 只有常量（无可求解公式）时，应回退到硬编码计算"""
+    device = DeviceModel(
+        part_number="TEST_LDO_CONST",
+        category="ldo",
+        specs={"v_out": "3.3"},
+        topology=TopologyDef(
+            circuit_type="ldo",
+            external_components=[
+                ExternalComponent(role="input_cap", ref_prefix="C",
+                                  default_value="10uF", value_expression="{c_in}",
+                                  schemdraw_element="Capacitor"),
+                ExternalComponent(role="output_cap", ref_prefix="C",
+                                  default_value="22uF", value_expression="{c_out}",
+                                  schemdraw_element="Capacitor"),
+            ],
+            connections=[
+                TopologyConnection(net_name="VIN", device_pin="VIN",
+                                   external_refs=["input_cap.1"], is_power=True),
+                TopologyConnection(net_name="VOUT", device_pin="VOUT",
+                                   external_refs=["output_cap.1"], is_power=True),
+                TopologyConnection(net_name="GND", device_pin="GND",
+                                   external_refs=["input_cap.2", "output_cap.2"],
+                                   is_ground=True),
+            ],
+        ),
+        design_recipe=DesignRecipe(
+            topology_family="ldo",
+            summary="LDO with constants only",
+            sizing_components=[
+                RecipeComponent(role="input_cap", value="10uF",
+                                formula="Cin ≥ 10μF"),
+                RecipeComponent(role="output_cap", value="22uF",
+                                formula="Cout ≥ 22μF"),
+            ],
+            default_parameters={"v_in": "5", "v_out": "3.3", "c_in": "10uF", "c_out": "22uF"},
+        ),
+    )
+
+    synthesizer = DesignRecipeSynthesizer()
+    request = UserDesignRequest(raw_text="5V转3.3V稳压", v_in="5", v_out="3.3", category="ldo")
+    _, recipe = synthesizer.prepare_device(device, request)
+
+    # 应回退到硬编码 LDO 计算（无 formula_eval evidence）
+    assert not any(e.source_type == "formula_eval" for e in recipe.evidence)
