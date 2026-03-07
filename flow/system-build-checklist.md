@@ -7,29 +7,29 @@
 
 ## 阶段 1：重建目标边界与系统骨架
 
-- [ ] T001 写 `docs/system-target.md`，明确"AI 只理解，本地全执行"
-- [ ] T002 写 `docs/system-ir.md`，明确 IR 分层
-- [ ] T003 冻结当前单器件路径为兼容层
-- [ ] T004 标记 `SchemaForgeSession` 当前单器件逻辑为 legacy path
-- [ ] T005 画出现状数据流图
-- [ ] T006 画出目标系统级数据流图
-- [ ] T007 定义系统设计生命周期状态
-- [ ] T008 列出当前不能继续扩展的函数
-- [ ] T009 列出必须拆分的"上帝类"
-- [ ] T010 把架构约束写入 `plan.md`
+- [x] T001 写 `docs/system-target.md`，明确"AI 只理解，本地全执行"
+- [x] T002 写 `docs/system-ir.md`，明确 IR 分层
+- [x] T003 冻结当前单器件路径为兼容层
+- [x] T004 标记 `SchemaForgeSession` 当前单器件逻辑为 legacy path
+- [x] T005 画出现状数据流图
+- [x] T006 画出目标系统级数据流图
+- [x] T007 定义系统设计生命周期状态
+- [x] T008 列出当前不能继续扩展的函数
+- [x] T009 列出必须拆分的"上帝类"
+- [x] T010 把架构约束写入 `plan.md`
 
 ## 阶段 2：建立系统级模型
 
-- [ ] T011 新建 `schemaforge/system/models.py`
-- [ ] T012 定义 `SystemDesignRequest`
-- [ ] T013 定义 `ModuleIntent`
-- [ ] T014 定义 `ConnectionIntent`
-- [ ] T015 定义 `ModuleInstance`
-- [ ] T016 定义 `PortRef`
-- [ ] T017 定义 `ResolvedConnection`
-- [ ] T018 定义 `SystemNet`
-- [ ] T019 定义 `SystemDesignIR`
-- [ ] T020 定义 `SystemBundle`
+- [x] T011 新建 `schemaforge/system/models.py`
+- [x] T012 定义 `SystemDesignRequest`
+- [x] T013 定义 `ModuleIntent`
+- [x] T014 定义 `ConnectionIntent`
+- [x] T015 定义 `ModuleInstance`
+- [x] T016 定义 `PortRef`
+- [x] T017 定义 `ResolvedConnection`
+- [x] T018 定义 `SystemNet`
+- [x] T019 定义 `SystemDesignIR`
+- [x] T020 定义 `SystemBundle`
 
 ## 阶段 3：重写 AI 输入输出协议
 
