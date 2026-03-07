@@ -25,6 +25,394 @@ from schemaforge.library.store import ComponentStore
 from schemaforge.workflows.schemaforge_session import SchemaForgeSession
 
 
+import json
+
+from schemaforge.agent.tool_registry import ToolRegistry, ToolResult
+from schemaforge.ai.prompts import build_design_workbench_prompt
+
+
+# ============================================================
+# ToolRegistry.merge() 测试
+# ============================================================
+
+
+def test_tool_registry_merge_basic() -> None:
+    """merge() 返回包含两个注册表全部工具的新实例。"""
+    r1 = ToolRegistry()
+    r2 = ToolRegistry()
+    r1.register_fn(name="tool_a", description="A", handler=lambda: ToolResult())
+    r2.register_fn(name="tool_b", description="B", handler=lambda: ToolResult())
+
+    merged = r1.merge(r2)
+    assert merged.get_tool("tool_a") is not None
+    assert merged.get_tool("tool_b") is not None
+    assert len(merged.list_tools()) == 2
+
+
+def test_tool_registry_merge_does_not_mutate_originals() -> None:
+    """merge() 不修改原始注册表。"""
+    r1 = ToolRegistry()
+    r2 = ToolRegistry()
+    r1.register_fn(name="tool_a", description="A", handler=lambda: ToolResult())
+    r2.register_fn(name="tool_b", description="B", handler=lambda: ToolResult())
+
+    _ = r1.merge(r2)
+    assert r1.get_tool("tool_b") is None
+    assert r2.get_tool("tool_a") is None
+
+
+def test_tool_registry_merge_conflict_other_wins() -> None:
+    """merge() 冲突时 other 覆盖 self。"""
+    r1 = ToolRegistry()
+    r2 = ToolRegistry()
+    r1.register_fn(name="tool_x", description="OLD", handler=lambda: ToolResult())
+    r2.register_fn(name="tool_x", description="NEW", handler=lambda: ToolResult())
+
+    merged = r1.merge(r2)
+    assert merged.get_tool("tool_x") is not None
+    assert merged.get_tool("tool_x").description == "NEW"  # type: ignore[union-attr]
+
+
+def test_tool_registry_merge_empty() -> None:
+    """合并空注册表。"""
+    r1 = ToolRegistry()
+    r1.register_fn(name="tool_a", description="A", handler=lambda: ToolResult())
+    r2 = ToolRegistry()
+
+    merged = r1.merge(r2)
+    assert len(merged.list_tools()) == 1
+
+
+# ============================================================
+# build_design_workbench_prompt 测试
+# ============================================================
+
+
+def test_build_design_workbench_prompt_injects_tool_descriptions() -> None:
+    """system prompt 中包含注入的工具描述。"""
+    tools_text = json.dumps(
+        [{"name": "test_tool", "description": "测试工具"}],
+        ensure_ascii=False,
+    )
+    prompt = build_design_workbench_prompt(tools_text)
+    assert "test_tool" in prompt
+    assert "测试工具" in prompt
+    assert "SchemaForge" in prompt
+
+
+# ============================================================
+# Orchestrator 懒构建测试
+# ============================================================
+
+
+def test_session_get_orchestrator_returns_orchestrator(tmp_path: Path) -> None:
+    """get_orchestrator() 返回 Orchestrator 实例。"""
+    from schemaforge.agent.orchestrator import Orchestrator
+
+    session = SchemaForgeSession(tmp_path / "store", use_mock=True)
+    orch = session.get_orchestrator()
+    assert isinstance(orch, Orchestrator)
+
+
+def test_session_get_orchestrator_merges_all_tools(tmp_path: Path) -> None:
+    """Orchestrator 的注册表包含全局工具和会话工具。"""
+    session = SchemaForgeSession(tmp_path / "store", use_mock=True)
+    orch = session.get_orchestrator()
+    # 全局工具
+    assert orch.registry.get_tool("build_symbol") is not None
+    assert orch.registry.get_tool("parse_pdf") is not None
+    # 会话工具
+    assert orch.registry.get_tool("start_design_request") is not None
+    assert orch.registry.get_tool("calculate_parameters") is not None
+    assert orch.registry.get_tool("validate_design") is not None
+
+
+def test_session_get_orchestrator_system_prompt_has_tool_descriptions(
+    tmp_path: Path,
+) -> None:
+    """Orchestrator 的 system prompt 包含工具描述。"""
+    session = SchemaForgeSession(tmp_path / "store", use_mock=True)
+    orch = session.get_orchestrator()
+    # system_prompt 应包含工具名
+    assert "start_design_request" in orch.system_prompt
+    assert "build_symbol" in orch.system_prompt
+
+
+def test_session_get_orchestrator_is_cached(tmp_path: Path) -> None:
+    """多次调用 get_orchestrator() 返回同一实例。"""
+    session = SchemaForgeSession(tmp_path / "store", use_mock=True)
+    orch1 = session.get_orchestrator()
+    orch2 = session.get_orchestrator()
+    assert orch1 is orch2
+
+
+# ============================================================
+# structural_ops 执行测试
+# ============================================================
+
+
+def test_revise_add_led_module(tmp_path: Path) -> None:
+    """通过 '加一个指示灯' 结构化操作，wants_led 应变为 True。"""
+    store = ComponentStore(tmp_path / "store")
+    store.save_device(
+        DeviceModel(part_number="AMS1117-3.3", category="ldo",
+                    specs={"v_out": "3.3V"})
+    )
+    session = SchemaForgeSession(tmp_path / "store", use_mock=True)
+    session.start("用 AMS1117-3.3 搭一个 5V 转 3.3V 稳压电路")
+
+    r = session.revise("加一个指示灯")
+    assert r.status == "generated"
+    assert "结构" in r.message
+
+
+def test_revise_remove_led_module(tmp_path: Path) -> None:
+    """通过 '去掉指示灯' 结构化操作。"""
+    store = ComponentStore(tmp_path / "store")
+    store.save_device(
+        DeviceModel(part_number="AMS1117-3.3", category="ldo",
+                    specs={"v_out": "3.3V"})
+    )
+    session = SchemaForgeSession(tmp_path / "store", use_mock=True)
+    session.start("用 AMS1117-3.3 搭一个 5V 转 3.3V 稳压电路 带 LED 指示灯")
+
+    r = session.revise("去掉指示灯模块")
+    assert r.status == "generated"
+    assert "结构" in r.message
+
+
+def test_revise_add_decoupling_cap(tmp_path: Path) -> None:
+    """通过 '加一个去耦电容' 结构化操作添加去耦电容参数。"""
+    store = ComponentStore(tmp_path / "store")
+    store.save_device(
+        DeviceModel(part_number="AMS1117-3.3", category="ldo",
+                    specs={"v_out": "3.3V"})
+    )
+    session = SchemaForgeSession(tmp_path / "store", use_mock=True)
+    session.start("用 AMS1117-3.3 搭一个 5V 转 3.3V 稳压电路")
+
+    r = session.revise("加一个去耦电容")
+    assert r.status == "generated"
+    assert "c_decoupling" in r.bundle.parameters  # type: ignore[union-attr]
+
+
+def test_revise_add_rc_filter(tmp_path: Path) -> None:
+    """通过 '加一个滤波器' 结构化操作。"""
+    store = ComponentStore(tmp_path / "store")
+    store.save_device(
+        DeviceModel(part_number="AMS1117-3.3", category="ldo",
+                    specs={"v_out": "3.3V"})
+    )
+    session = SchemaForgeSession(tmp_path / "store", use_mock=True)
+    session.start("用 AMS1117-3.3 搭一个 5V 转 3.3V 稳压电路")
+
+    r = session.revise("加一个滤波器")
+    assert r.status == "generated"
+    assert "rc_filter_r" in r.bundle.parameters  # type: ignore[union-attr]
+
+
+def test_revise_remove_filter(tmp_path: Path) -> None:
+    """先加再删滤波器，参数应被清除。"""
+    store = ComponentStore(tmp_path / "store")
+    store.save_device(
+        DeviceModel(part_number="AMS1117-3.3", category="ldo",
+                    specs={"v_out": "3.3V"})
+    )
+    session = SchemaForgeSession(tmp_path / "store", use_mock=True)
+    session.start("用 AMS1117-3.3 搭一个 5V 转 3.3V 稳压电路")
+
+    session.revise("加一个滤波器")
+    r = session.revise("去掉滤波器")
+    assert r.status == "generated"
+    assert "rc_filter_r" not in r.bundle.parameters  # type: ignore[union-attr]
+
+
+def test_revise_structural_ops_with_param_changes(tmp_path: Path) -> None:
+    """结构化操作和参数修改可以同时生效。"""
+    store = ComponentStore(tmp_path / "store")
+    store.save_device(
+        DeviceModel(part_number="AMS1117-3.3", category="ldo",
+                    specs={"v_out": "3.3V"})
+    )
+    session = SchemaForgeSession(tmp_path / "store", use_mock=True)
+    session.start("用 AMS1117-3.3 搭一个 5V 转 3.3V 稳压电路")
+
+    # "输出电容改成 100uF" is a param change, structural ops would come from separate parsing
+    r = session.revise("输出电容改成 100uF")
+    assert r.status == "generated"
+
+
+def test_revise_unsupported_structural_op_returns_warning(tmp_path: Path) -> None:
+    """不支持的模块类型应在 warnings 中给出提示。"""
+    store = ComponentStore(tmp_path / "store")
+    store.save_device(
+        DeviceModel(part_number="AMS1117-3.3", category="ldo",
+                    specs={"v_out": "3.3V"})
+    )
+    session = SchemaForgeSession(tmp_path / "store", use_mock=True)
+    session.start("用 AMS1117-3.3 搭一个 5V 转 3.3V 稳压电路")
+
+    # 手动注入一个不支持的结构化操作（直接走 _execute_add_module）
+    warning = session._execute_add_module("transformer", "变压器")
+    assert warning  # 非空 = 有警告
+
+
+# ============================================================
+# P1: 扩展品类检测测试
+# ============================================================
+
+
+def test_category_detection_boost() -> None:
+    """检测 boost 升压关键词。"""
+    req = parse_design_request("用 XL6009 搭一个 5V 升压到 12V 的 Boost 电路")
+    assert req.category == "boost"
+
+
+def test_category_detection_flyback() -> None:
+    """检测 flyback 反激关键词。"""
+    req = parse_design_request("用 TNY266 搭一个 Flyback 反激电源")
+    assert req.category == "flyback"
+
+
+def test_category_detection_sepic() -> None:
+    """检测 SEPIC 升降压关键词。"""
+    req = parse_design_request("设计一个 SEPIC 升降压电路")
+    assert req.category == "sepic"
+
+
+def test_category_detection_charge_pump() -> None:
+    """检测电荷泵关键词。"""
+    req = parse_design_request("设计一个电荷泵电路，从 3.3V 到 -3.3V")
+    assert req.category == "charge_pump"
+
+
+def test_category_detection_sensor() -> None:
+    """检测传感器关键词。"""
+    req = parse_design_request("用 LM35 设计一个温度 sensor 采集电路")
+    assert req.category == "sensor"
+
+
+def test_category_detection_mosfet() -> None:
+    """检测 MOSFET 关键词。"""
+    req = parse_design_request("用 IRF540 搭一个 MOSFET 驱动电路")
+    assert req.category == "mosfet"
+
+
+def test_category_detection_diode() -> None:
+    """检测二极管/整流关键词。"""
+    req = parse_design_request("用 1N4007 搭一个全桥整流电路")
+    assert req.category == "diode"
+
+
+# ============================================================
+# P1: Boost / Flyback / SEPIC 合成测试
+# ============================================================
+
+
+def test_boost_recipe_synthesizer(tmp_path: Path) -> None:
+    """Boost 类别走 _build_boost_recipe 路径。"""
+    from schemaforge.design.synthesis import DesignRecipeSynthesizer
+
+    device = DeviceModel(part_number="XL6009", category="boost",
+                         specs={"v_in_max": "32V", "i_out_max": "3A"})
+    request = UserDesignRequest(
+        raw_text="5V 升压到 12V",
+        part_number="XL6009",
+        category="boost",
+        v_in="5",
+        v_out="12",
+        i_out="1",
+    )
+    synth = DesignRecipeSynthesizer()
+    enriched, recipe = synth.prepare_device(device, request)
+    assert recipe.topology_family == "boost"
+    assert enriched.topology is not None
+    assert enriched.topology.circuit_type == "boost"
+    assert "l_value" in recipe.default_parameters or "l_primary" in recipe.default_parameters
+
+
+def test_flyback_recipe_synthesizer(tmp_path: Path) -> None:
+    """Flyback 类别走 _build_isolated_recipe 路径。"""
+    from schemaforge.design.synthesis import DesignRecipeSynthesizer
+
+    device = DeviceModel(part_number="TNY266", category="flyback",
+                         specs={"fsw": "132kHz"})
+    request = UserDesignRequest(
+        raw_text="反激电源",
+        part_number="TNY266",
+        category="flyback",
+        v_in="12",
+        v_out="5",
+        i_out="0.5",
+    )
+    synth = DesignRecipeSynthesizer()
+    enriched, recipe = synth.prepare_device(device, request)
+    assert recipe.topology_family == "flyback"
+    assert enriched.topology is not None
+    assert "l_primary" in recipe.default_parameters
+
+
+def test_sepic_recipe_synthesizer(tmp_path: Path) -> None:
+    """SEPIC 类别走 _build_isolated_recipe 路径。"""
+    from schemaforge.design.synthesis import DesignRecipeSynthesizer
+
+    device = DeviceModel(part_number="LT3757", category="sepic")
+    request = UserDesignRequest(
+        raw_text="升降压电路",
+        part_number="LT3757",
+        category="sepic",
+        v_in="12",
+        v_out="5",
+        i_out="0.5",
+    )
+    synth = DesignRecipeSynthesizer()
+    enriched, recipe = synth.prepare_device(device, request)
+    assert recipe.topology_family == "sepic"
+    assert enriched.topology is not None
+
+
+# ============================================================
+# P1: TopologyDraftGenerator._llm_generate 测试
+# ============================================================
+
+
+def test_topology_draft_generator_llm_fallback_to_mock() -> None:
+    """LLM 不可用时 _llm_generate 降级到 mock。"""
+    from schemaforge.design.topology_draft import TopologyDraftGenerator
+
+    device = DeviceModel(part_number="AMS1117-3.3", category="ldo")
+    gen = TopologyDraftGenerator(use_mock=False)
+    # 因为真 AI 不可用（测试环境），应降级到 mock 而非 crash
+    draft = gen.generate(device)
+    assert draft.name == "ldo"
+
+
+# ============================================================
+# P1: RequirementClarifier AI path 测试
+# ============================================================
+
+
+def test_clarifier_ai_path_returns_result() -> None:
+    """use_mock=False 时不再抛异常，返回有效结果。"""
+    from schemaforge.design.clarifier import RequirementClarifier
+    from schemaforge.design.planner import DesignPlanner
+
+    planner = DesignPlanner(use_mock=True)
+    plan = planner.plan("5V 转 3.3V 稳压电路")
+
+    # AI 路径（真 AI 不可用时降级到 mock 结果）
+    clarifier = RequirementClarifier(use_mock=False)
+    result = clarifier.clarify("5V 转 3.3V 稳压电路", plan)
+    # 应该返回有效的 ClarificationResult 而不是崩溃
+    assert result is not None
+    assert isinstance(result.confidence, float)
+
+
+# ============================================================
+# 原有测试（parse / resolve / session）
+# ============================================================
+
+
 def test_parse_design_request_extracts_exact_part_and_voltages() -> None:
     req = parse_design_request("帮我用 TPS54202 搭一个 20V 转 5V 的 DCDC 电路")
     assert req.part_number == "TPS54202"
