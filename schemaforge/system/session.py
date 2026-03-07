@@ -233,6 +233,23 @@ class SystemDesignSession:
             bom_csv=bom_csv,
             spice_text=spice_text,
         )
+
+        # --- Step 8.5: 视觉审稿闭环 ---
+        if svg_path and ir.get_resolved_modules():
+            try:
+                from schemaforge.visual_review.loop import run_visual_review_loop
+
+                bundle, trace = run_visual_review_loop(ir, bundle)
+                if trace.entries:
+                    warnings.append(
+                        f"[视觉审稿] {trace.total_iterations} 轮优化, "
+                        f"分数 {trace.initial_score:.1f} → {trace.final_score:.1f}, "
+                        f"停止原因: {trace.stop_reason.value}"
+                    )
+            except Exception as exc:  # noqa: BLE001
+                warnings.append(f"视觉审稿失败: {exc}")
+                logger.warning("视觉审稿异常: %s", exc)
+
         self._ir = ir
         self._bundle = bundle
 
