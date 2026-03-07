@@ -293,7 +293,112 @@ class RequirementClarifier:
         """
         if self.use_mock:
             return self._clarify_mock(user_input, plan)
-        return self._clarify_mock(user_input, plan)  # AI 模式预留，当前等同 mock
+        return self._clarify_ai(user_input, plan)
+
+    # ----------------------------------------------------------
+    # AI 增强模式
+    # ----------------------------------------------------------
+
+    def _clarify_ai(self, user_input: str, plan: DesignPlan) -> ClarificationResult:
+        """利用 AI 增强需求澄清。
+
+        先运行基于规则的 mock 分析，再让 AI 检查是否有遗漏的约束
+        或隐含的设计意图。AI 失败时降级到纯规则结果。
+        """
+        # 1. 先获取规则基线结果
+        base_result = self._clarify_mock(user_input, plan)
+
+        # 2. 构建 AI prompt 进行增强检查
+        try:
+            from schemaforge.ai.client import call_llm_json
+
+            modules_desc = "\n".join(
+                f"  - {m.category}（参数: {m.parameters}）"
+                for m in plan.modules
+            )
+            missing_desc = "\n".join(
+                f"  - {q.question}（字段: {q.field}）"
+                for q in base_result.missing_required
+            ) or "  无"
+            assumptions_desc = "\n".join(
+                f"  - {a.field} = {a.assumed_value}（{a.reason}）"
+                for a in base_result.assumptions
+            ) or "  无"
+
+            system_prompt = (
+                "你是电路设计需求分析助手。分析用户需求和初步规划，"
+                "检查是否有遗漏的重要约束或隐含的设计意图。\n\n"
+                "输出严格 JSON：\n"
+                '{"additional_questions": [{"field": "字段名", "question": "问题"}], '
+                '"additional_assumptions": [{"field": "字段名", "value": "假设值", "reason": "原因"}], '
+                '"confidence_adjustment": 0.0}\n'
+                "如果没有额外发现，返回空列表和 0 调整。"
+            )
+
+            user_msg = (
+                f"用户需求: {user_input}\n\n"
+                f"规划模块:\n{modules_desc}\n\n"
+                f"已识别缺失约束:\n{missing_desc}\n\n"
+                f"已有假设:\n{assumptions_desc}\n\n"
+                "请检查是否有遗漏。"
+            )
+
+            ai_data = call_llm_json(
+                system_prompt=system_prompt,
+                user_message=user_msg,
+                temperature=0.2,
+                max_retries=2,
+            )
+
+            if ai_data is None:
+                return base_result
+
+            # 3. 合并 AI 发现到基线结果
+            for q_data in ai_data.get("additional_questions", []):
+                ai_field = str(q_data.get("field", ""))
+                question_text = str(q_data.get("question", ""))
+                if ai_field and question_text:
+                    # 避免重复
+                    if not any(
+                        q.field == ai_field
+                        for q in base_result.optional_preferences
+                    ):
+                        base_result.optional_preferences.append(
+                            UnresolvedQuestion(
+                                field=ai_field,
+                                question=question_text,
+                                priority=ConstraintPriority.OPTIONAL,
+                                default_if_skipped="",
+                            )
+                        )
+
+            for a_data in ai_data.get("additional_assumptions", []):
+                a_field = str(a_data.get("field", ""))
+                a_value = str(a_data.get("value", ""))
+                a_reason = str(a_data.get("reason", ""))
+                if a_field and a_value:
+                    if not any(a.field == a_field for a in base_result.assumptions):
+                        base_result.assumptions.append(
+                            Assumption(
+                                field=a_field,
+                                assumed_value=a_value,
+                                reason=a_reason or "AI 推断",
+                                confidence=0.6,
+                            )
+                        )
+
+            # 4. 微调置信度
+            adj = ai_data.get("confidence_adjustment", 0.0)
+            if isinstance(adj, (int, float)):
+                base_result.confidence = max(
+                    0.0, min(1.0, base_result.confidence + float(adj))
+                )
+
+        except Exception:
+            # AI 失败，降级到纯规则结果
+            pass
+
+        return base_result
 
     # ----------------------------------------------------------
     # Mock（规则）模式

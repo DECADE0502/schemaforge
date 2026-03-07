@@ -524,7 +524,125 @@ class TopologyDraftGenerator:
         device: DeviceModel,
         context: dict[str, Any] | None = None,
     ) -> TopologyDraft:
-        """调用真实 LLM 生成草稿（生产环境使用）"""
-        # 按照 call_llm_json 模式实现，此处仅定义接口结构
-        # 真实实现需要 from schemaforge.ai.client import call_llm_json
-        raise NotImplementedError("LLM 生成模式尚未实现，请使用 use_mock=True")
+        """调用真实 LLM 生成拓扑草稿。
+
+        构建 prompt 描述器件引脚和用途，让 AI 输出 JSON 格式的
+        网络连接 + 外部元件列表，然后转化为 TopologyDraft。
+        如果 AI 调用失败或返回无效数据，降级到 mock 生成。
+        """
+        from schemaforge.ai.client import call_llm_json
+
+        pins_desc = ""
+        if device.symbol and device.symbol.pins:
+            pins_desc = "\n".join(
+                f"  - {p.name} (Pin {p.pin_number}): {p.pin_type.value}, {p.side.value}"
+                for p in device.symbol.pins
+            )
+
+        ctx_desc = ""
+        if context:
+            ctx_desc = "\n".join(f"  {k}: {v}" for k, v in context.items())
+
+        system_prompt = """\
+你是电路拓扑生成助手。根据器件信息，输出该器件的典型应用电路拓扑。
+
+## 输出格式（严格 JSON）
+{
+  "name": "拓扑名（如 ldo / buck / boost）",
+  "description": "中文描述",
+  "components": [
+    {
+      "role": "元件角色（如 input_cap / output_cap / inductor / fb_upper / fb_lower）",
+      "ref_prefix": "参考标号前缀（C/R/L）",
+      "ref_alias": "图中标号（如 C_in / C_out）",
+      "default_value": "默认值（如 10uF / 10kΩ）",
+      "schemdraw_element": "Capacitor / Resistor / Inductor2",
+      "required": true
+    }
+  ],
+  "nets": [
+    {
+      "name": "网络名（如 VIN / VOUT / GND / SW / FB）",
+      "pin_connections": ["U1.引脚名", "C_in.1", ...],
+      "is_power": false,
+      "is_ground": false
+    }
+  ]
+}
+
+## 规则
+1. IC 器件标号固定为 U1
+2. 外部元件用 ref_alias 标号
+3. pin_connections 格式为 "标号.引脚名"
+4. 必须包含 VIN、VOUT（或等效）和 GND 网络
+5. 只输出 JSON，不要其他内容
+"""
+
+        user_msg = f"""\
+器件型号: {device.part_number}
+类别: {device.category or "未知"}
+描述: {device.description or "无"}
+引脚:
+{pins_desc or "  无引脚信息"}
+设计上下文:
+{ctx_desc or "  无额外上下文"}
+
+请为该器件生成典型应用电路的拓扑连接。"""
+
+        try:
+            data = call_llm_json(
+                system_prompt=system_prompt,
+                user_message=user_msg,
+                temperature=0.2,
+                max_retries=2,
+            )
+        except Exception:
+            data = None
+
+        if data is None:
+            # AI 失败，降级到 mock
+            return self._mock_generate(device, context)
+
+        # 解析 AI 输出为 TopologyDraft
+        try:
+            nets: list[NetDraft] = []
+            for net_data in data.get("nets", []):
+                nets.append(NetDraft(
+                    name=net_data.get("name", ""),
+                    pin_connections=net_data.get("pin_connections", []),
+                    is_power=net_data.get("is_power", False),
+                    is_ground=net_data.get("is_ground", False),
+                ))
+
+            components: list[dict[str, Any]] = []
+            for comp_data in data.get("components", []):
+                components.append({
+                    "role": comp_data.get("role", "unknown"),
+                    "ref_prefix": comp_data.get("ref_prefix", "X"),
+                    "ref_alias": comp_data.get("ref_alias", ""),
+                    "default_value": comp_data.get("default_value", ""),
+                    "schemdraw_element": comp_data.get("schemdraw_element", ""),
+                    "required": comp_data.get("required", True),
+                })
+
+            draft = TopologyDraft(
+                name=data.get("name", device.category or "unknown"),
+                description=data.get("description", ""),
+                nets=nets,
+                components=components,
+                confidence=0.7,
+                evidence=[{
+                    "source_type": "ai_inferred",
+                    "summary": "AI 自动生成的拓扑草稿",
+                }],
+            )
+
+            # 基本验证: 至少有 1 个网络和 1 个元件
+            if not draft.nets or not draft.components:
+                return self._mock_generate(device, context)
+
+            return draft
+
+        except (KeyError, TypeError, ValueError):
+            # 解析失败，降级到 mock
+            return self._mock_generate(device, context)

@@ -68,6 +68,34 @@ class DesignBundle:
         }
 
 
+_CATEGORY_KEYWORDS: list[tuple[str, list[str]]] = [
+    # 顺序重要：更具体的关键词在前（"升降压" 在 "降压"/"升压" 之前）
+    ("sepic", ["sepic", "升降压"]),
+    ("buck", ["buck", "降压", "dcdc", "dc-dc"]),
+    ("boost", ["boost", "升压"]),
+    ("flyback", ["flyback", "反激"]),
+    ("charge_pump", ["charge pump", "电荷泵"]),
+    ("ldo", ["ldo", "线性稳压", "稳压器"]),
+    ("opamp", ["运放", "opamp", "op-amp"]),
+    ("mcu", ["mcu", "单片机", "最小系统"]),
+    ("sensor", ["sensor", "传感器"]),
+    ("connector", ["connector", "连接器", "接口"]),
+    ("mosfet", ["mosfet", "mos管", "mos 管", "场效应管"]),
+    ("diode", ["diode", "二极管", "整流"]),
+]
+
+
+def _detect_category(text_lower: str) -> str:
+    """从小写文本中检测器件类别。
+
+    按优先级遍历关键词列表，返回第一个匹配的类别。
+    """
+    for category, keywords in _CATEGORY_KEYWORDS:
+        if any(kw in text_lower for kw in keywords):
+            return category
+    return ""
+
+
 def parse_design_request(user_input: str) -> UserDesignRequest:
     """从自然语言中提取精确型号与关键约束。"""
     part_number = _extract_part_number(user_input)
@@ -84,15 +112,7 @@ def parse_design_request(user_input: str) -> UserDesignRequest:
             v_out = v_out or fallback.group(2)
     text = user_input.lower()
 
-    category = ""
-    if any(token in text for token in ["buck", "降压", "dcdc", "dc-dc"]):
-        category = "buck"
-    elif any(token in text for token in ["ldo", "线性稳压", "稳压器"]):
-        category = "ldo"
-    elif any(token in text for token in ["运放", "opamp", "op-amp"]):
-        category = "opamp"
-    elif any(token in text for token in ["mcu", "单片机", "最小系统"]):
-        category = "mcu"
+    category = _detect_category(text)
 
     wants_led = "led" in text or "指示灯" in text
     led_color = _extract_led_color(user_input)
@@ -178,6 +198,10 @@ class DesignRecipeSynthesizer:
             recipe, topology = self._build_buck_recipe(device, request)
         elif category == "ldo":
             recipe, topology = self._build_ldo_recipe(device, request)
+        elif category == "boost":
+            recipe, topology = self._build_boost_recipe(device, request)
+        elif category in ("flyback", "sepic"):
+            recipe, topology = self._build_isolated_recipe(device, request, category)
         elif device.design_recipe is not None and device.topology is not None:
             # 未知类型且库里已有完整 recipe，直接沿用
             return device, device.design_recipe
@@ -661,6 +685,366 @@ class DesignRecipeSynthesizer:
                     source_ref=device.datasheet_url,
                     confidence=0.85,
                 )
+            ],
+        )
+        return recipe, topology
+
+    def _build_boost_recipe(
+        self,
+        device: DeviceModel,
+        request: UserDesignRequest,
+    ) -> tuple[DesignRecipe, TopologyDef]:
+        """Boost 升压转换器内置计算。"""
+        v_in = _coalesce_numeric(
+            request.v_in,
+            device.specs.get("v_in_typ"),
+            _derate_abs_max(device.specs.get("v_in_max"), 0.6),
+            5.0,
+        )
+        v_out = _coalesce_numeric(
+            request.v_out,
+            device.specs.get("v_out_typ"),
+            12.0,
+        )
+        i_out = _coalesce_numeric(
+            request.i_out,
+            device.specs.get("i_out_typ"),
+            _derate_abs_max(device.specs.get("i_out_max"), 0.7),
+            0.5,
+        )
+        fsw_hz = _coalesce_numeric(device.specs.get("fsw"), 500000.0)
+        if fsw_hz < 10000:
+            fsw_hz *= 1000.0
+        v_ref = _coalesce_numeric(
+            device.operating_constraints.get("v_fb"),
+            device.specs.get("v_ref"),
+            1.25,
+        )
+
+        # Boost duty: D = 1 - Vin/Vout
+        duty = 1.0 - min(max(v_in / max(v_out, 0.1), 0.05), 0.95)
+        ripple_current = max(i_out / max(1.0 - duty, 0.05) * 0.3, 0.2)
+        l_h = (v_in * duty) / (fsw_hz * ripple_current)
+        l_h = _nearest_series_value(max(l_h, 1e-6), _INDUCTOR_SERIES, 1e-6)
+
+        # Output cap: C_out = I_out * D / (fsw * ΔVout)
+        ripple_voltage = max(v_out * 0.01, 0.1)
+        c_out_f = (i_out * duty) / (fsw_hz * ripple_voltage)
+        c_out_f = max(c_out_f, 10e-6)
+        c_out_f = _nearest_series_value(c_out_f, _CAP_SERIES, 1e-6)
+
+        # Input cap: at least 10uF for stability
+        c_in_f = _nearest_series_value(max(10e-6, c_out_f / 2), _CAP_SERIES, 1e-6)
+
+        # FB resistors
+        r_lower = find_nearest_e24(10000.0)
+        r_upper = find_nearest_e24(
+            max(r_lower * (v_out / max(v_ref, 0.1) - 1.0), 1000.0)
+        )
+
+        params = {
+            "v_in": _trim_float(v_in),
+            "v_out": _trim_float(v_out),
+            "i_out_max": _trim_float(i_out),
+            "fsw": _trim_float(fsw_hz / 1000.0),
+            "ic_model": device.part_number,
+            "c_in": _format_cap_ascii(c_in_f),
+            "c_out": _format_cap_ascii(c_out_f),
+            "l_value": _format_inductor_ascii(l_h),
+            "r_fb_upper": _format_resistor_ascii(r_upper),
+            "r_fb_lower": _format_resistor_ascii(r_lower),
+            "led_resistor": "1kΩ",
+        }
+
+        topology = device.topology or TopologyDef(
+            circuit_type="boost",
+            external_components=[
+                ExternalComponent(
+                    role="input_cap", ref_prefix="C",
+                    default_value=params["c_in"],
+                    value_expression="{c_in}",
+                    schemdraw_element="Capacitor",
+                ),
+                ExternalComponent(
+                    role="inductor", ref_prefix="L",
+                    default_value=params["l_value"],
+                    value_expression="{l_value}",
+                    schemdraw_element="Inductor2",
+                ),
+                ExternalComponent(
+                    role="output_cap", ref_prefix="C",
+                    default_value=params["c_out"],
+                    value_expression="{c_out}",
+                    schemdraw_element="Capacitor",
+                ),
+                ExternalComponent(
+                    role="fb_upper", ref_prefix="R",
+                    default_value=params["r_fb_upper"],
+                    value_expression="{r_fb_upper}",
+                    schemdraw_element="Resistor",
+                ),
+                ExternalComponent(
+                    role="fb_lower", ref_prefix="R",
+                    default_value=params["r_fb_lower"],
+                    value_expression="{r_fb_lower}",
+                    schemdraw_element="Resistor",
+                ),
+            ],
+            connections=[
+                TopologyConnection(
+                    net_name="VIN",
+                    device_pin=_preferred_pin(device, ["VIN", "IN"]),
+                    external_refs=["input_cap.1", "inductor.1"],
+                    is_power=True,
+                ),
+                TopologyConnection(
+                    net_name="SW",
+                    device_pin="SW",
+                    external_refs=["inductor.2"],
+                ),
+                TopologyConnection(
+                    net_name="VOUT",
+                    external_refs=["output_cap.1", "fb_upper.1"],
+                    is_power=True,
+                ),
+                TopologyConnection(
+                    net_name="FB",
+                    device_pin="FB",
+                    external_refs=["fb_upper.2", "fb_lower.1"],
+                ),
+                TopologyConnection(
+                    net_name="GND",
+                    device_pin=_preferred_pin(device, ["GND", "PGND"]),
+                    external_refs=[
+                        "input_cap.2", "output_cap.2", "fb_lower.2",
+                    ],
+                    is_ground=True,
+                ),
+            ],
+        )
+
+        recipe = DesignRecipe(
+            topology_family="boost",
+            summary=f"{device.part_number} Boost 升压拓扑计算 recipe。",
+            pin_roles=_extract_pin_roles(device),
+            default_parameters=params,
+            sizing_components=[
+                RecipeComponent(
+                    role="inductor",
+                    value=params["l_value"],
+                    formula="L = Vin * D / (fsw * ΔIL)",
+                    rationale="确保连续导通模式并限制纹波电流在 30% 以内。",
+                ),
+                RecipeComponent(
+                    role="output_cap",
+                    value=params["c_out"],
+                    formula="Cout = Iout * D / (fsw * ΔVout)",
+                    rationale="输出电容抑制开关纹波到 1% 以内。",
+                ),
+                RecipeComponent(
+                    role="input_cap",
+                    value=params["c_in"],
+                    formula="Cin ≥ Cout / 2",
+                    rationale="输入去耦，至少 10μF。",
+                ),
+                RecipeComponent(
+                    role="fb_upper",
+                    value=params["r_fb_upper"],
+                    formula="Rupper = Rlower * (Vout / Vref - 1)",
+                    rationale="反馈分压设定输出电压。",
+                ),
+                RecipeComponent(
+                    role="fb_lower",
+                    value=params["r_fb_lower"],
+                    formula="Rlower = 10kΩ",
+                    rationale="固定下拉电阻。",
+                ),
+            ],
+            formulas=[
+                RecipeFormula(
+                    name="占空比",
+                    expression="D = 1 - Vin / Vout",
+                    value=_trim_float(duty),
+                    rationale="Boost 转换器占空比。",
+                ),
+            ],
+            evidence=[
+                RecipeEvidence(
+                    source_type="datasheet",
+                    summary="沿用 Boost 拓扑的标准电感、输出电容与反馈网络。",
+                    source_ref=device.datasheet_url,
+                    confidence=0.8,
+                ),
+            ],
+        )
+        return recipe, topology
+
+    def _build_isolated_recipe(
+        self,
+        device: DeviceModel,
+        request: UserDesignRequest,
+        category: str,
+    ) -> tuple[DesignRecipe, TopologyDef]:
+        """Flyback / SEPIC 隔离/升降压拓扑的通用内置计算。
+
+        二者共享相似的外围结构（变压器/耦合电感 + 输入输出电容 + 反馈网络），
+        差异仅在占空比公式和参数命名上。
+        """
+        v_in = _coalesce_numeric(
+            request.v_in,
+            device.specs.get("v_in_typ"),
+            _derate_abs_max(device.specs.get("v_in_max"), 0.6),
+            12.0,
+        )
+        v_out = _coalesce_numeric(
+            request.v_out,
+            device.specs.get("v_out_typ"),
+            5.0,
+        )
+        i_out = _coalesce_numeric(
+            request.i_out,
+            device.specs.get("i_out_typ"),
+            _derate_abs_max(device.specs.get("i_out_max"), 0.7),
+            0.5,
+        )
+        fsw_hz = _coalesce_numeric(device.specs.get("fsw"), 100000.0)
+        if fsw_hz < 10000:
+            fsw_hz *= 1000.0
+
+        # Turns ratio placeholder (assume 1:1 for SEPIC, adjustable for flyback)
+        n_ratio = _coalesce_numeric(device.specs.get("turns_ratio"), 1.0)
+
+        # Duty cycle
+        v_diode = 0.5  # rectifier diode forward voltage
+        if category == "flyback":
+            # D = Vout * n / (Vin + Vout * n)
+            duty = (v_out + v_diode) * n_ratio / (
+                v_in + (v_out + v_diode) * n_ratio
+            )
+        else:
+            # SEPIC: D = Vout / (Vin + Vout)
+            duty = (v_out + v_diode) / (v_in + v_out + v_diode)
+
+        duty = min(max(duty, 0.05), 0.85)
+
+        # Primary inductance: Lp = Vin * D / (fsw * ΔI)
+        ripple_current = max(i_out * 0.4, 0.2)
+        l_h = (v_in * duty) / (fsw_hz * ripple_current)
+        l_h = _nearest_series_value(max(l_h, 1e-6), _INDUCTOR_SERIES, 1e-6)
+
+        # Output cap
+        ripple_voltage = max(v_out * 0.02, 0.1)
+        c_out_f = (i_out * duty) / (fsw_hz * ripple_voltage)
+        c_out_f = max(c_out_f, 22e-6)
+        c_out_f = _nearest_series_value(c_out_f, _CAP_SERIES, 1e-6)
+
+        # Input cap
+        c_in_f = _nearest_series_value(max(10e-6, c_out_f), _CAP_SERIES, 1e-6)
+
+        inductor_role = "transformer" if category == "flyback" else "coupled_inductor"
+        inductor_label = "变压器" if category == "flyback" else "耦合电感"
+
+        params = {
+            "v_in": _trim_float(v_in),
+            "v_out": _trim_float(v_out),
+            "i_out_max": _trim_float(i_out),
+            "fsw": _trim_float(fsw_hz / 1000.0),
+            "ic_model": device.part_number,
+            "c_in": _format_cap_ascii(c_in_f),
+            "c_out": _format_cap_ascii(c_out_f),
+            "l_primary": _format_inductor_ascii(l_h),
+            "n_ratio": _trim_float(n_ratio),
+            "led_resistor": "1kΩ",
+        }
+
+        topology = device.topology or TopologyDef(
+            circuit_type=category,
+            external_components=[
+                ExternalComponent(
+                    role="input_cap", ref_prefix="C",
+                    default_value=params["c_in"],
+                    value_expression="{c_in}",
+                    schemdraw_element="Capacitor",
+                ),
+                ExternalComponent(
+                    role=inductor_role, ref_prefix="T" if category == "flyback" else "L",
+                    default_value=params["l_primary"],
+                    value_expression="{l_primary}",
+                    schemdraw_element="Inductor2",
+                ),
+                ExternalComponent(
+                    role="output_cap", ref_prefix="C",
+                    default_value=params["c_out"],
+                    value_expression="{c_out}",
+                    schemdraw_element="Capacitor",
+                ),
+            ],
+            connections=[
+                TopologyConnection(
+                    net_name="VIN",
+                    device_pin=_preferred_pin(device, ["VIN", "IN"]),
+                    external_refs=["input_cap.1", f"{inductor_role}.1"],
+                    is_power=True,
+                ),
+                TopologyConnection(
+                    net_name="VOUT",
+                    external_refs=["output_cap.1"],
+                    is_power=True,
+                ),
+                TopologyConnection(
+                    net_name="GND",
+                    device_pin=_preferred_pin(device, ["GND", "PGND"]),
+                    external_refs=["input_cap.2", "output_cap.2"],
+                    is_ground=True,
+                ),
+            ],
+        )
+
+        summary_type = "Flyback 反激" if category == "flyback" else "SEPIC 升降压"
+        recipe = DesignRecipe(
+            topology_family=category,
+            summary=f"{device.part_number} {summary_type}拓扑计算 recipe。",
+            pin_roles=_extract_pin_roles(device),
+            default_parameters=params,
+            sizing_components=[
+                RecipeComponent(
+                    role=inductor_role,
+                    value=params["l_primary"],
+                    formula="Lp = Vin * D / (fsw * ΔIL)",
+                    rationale=f"初级{inductor_label}按纹波电流 40% 计算。",
+                ),
+                RecipeComponent(
+                    role="output_cap",
+                    value=params["c_out"],
+                    formula="Cout = Iout * D / (fsw * ΔVout)",
+                    rationale="输出电容维持纹波在 2% 以内。",
+                ),
+                RecipeComponent(
+                    role="input_cap",
+                    value=params["c_in"],
+                    formula="Cin ≥ Cout",
+                    rationale="输入去耦电容，减小输入端纹波。",
+                ),
+            ],
+            formulas=[
+                RecipeFormula(
+                    name="占空比",
+                    expression=(
+                        "D = Vout * N / (Vin + Vout * N)"
+                        if category == "flyback"
+                        else "D = Vout / (Vin + Vout)"
+                    ),
+                    value=_trim_float(duty),
+                    rationale=f"{summary_type}拓扑占空比。",
+                ),
+            ],
+            evidence=[
+                RecipeEvidence(
+                    source_type="datasheet",
+                    summary=f"沿用 {summary_type}拓扑标准外围参数计算方法。",
+                    source_ref=device.datasheet_url,
+                    confidence=0.75,
+                ),
             ],
         )
         return recipe, topology
@@ -1180,7 +1564,10 @@ def _render_spice(device: DeviceModel, params: dict[str, str]) -> str:
             lines.append(f"CIN VIN 0 {_spice_passive(params.get('c_in', '10uF'))}")
             lines.append(f"COUT VOUT 0 {_spice_passive(params.get('c_out', '22uF'))}")
         else:
-            lines.append("* 当前仅对 Buck / LDO 生成结构化 SPICE 网表")
+            # 通用回退: 生成最小 IC 行 + 已知参数作为注释
+            lines.append(f"XU1 VIN VOUT 0 {device.part_number}")
+            lines.append(f"* 类别: {circuit_type or '未知'}")
+            lines.append("* 注意: 缺少拓扑信息，仅生成最小骨架网表")
 
     if params.get("power_led", "").lower() == "true":
         lines.append(
