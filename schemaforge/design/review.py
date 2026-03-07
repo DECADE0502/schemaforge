@@ -105,6 +105,14 @@ class DesignReviewEngine:
             issues.extend(self._review_voltage_divider(module))
         elif category in ("rc_filter", "passive_circuit"):
             issues.extend(self._review_rc_filter(module))
+        elif category == "boost":
+            issues.extend(self._review_boost(module))
+        elif category == "flyback":
+            issues.extend(self._review_flyback(module))
+        elif category == "sepic":
+            issues.extend(self._review_sepic(module))
+        elif category in ("opamp", "op_amp"):
+            issues.extend(self._review_opamp(module))
 
         # 通用规则（所有模块）
         issues.extend(self._review_general(module))
@@ -534,6 +542,531 @@ class DesignReviewEngine:
         return issues
 
     # ============================================================
+    # Boost 升压转换器规则
+    # ============================================================
+
+    def _review_boost(self, module: ModuleReviewInput) -> list[ReviewIssue]:
+        """Boost 升压转换器专属审查规则"""
+        issues: list[ReviewIssue] = []
+        params = module.parameters
+        device = module.device
+
+        v_in = _parse_numeric(params.get("v_in", ""))
+        v_out = _parse_numeric(params.get("v_out", ""))
+        i_out = _parse_numeric(params.get("i_out_max", params.get("i_out", "")))
+        v_in_max = _parse_numeric(device.specs.get("v_in_max", ""))
+        fsw = _parse_numeric(params.get("fsw", device.specs.get("fsw", "")))
+
+        # --- boost_vin_vout_relation (BLOCKING) ---
+        if v_in is not None and v_out is not None:
+            if v_in >= v_out:
+                issues.append(
+                    ReviewIssue(
+                        severity=ReviewSeverity.BLOCKING,
+                        category=IssueCategory.ELECTRICAL,
+                        rule_id="boost_vin_vout_relation",
+                        message=(
+                            f"Boost 升压拓扑要求输入电压 < 输出电压，"
+                            f"当前 V_in={v_in:.2f}V ≥ V_out={v_out:.2f}V"
+                        ),
+                        suggestion="确认拓扑选择正确，若需降压请改用 Buck 拓扑",
+                        evidence=f"v_in={v_in:.2f}V, v_out={v_out:.2f}V",
+                    )
+                )
+
+        # --- boost_duty_cycle (BLOCKING / WARNING) ---
+        if v_in is not None and v_out is not None and v_out > 0 and v_in < v_out:
+            duty = 1 - (v_in / v_out)
+            if duty > 0.85:
+                issues.append(
+                    ReviewIssue(
+                        severity=ReviewSeverity.BLOCKING,
+                        category=IssueCategory.ELECTRICAL,
+                        rule_id="boost_duty_cycle",
+                        message=(
+                            f"Boost 占空比过高：D={duty:.2f}（>{0.85}），"
+                            f"转换效率极低且开关管导通损耗大"
+                        ),
+                        suggestion="降低升压比（减小 V_out 或增大 V_in），或采用级联升压拓扑",
+                        evidence=(
+                            f"D = 1 - V_in/V_out = 1 - {v_in:.2f}/{v_out:.2f} = {duty:.2f}"
+                        ),
+                    )
+                )
+            elif duty < 0.1:
+                issues.append(
+                    ReviewIssue(
+                        severity=ReviewSeverity.WARNING,
+                        category=IssueCategory.ELECTRICAL,
+                        rule_id="boost_duty_cycle",
+                        message=(
+                            f"Boost 占空比过低：D={duty:.2f}（<{0.1}），"
+                            f"升压比极小，Boost 拓扑优势不明显"
+                        ),
+                        suggestion="若升压比接近1，考虑使用 LDO 或 charge pump 替代",
+                        evidence=(
+                            f"D = 1 - V_in/V_out = 1 - {v_in:.2f}/{v_out:.2f} = {duty:.2f}"
+                        ),
+                    )
+                )
+
+        # --- boost_inductor_ripple (WARNING) ---
+        if (
+            v_in is not None
+            and v_out is not None
+            and i_out is not None
+            and fsw is not None
+            and v_out > 0
+            and v_in < v_out
+        ):
+            duty = 1 - (v_in / v_out)
+            fsw_hz = fsw * 1000 if fsw < 10000 else fsw
+            l_value = 22e-6  # 典型电感值估算
+            if fsw_hz > 0:
+                # Boost 输入电流 ≈ I_out / (1-D)
+                i_in = i_out / (1 - duty) if duty < 1 else i_out
+                delta_il = v_in * duty / (fsw_hz * l_value)
+                ripple_ratio = delta_il / i_in if i_in > 0 else 0
+                if ripple_ratio > 0.4:
+                    issues.append(
+                        ReviewIssue(
+                            severity=ReviewSeverity.WARNING,
+                            category=IssueCategory.ELECTRICAL,
+                            rule_id="boost_inductor_ripple",
+                            message=(
+                                f"电感电流纹波偏大：ΔI_L={delta_il:.2f}A，"
+                                f"纹波比={ripple_ratio:.0%}（建议 <40%）"
+                            ),
+                            suggestion="增大电感值或提高开关频率，降低电流纹波",
+                            evidence=(
+                                f"ΔI_L = V_in×D/(f×L) = "
+                                f"{v_in:.1f}×{duty:.2f}/({fsw_hz:.0f}×22μH) = {delta_il:.2f}A, "
+                                f"I_in={i_in:.2f}A"
+                            ),
+                        )
+                    )
+
+        # --- boost_output_cap_ripple (WARNING) ---
+        if (
+            v_out is not None
+            and i_out is not None
+            and fsw is not None
+            and v_out > 0
+        ):
+            fsw_hz = fsw * 1000 if fsw < 10000 else fsw
+            c_out = 47e-6  # 典型输出电容
+            if fsw_hz > 0 and v_in is not None and v_in < v_out:
+                duty = 1 - (v_in / v_out)
+                # 输出纹波 ΔV ≈ I_out × D / (f × C)
+                delta_v = i_out * duty / (fsw_hz * c_out)
+                ripple_pct = delta_v / v_out * 100
+                if ripple_pct > 2:
+                    issues.append(
+                        ReviewIssue(
+                            severity=ReviewSeverity.WARNING,
+                            category=IssueCategory.ELECTRICAL,
+                            rule_id="boost_output_cap_ripple",
+                            message=(
+                                f"输出电容纹波电压偏大：ΔV={delta_v * 1000:.1f}mV，"
+                                f"占输出电压的 {ripple_pct:.1f}%（建议 <2%）"
+                            ),
+                            suggestion="增大输出电容或选用低ESR电容，降低输出纹波",
+                            evidence=(
+                                f"ΔV = I_out×D/(f×C) = "
+                                f"{i_out:.2f}×{duty:.2f}/({fsw_hz:.0f}×47μF) = "
+                                f"{delta_v * 1000:.1f}mV"
+                            ),
+                        )
+                    )
+
+        # --- boost_max_vin_exceeded (BLOCKING) ---
+        if v_in is not None and v_in_max is not None:
+            if v_in > v_in_max:
+                issues.append(
+                    ReviewIssue(
+                        severity=ReviewSeverity.BLOCKING,
+                        category=IssueCategory.ELECTRICAL,
+                        rule_id="boost_max_vin_exceeded",
+                        message=(
+                            f"输入电压 {v_in:.2f}V 超过器件最大额定输入 {v_in_max:.2f}V"
+                        ),
+                        suggestion=f"降低输入电压至 {v_in_max:.2f}V 以下，或选择耐压更高的 Boost IC",
+                        evidence=f"v_in={v_in:.2f}V, spec v_in_max={v_in_max:.2f}V",
+                    )
+                )
+
+        return issues
+
+    # ============================================================
+    # Flyback 反激变换器规则
+    # ============================================================
+
+    def _review_flyback(self, module: ModuleReviewInput) -> list[ReviewIssue]:
+        """Flyback 反激变换器专属审查规则"""
+        issues: list[ReviewIssue] = []
+        params = module.parameters
+        device = module.device
+
+        v_in = _parse_numeric(params.get("v_in", ""))
+        fsw = _parse_numeric(params.get("fsw", device.specs.get("fsw", "")))
+        n_ratio = _parse_numeric(params.get("turns_ratio", params.get("n", "")))
+        v_isolation = _parse_numeric(
+            params.get("v_isolation", device.specs.get("v_isolation", ""))
+        )
+        d_max = _parse_numeric(params.get("d_max", ""))
+        ae = _parse_numeric(params.get("ae", ""))  # 磁芯截面积 mm²
+
+        # --- flyback_turns_ratio (WARNING / BLOCKING) ---
+        if n_ratio is not None:
+            if n_ratio < 0.5:
+                issues.append(
+                    ReviewIssue(
+                        severity=ReviewSeverity.BLOCKING,
+                        category=IssueCategory.ELECTRICAL,
+                        rule_id="flyback_turns_ratio",
+                        message=(
+                            f"匝比过低：N={n_ratio:.2f}（<0.5），"
+                            f"原边电流极大，变压器和开关管损耗严重"
+                        ),
+                        suggestion="增大匝比或重新评估输入输出电压需求",
+                        evidence=f"turns_ratio={n_ratio:.2f}",
+                    )
+                )
+            elif n_ratio > 20:
+                issues.append(
+                    ReviewIssue(
+                        severity=ReviewSeverity.BLOCKING,
+                        category=IssueCategory.ELECTRICAL,
+                        rule_id="flyback_turns_ratio",
+                        message=(
+                            f"匝比过高：N={n_ratio:.2f}（>20），"
+                            f"漏感大、耦合差，难以实现可靠设计"
+                        ),
+                        suggestion="降低匝比，考虑使用多级变换或选择更适合的拓扑",
+                        evidence=f"turns_ratio={n_ratio:.2f}",
+                    )
+                )
+            elif n_ratio > 10:
+                issues.append(
+                    ReviewIssue(
+                        severity=ReviewSeverity.WARNING,
+                        category=IssueCategory.ELECTRICAL,
+                        rule_id="flyback_turns_ratio",
+                        message=(
+                            f"匝比偏高：N={n_ratio:.2f}（>10），"
+                            f"注意漏感和耦合系数对效率的影响"
+                        ),
+                        suggestion="验证变压器漏感在可接受范围内，优化绕制工艺",
+                        evidence=f"turns_ratio={n_ratio:.2f}",
+                    )
+                )
+
+        # --- flyback_transformer_saturation (WARNING) ---
+        if (
+            v_in is not None
+            and d_max is not None
+            and fsw is not None
+            and n_ratio is not None
+            and ae is not None
+        ):
+            fsw_hz = fsw * 1000 if fsw < 10000 else fsw
+            # Ae 输入单位 mm²，转换为 m²
+            ae_m2 = ae * 1e-6
+            n_primary = max(n_ratio, 1)  # 用匝比近似原边匝数
+            if fsw_hz > 0 and n_primary > 0 and ae_m2 > 0:
+                # B_max = V_in × D_max / (f × Np × Ae)
+                b_max = v_in * d_max / (fsw_hz * n_primary * ae_m2)
+                if b_max > 0.3:  # 铁氧体饱和通常 ~0.3T
+                    issues.append(
+                        ReviewIssue(
+                            severity=ReviewSeverity.WARNING,
+                            category=IssueCategory.ELECTRICAL,
+                            rule_id="flyback_transformer_saturation",
+                            message=(
+                                f"变压器磁芯可能饱和：B_max≈{b_max:.2f}T（>0.3T），"
+                                f"会导致电流尖峰和效率下降"
+                            ),
+                            suggestion="增大磁芯截面积、降低占空比、增加原边匝数或提高开关频率",
+                            evidence=(
+                                f"B_max = V_in×D_max/(f×Np×Ae) = "
+                                f"{v_in:.1f}×{d_max:.2f}/({fsw_hz:.0f}×{n_primary:.0f}×{ae_m2:.2e}) "
+                                f"= {b_max:.2f}T"
+                            ),
+                        )
+                    )
+
+        # --- flyback_snubber_required (RECOMMENDATION) ---
+        issues.extend(
+            self._check_external_component(
+                module=module,
+                comp_role="snubber",
+                rule_id="flyback_snubber_required",
+                severity=ReviewSeverity.RECOMMENDATION,
+                category=IssueCategory.PROTECTION,
+                message="反激变换器建议添加 RCD 钳位吸收电路，抑制漏感尖峰",
+                suggestion="在原边开关管漏极添加 RCD 钳位电路，将尖峰电压限制在安全范围内",
+            )
+        )
+
+        # --- flyback_isolation_voltage (BLOCKING) ---
+        if v_isolation is not None:
+            if v_isolation < 1500:
+                issues.append(
+                    ReviewIssue(
+                        severity=ReviewSeverity.BLOCKING,
+                        category=IssueCategory.PROTECTION,
+                        rule_id="flyback_isolation_voltage",
+                        message=(
+                            f"隔离耐压不足：{v_isolation:.0f}V < 1500V，"
+                            f"不满足基本安规要求"
+                        ),
+                        suggestion="选择隔离耐压 ≥ 1500Vrms 的变压器，满足安规认证要求",
+                        evidence=f"v_isolation={v_isolation:.0f}V, required ≥ 1500V",
+                    )
+                )
+
+        return issues
+
+    # ============================================================
+    # SEPIC 转换器规则
+    # ============================================================
+
+    def _review_sepic(self, module: ModuleReviewInput) -> list[ReviewIssue]:
+        """SEPIC 转换器专属审查规则"""
+        issues: list[ReviewIssue] = []
+        params = module.parameters
+        device = module.device
+
+        v_in = _parse_numeric(params.get("v_in", ""))
+        v_out = _parse_numeric(params.get("v_out", ""))
+        i_out = _parse_numeric(params.get("i_out_max", params.get("i_out", "")))
+        fsw = _parse_numeric(params.get("fsw", device.specs.get("fsw", "")))
+
+        # --- sepic_coupling_cap_voltage (WARNING) ---
+        # 耦合电容两端电压 ≈ V_in，需确保额定电压足够
+        if v_in is not None:
+            v_cap_rating = _parse_numeric(
+                params.get("coupling_cap_rating", "")
+            )
+            if v_cap_rating is not None:
+                if v_cap_rating < v_in * 1.5:
+                    issues.append(
+                        ReviewIssue(
+                            severity=ReviewSeverity.WARNING,
+                            category=IssueCategory.ELECTRICAL,
+                            rule_id="sepic_coupling_cap_voltage",
+                            message=(
+                                f"耦合电容额定电压不足：{v_cap_rating:.1f}V "
+                                f"< 1.5×V_in={v_in * 1.5:.1f}V，"
+                                f"建议额定电压 ≥ 1.5 倍输入电压"
+                            ),
+                            suggestion="选择额定电压 ≥ 1.5×V_in 的耦合电容，留足降额余量",
+                            evidence=(
+                                f"coupling_cap_rating={v_cap_rating:.1f}V, "
+                                f"v_in={v_in:.2f}V, "
+                                f"required ≥ {v_in * 1.5:.1f}V"
+                            ),
+                        )
+                    )
+            else:
+                # 无额定电压信息时给出建议
+                issues.append(
+                    ReviewIssue(
+                        severity=ReviewSeverity.RECOMMENDATION,
+                        category=IssueCategory.ELECTRICAL,
+                        rule_id="sepic_coupling_cap_voltage",
+                        message=(
+                            f"耦合电容两端电压约等于 V_in={v_in:.2f}V，"
+                            f"请确认额定电压 ≥ {v_in * 1.5:.1f}V"
+                        ),
+                        suggestion="选择额定电压 ≥ 1.5×V_in 的耦合电容，推荐陶瓷或薄膜电容",
+                    )
+                )
+
+        # --- sepic_coupled_inductor_polarity (RECOMMENDATION) ---
+        issues.append(
+            ReviewIssue(
+                severity=ReviewSeverity.RECOMMENDATION,
+                category=IssueCategory.ELECTRICAL,
+                rule_id="sepic_coupled_inductor_polarity",
+                message="SEPIC 拓扑中耦合电感的同名端极性必须正确，否则无法正常工作",
+                suggestion="确认耦合电感同名端（打点端）连接正确：L1 打点端接输入，L2 打点端接耦合电容",
+            )
+        )
+
+        # --- sepic_output_ripple (WARNING) ---
+        if (
+            v_in is not None
+            and v_out is not None
+            and i_out is not None
+            and fsw is not None
+            and v_out > 0
+        ):
+            fsw_hz = fsw * 1000 if fsw < 10000 else fsw
+            c_out = 47e-6  # 典型输出电容
+            if fsw_hz > 0 and (v_in + v_out) > 0:
+                duty = v_out / (v_in + v_out)
+                # 输出纹波 ΔV ≈ I_out × D / (f × C)
+                delta_v = i_out * duty / (fsw_hz * c_out)
+                ripple_pct = delta_v / v_out * 100
+                if ripple_pct > 2:
+                    issues.append(
+                        ReviewIssue(
+                            severity=ReviewSeverity.WARNING,
+                            category=IssueCategory.ELECTRICAL,
+                            rule_id="sepic_output_ripple",
+                            message=(
+                                f"输出纹波电压偏大：ΔV={delta_v * 1000:.1f}mV，"
+                                f"占输出电压的 {ripple_pct:.1f}%（建议 <2%）"
+                            ),
+                            suggestion="增大输出电容或选用低ESR电容，降低输出纹波",
+                            evidence=(
+                                f"ΔV = I_out×D/(f×C) = "
+                                f"{i_out:.2f}×{duty:.2f}/({fsw_hz:.0f}×47μF) = "
+                                f"{delta_v * 1000:.1f}mV"
+                            ),
+                        )
+                    )
+
+        return issues
+
+    # ============================================================
+    # 运算放大器规则
+    # ============================================================
+
+    def _review_opamp(self, module: ModuleReviewInput) -> list[ReviewIssue]:
+        """运算放大器专属审查规则"""
+        issues: list[ReviewIssue] = []
+        params = module.parameters
+        device = module.device
+
+        v_supply_pos = _parse_numeric(
+            params.get("v_supply_pos", params.get("vcc", params.get("v_supply", "")))
+        )
+        v_supply_neg = _parse_numeric(
+            params.get("v_supply_neg", params.get("vee", ""))
+        )
+        v_out_max = _parse_numeric(params.get("v_out_max", params.get("v_out", "")))
+        v_cm = _parse_numeric(params.get("v_cm", params.get("v_input_cm", "")))
+        v_cm_min = _parse_numeric(device.specs.get("v_cm_min", ""))
+        v_cm_max = _parse_numeric(device.specs.get("v_cm_max", ""))
+        gbw = _parse_numeric(device.specs.get("gbw", device.specs.get("gbw_mhz", "")))
+        f_signal = _parse_numeric(params.get("f_signal", params.get("frequency", "")))
+        gain = _parse_numeric(params.get("gain", params.get("av", "")))
+
+        # 计算供电轨
+        v_rail_pos = v_supply_pos if v_supply_pos is not None else None
+        # v_supply_neg 预留给双电源运放扩展使用
+        _ = v_supply_neg
+
+        # --- opamp_output_swing (WARNING) ---
+        if v_out_max is not None and v_rail_pos is not None:
+            # 典型非 rail-to-rail 运放输出摆幅约 ±1V 距离电源轨
+            headroom = 1.0
+            v_max_available = v_rail_pos - headroom
+            if v_out_max > v_max_available:
+                issues.append(
+                    ReviewIssue(
+                        severity=ReviewSeverity.WARNING,
+                        category=IssueCategory.ELECTRICAL,
+                        rule_id="opamp_output_swing",
+                        message=(
+                            f"输出电压 {v_out_max:.2f}V 可能超出运放输出摆幅："
+                            f"V_supply={v_rail_pos:.2f}V，预留 {headroom}V 余量后"
+                            f"最大输出约 {v_max_available:.2f}V"
+                        ),
+                        suggestion="选用 Rail-to-Rail 输出运放，或降低输出电压要求，或提高供电电压",
+                        evidence=(
+                            f"v_out_max={v_out_max:.2f}V, "
+                            f"v_supply_pos={v_rail_pos:.2f}V, "
+                            f"headroom={headroom}V"
+                        ),
+                    )
+                )
+
+        # --- opamp_input_cm_range (BLOCKING) ---
+        if v_cm is not None:
+            if v_cm_min is not None and v_cm < v_cm_min:
+                issues.append(
+                    ReviewIssue(
+                        severity=ReviewSeverity.BLOCKING,
+                        category=IssueCategory.ELECTRICAL,
+                        rule_id="opamp_input_cm_range",
+                        message=(
+                            f"输入共模电压 {v_cm:.2f}V 低于运放规格下限 {v_cm_min:.2f}V，"
+                            f"运放无法正常工作"
+                        ),
+                        suggestion="调整输入偏置电压或选用支持更低共模输入的运放",
+                        evidence=(
+                            f"v_cm={v_cm:.2f}V, spec v_cm_min={v_cm_min:.2f}V"
+                        ),
+                    )
+                )
+            if v_cm_max is not None and v_cm > v_cm_max:
+                issues.append(
+                    ReviewIssue(
+                        severity=ReviewSeverity.BLOCKING,
+                        category=IssueCategory.ELECTRICAL,
+                        rule_id="opamp_input_cm_range",
+                        message=(
+                            f"输入共模电压 {v_cm:.2f}V 超过运放规格上限 {v_cm_max:.2f}V，"
+                            f"运放无法正常工作"
+                        ),
+                        suggestion="调整输入偏置电压或选用支持更高共模输入的运放",
+                        evidence=(
+                            f"v_cm={v_cm:.2f}V, spec v_cm_max={v_cm_max:.2f}V"
+                        ),
+                    )
+                )
+
+        # --- opamp_gbw_check (WARNING) ---
+        if gbw is not None and f_signal is not None and gain is not None:
+            # GBW in MHz, f_signal 可能是 Hz 或 kHz
+            gbw_hz = gbw * 1e6 if gbw < 1e6 else gbw
+            f_hz = f_signal * 1e3 if f_signal < 1e6 else f_signal
+            required_gbw = f_hz * gain
+            if required_gbw > gbw_hz:
+                issues.append(
+                    ReviewIssue(
+                        severity=ReviewSeverity.WARNING,
+                        category=IssueCategory.ELECTRICAL,
+                        rule_id="opamp_gbw_check",
+                        message=(
+                            f"增益带宽积不足：所需 GBW={required_gbw / 1e6:.1f}MHz "
+                            f"（增益×频率={gain:.0f}×{f_hz / 1e3:.1f}kHz），"
+                            f"运放 GBW={gbw_hz / 1e6:.1f}MHz"
+                        ),
+                        suggestion="选用 GBW 更高的运放，或降低增益/工作频率",
+                        evidence=(
+                            f"required_GBW = gain × f_signal = "
+                            f"{gain:.0f} × {f_hz:.0f}Hz = {required_gbw / 1e6:.1f}MHz, "
+                            f"spec GBW={gbw_hz / 1e6:.1f}MHz"
+                        ),
+                    )
+                )
+
+        # --- opamp_stability_high_gain (WARNING) ---
+        if gain is not None and gain > 100:
+            issues.append(
+                ReviewIssue(
+                    severity=ReviewSeverity.WARNING,
+                    category=IssueCategory.STABILITY,
+                    rule_id="opamp_stability_high_gain",
+                    message=(
+                        f"运放增益较高（Av={gain:.0f}），"
+                        f"需注意环路稳定性和相位裕量"
+                    ),
+                    suggestion=(
+                        "高增益电路建议分级放大，添加频率补偿网络，"
+                        "并用波特图分析确认相位裕量 > 45°"
+                    ),
+                    evidence=f"gain={gain:.0f}",
+                )
+            )
+
+        return issues
+
+    # ============================================================
     # LED 规则
     # ============================================================
 
@@ -772,6 +1305,58 @@ class DesignReviewEngine:
                     suggestion="限流电阻放置在 LED 附近（同侧），减少 EMI 并保证限流效果",
                 )
             )
+        elif category == "boost":
+            issues.append(
+                ReviewIssue(
+                    severity=ReviewSeverity.LAYOUT_NOTE,
+                    category=IssueCategory.STABILITY,
+                    rule_id="boost_layout_loop",
+                    message="Boost电感和二极管应紧贴IC放置，输出电容靠近二极管",
+                    suggestion=(
+                        "Boost功率环路（VIN→L→SW→D→C_out→GND）面积最小化，"
+                        "输入电容紧贴VIN和GND引脚"
+                    ),
+                )
+            )
+        elif category == "flyback":
+            issues.append(
+                ReviewIssue(
+                    severity=ReviewSeverity.LAYOUT_NOTE,
+                    category=IssueCategory.STABILITY,
+                    rule_id="flyback_layout_transformer",
+                    message="变压器布局需原副边走线严格隔离，保证安规爬电距离",
+                    suggestion=(
+                        "原边和副边走线需保持足够爬电距离（≥6mm），"
+                        "钳位电路紧贴开关管漏极，输出整流二极管紧贴变压器副边"
+                    ),
+                )
+            )
+        elif category == "sepic":
+            issues.append(
+                ReviewIssue(
+                    severity=ReviewSeverity.LAYOUT_NOTE,
+                    category=IssueCategory.STABILITY,
+                    rule_id="sepic_layout_coupling_cap",
+                    message="耦合电容应紧贴两个电感放置，走线短且粗",
+                    suggestion=(
+                        "SEPIC耦合电容连接两个电感之间的节点，走线寄生电感会影响效率，"
+                        "需尽量缩短连接路径"
+                    ),
+                )
+            )
+        elif category in ("opamp", "op_amp"):
+            issues.append(
+                ReviewIssue(
+                    severity=ReviewSeverity.LAYOUT_NOTE,
+                    category=IssueCategory.STABILITY,
+                    rule_id="opamp_layout_decoupling",
+                    message="运放电源引脚应紧贴放置去耦电容，信号走线远离数字噪声源",
+                    suggestion=(
+                        "在 VCC/VEE 引脚放置 100nF 陶瓷电容（<2mm），"
+                        "输入走线采用保护环，远离开关电源和数字信号走线"
+                    ),
+                )
+            )
 
         return issues
 
@@ -817,6 +1402,58 @@ class DesignReviewEngine:
                     suggestion="上电前用万用表二极管档确认 LED 阳极（A）和阴极（K）方向",
                 )
             )
+        elif category == "boost":
+            issues.append(
+                ReviewIssue(
+                    severity=ReviewSeverity.BRINGUP_NOTE,
+                    category=IssueCategory.STABILITY,
+                    rule_id="boost_bringup_startup",
+                    message="上电时观察输出电压软启动过程和电感电流波形",
+                    suggestion=(
+                        "用示波器观察输出电压上升过程，确认无过冲；"
+                        "用电流探头检查电感电流波形确认连续导通模式"
+                    ),
+                )
+            )
+        elif category == "flyback":
+            issues.append(
+                ReviewIssue(
+                    severity=ReviewSeverity.BRINGUP_NOTE,
+                    category=IssueCategory.STABILITY,
+                    rule_id="flyback_bringup_leakage",
+                    message="上电时观察开关管漏极尖峰电压和钳位电路效果",
+                    suggestion=(
+                        "用示波器测量开关管漏极波形，确认钳位电路有效抑制漏感尖峰，"
+                        "尖峰电压不超过开关管额定值的80%"
+                    ),
+                )
+            )
+        elif category == "sepic":
+            issues.append(
+                ReviewIssue(
+                    severity=ReviewSeverity.BRINGUP_NOTE,
+                    category=IssueCategory.STABILITY,
+                    rule_id="sepic_bringup_coupling",
+                    message="上电时确认耦合电容电压和两个电感电流波形正常",
+                    suggestion=(
+                        "测量耦合电容两端直流电压应约等于 V_in，"
+                        "检查两个电感电流波形确认正常工作"
+                    ),
+                )
+            )
+        elif category in ("opamp", "op_amp"):
+            issues.append(
+                ReviewIssue(
+                    severity=ReviewSeverity.BRINGUP_NOTE,
+                    category=IssueCategory.STABILITY,
+                    rule_id="opamp_bringup_offset",
+                    message="上电后检查运放输出静态偏置和信号完整性",
+                    suggestion=(
+                        "无输入信号时测量输出直流偏置是否在预期范围，"
+                        "输入信号后确认增益和带宽符合设计要求，注意观察是否有振荡"
+                    ),
+                )
+            )
 
         return issues
 
@@ -855,6 +1492,24 @@ class DesignReviewEngine:
                 p_loss = p_out * (1 / eff - 1)
                 total_power += p_loss
                 power_details.append(f"{module.role}: {p_loss:.2f}W (Buck损耗)")
+            elif category == "boost" and v_out is not None and i_out is not None:
+                eff = 0.85
+                p_out = v_out * i_out
+                p_loss = p_out * (1 / eff - 1)
+                total_power += p_loss
+                power_details.append(f"{module.role}: {p_loss:.2f}W (Boost损耗)")
+            elif category == "flyback" and v_out is not None and i_out is not None:
+                eff = 0.80
+                p_out = v_out * i_out
+                p_loss = p_out * (1 / eff - 1)
+                total_power += p_loss
+                power_details.append(f"{module.role}: {p_loss:.2f}W (Flyback损耗)")
+            elif category == "sepic" and v_out is not None and i_out is not None:
+                eff = 0.82
+                p_out = v_out * i_out
+                p_loss = p_out * (1 / eff - 1)
+                total_power += p_loss
+                power_details.append(f"{module.role}: {p_loss:.2f}W (SEPIC损耗)")
             elif v_in is not None and i_out is not None:
                 p = v_in * i_out
                 total_power += p
