@@ -29,6 +29,7 @@ from PySide6.QtWidgets import (
 )
 
 from schemaforge.gui.widgets.chat_panel import ChatPanel
+from schemaforge.gui.widgets.grid_canvas import GridCanvas
 from schemaforge.gui.widgets.progress_header import ProgressHeader
 from schemaforge.gui.widgets.svg_viewer import SvgZoomView
 from schemaforge.gui.workers.engine_worker import (
@@ -193,12 +194,15 @@ class DesignPage(QWidget):
         self._preview_toolbar.addWidget(self._btn_zoom_in)
         layout.addWidget(self._preview_toolbar)
 
-        # Stacked widget: index 0 = SVG viewer, index 1 = missing panel
+        # Stacked widget: index 0 = grid canvas, index 1 = missing panel
         self._preview_stack = QStackedWidget()
 
-        # SVG 查看器 (index 0)
+        # Grid canvas (index 0) — replaces static SVG viewer
+        self._grid_canvas = GridCanvas()
+        self._preview_stack.addWidget(self._grid_canvas)
+
+        # Keep SVG viewer as fallback (index will shift due to stacked widget)
         self._svg_viewer = SvgZoomView()
-        self._preview_stack.addWidget(self._svg_viewer)
 
         # 缺失器件面板占位 (index 1) — 延迟构建
         self._missing_placeholder = QWidget()
@@ -264,10 +268,10 @@ class DesignPage(QWidget):
 
     def _connect_signals(self) -> None:
         self._btn_generate.clicked.connect(self._on_generate)
-        self._btn_fit.clicked.connect(self._svg_viewer.fit_to_view)
-        self._btn_zoom_in.clicked.connect(self._svg_viewer.zoom_in)
-        self._btn_zoom_out.clicked.connect(self._svg_viewer.zoom_out)
-        self._svg_viewer.zoom_changed.connect(self._on_zoom_changed)
+        self._btn_fit.clicked.connect(self._grid_canvas.fit_to_view)
+        self._btn_zoom_in.clicked.connect(self._grid_canvas.zoom_in)
+        self._btn_zoom_out.clicked.connect(self._grid_canvas.zoom_out)
+        self._grid_canvas.zoom_changed.connect(self._on_zoom_changed)
         self._template_combo.currentIndexChanged.connect(self._on_template_selected)
         self._chat_panel.message_sent.connect(self._on_chat_send)
 
@@ -407,9 +411,9 @@ class DesignPage(QWidget):
 
             # 加载第一个 SVG
             if svg_paths:
-                loaded = self._svg_viewer.load_file(svg_paths[0])
+                loaded = self._grid_canvas.load_file(svg_paths[0])
                 if loaded:
-                    self._svg_viewer.fit_to_view()
+                    self._grid_canvas.fit_to_view()
                     self._tab_log.append(f"[SVG] 已加载: {svg_paths[0]}")
                 else:
                     self._tab_log.append(f"[SVG] 加载失败: {svg_paths[0]}")
@@ -683,15 +687,34 @@ class DesignPage(QWidget):
 
     def _display_bundle(self, bundle: Any, warnings: list[str] | None = None) -> None:
         """提取 DesignBundle 的内容并展示到各标签页。"""
-        # SVG
-        svg_path = getattr(bundle, "svg_path", "")
-        if svg_path:
-            loaded = self._svg_viewer.load_file(svg_path)
-            if loaded:
-                self._svg_viewer.fit_to_view()
-                self._tab_log.append(f"[SVG] 已加载: {svg_path}")
+        # Prefer interactive grid canvas when design_ir is available
+        design_ir = getattr(bundle, "design_ir", None)
+        if design_ir is not None and hasattr(design_ir, "get_resolved_modules"):
+            resolved = design_ir.get_resolved_modules()
+            if resolved:
+                self._grid_canvas.load_system_design(design_ir)
+                self._grid_canvas.fit_to_view()
+                self._tab_log.append(f"[Grid] 已加载交互式原理图 ({len(resolved)} 模块)")
             else:
-                self._tab_log.append(f"[SVG] 加载失败: {svg_path}")
+                # Fallback to SVG if no resolved modules
+                svg_path = getattr(bundle, "svg_path", "")
+                if svg_path:
+                    loaded = self._grid_canvas.load_file(svg_path)
+                    if loaded:
+                        self._grid_canvas.fit_to_view()
+                        self._tab_log.append(f"[SVG] 已加载: {svg_path}")
+                    else:
+                        self._tab_log.append(f"[SVG] 加载失败: {svg_path}")
+        else:
+            # No design_ir: fall back to SVG file loading
+            svg_path = getattr(bundle, "svg_path", "")
+            if svg_path:
+                loaded = self._grid_canvas.load_file(svg_path)
+                if loaded:
+                    self._grid_canvas.fit_to_view()
+                    self._tab_log.append(f"[SVG] 已加载: {svg_path}")
+                else:
+                    self._tab_log.append(f"[SVG] 加载失败: {svg_path}")
 
         # BOM / SPICE
         bom_text = getattr(bundle, "bom_text", "")

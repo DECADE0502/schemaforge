@@ -204,16 +204,16 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "导出失败", f"无法导出 SPICE: {exc}")
 
     def _on_fit_view(self) -> None:
-        """适应窗口（SVG 预览）。"""
-        self._design_page._svg_viewer.fit_to_view()
+        """适应窗口（Grid Canvas 预览）。"""
+        self._design_page._grid_canvas.fit_to_view()
 
     def _on_zoom_in(self) -> None:
-        """放大（SVG 预览）。"""
-        self._design_page._svg_viewer.zoom_in()
+        """放大（Grid Canvas 预览）。"""
+        self._design_page._grid_canvas.zoom_in()
 
     def _on_zoom_out(self) -> None:
-        """缩小（SVG 预览）。"""
-        self._design_page._svg_viewer.zoom_out()
+        """缩小（Grid Canvas 预览）。"""
+        self._design_page._grid_canvas.zoom_out()
 
     def _on_about(self) -> None:
         """显示关于对话框。"""
