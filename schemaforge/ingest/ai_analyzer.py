@@ -38,6 +38,17 @@ class TextAnalysisResult:
     missing_fields: list[str] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
 
+    # --- P3: 典型应用电路提取 ---
+    application_circuit: dict[str, Any] = field(default_factory=dict)
+    """从 datasheet 提取的典型应用电路信息:
+    {
+        "topology": "buck" | "ldo" | "boost" | ...,
+        "formulas": [{"name": "...", "expression": "...", "rationale": "..."}],
+        "components": [{"role": "...", "value": "...", "formula": "...", "rationale": "..."}],
+        "operating_conditions": {"v_in_typ": "12V", "v_out": "3.3V", ...},
+    }
+    """
+
 
 @dataclass
 class ImageAnalysisResult:
@@ -80,7 +91,20 @@ _TEXT_ANALYSIS_PROMPT = """\
   },
   "confidence": 0.0到1.0的置信度,
   "missing_fields": ["无法确定的字段列表"],
-  "warnings": ["需要用户确认的地方"]
+  "warnings": ["需要用户确认的地方"],
+  "application_circuit": {
+    "topology": "buck/ldo/boost/...(电路拓扑类型)",
+    "formulas": [
+      {"name": "占空比/duty", "expression": "D = Vout / Vin", "rationale": "基本降压公式"}
+    ],
+    "components": [
+      {"role": "input_cap/output_cap/inductor/fb_upper/fb_lower/...",
+       "value": "推荐值(如10uF/4.7uH)",
+       "formula": "计算公式(如 L = Vout*(1-D)/(fsw*ΔIL))",
+       "rationale": "选型理由"}
+    ],
+    "operating_conditions": {"v_in_typ": "典型输入电压", "v_out": "输出电压", "fsw": "开关频率"}
+  }
 }
 
 注意:
@@ -88,6 +112,10 @@ _TEXT_ANALYSIS_PROMPT = """\
 - 对不确定的信息，在 warnings 中说明
 - confidence 反映整体信息完整度和确定性
 - 引脚的 type 只能是: input, output, power, passive, nc
+- application_circuit: 从 datasheet 的"典型应用电路"或"Application Circuit"章节提取
+  - 如果 datasheet 没有应用电路章节，设为空对象 {}
+  - formulas 中的 expression 需要用变量名（v_in, v_out, i_out, fsw 等），不要用数值
+  - components 中的 role 必须使用标准名: input_cap, output_cap, inductor, boot_cap, fb_upper, fb_lower
 """
 
 _COMBINED_ANALYSIS_PROMPT = """\
@@ -232,6 +260,7 @@ def analyze_datasheet_text(
             raw_response=raw,
             missing_fields=parsed.get("missing_fields", []),
             warnings=parsed.get("warnings", []),
+            application_circuit=parsed.get("application_circuit", {}),
         )
         return ToolResult(success=True, data=result)
 
@@ -467,6 +496,7 @@ def analyze_combined(
             raw_response=raw,
             missing_fields=parsed.get("missing_fields", []),
             warnings=parsed.get("warnings", []),
+            application_circuit=parsed.get("application_circuit", {}),
         )
         return ToolResult(success=True, data=result)
 
@@ -529,12 +559,53 @@ def _mock_text_analysis(text: str, hint: str = "") -> ToolResult:
     # 简单关键词匹配
     part_number = ""
     category = ""
+    application_circuit: dict[str, Any] = {}
+
     if "tps54202" in text_lower:
         part_number = "TPS54202"
         category = "buck"
+        application_circuit = {
+            "topology": "buck",
+            "formulas": [
+                {"name": "duty", "expression": "D = v_out / v_in",
+                 "rationale": "基本降压占空比"},
+                {"name": "delta_il", "expression": "delta_il = i_out * 0.3",
+                 "rationale": "30% 电流纹波设计"},
+            ],
+            "components": [
+                {"role": "inductor",
+                 "formula": "L = v_out * (1 - duty) / (fsw * delta_il)",
+                 "value": "4.7uH", "rationale": "按纹波设计"},
+                {"role": "output_cap",
+                 "formula": "Cout = delta_il / (8 * fsw * 0.01 * v_out)",
+                 "value": "22uF", "rationale": "按 1% 纹波"},
+                {"role": "input_cap", "value": "10uF",
+                 "formula": "Cin ≥ 10μF", "rationale": "推荐最小值"},
+                {"role": "fb_upper",
+                 "formula": "Rupper = r_lower * (v_out / v_ref - 1)",
+                 "value": "52.3kΩ", "rationale": "反馈分压上拉"},
+                {"role": "fb_lower", "value": "10kΩ",
+                 "formula": "Rlower = 10kΩ", "rationale": "固定下拉"},
+            ],
+            "operating_conditions": {
+                "v_in_typ": "12V", "v_out": "5V",
+                "fsw": "500kHz", "v_ref": "0.8V",
+            },
+        }
     elif "ams1117" in text_lower:
         part_number = "AMS1117"
         category = "ldo"
+        application_circuit = {
+            "topology": "ldo",
+            "formulas": [],
+            "components": [
+                {"role": "input_cap", "value": "10uF",
+                 "formula": "Cin ≥ 10μF", "rationale": "输入去耦"},
+                {"role": "output_cap", "value": "22uF",
+                 "formula": "Cout ≥ 22μF", "rationale": "输出稳定性"},
+            ],
+            "operating_conditions": {"v_in_typ": "5V", "v_out": "3.3V"},
+        }
     elif "stm32" in text_lower:
         part_number = "STM32F103"
         category = "mcu"
@@ -551,6 +622,7 @@ def _mock_text_analysis(text: str, hint: str = "") -> ToolResult:
         raw_response="(mock response)",
         missing_fields=["pins", "specs", "package"],
         warnings=["这是 Mock 分析结果，仅用于离线测试"],
+        application_circuit=application_circuit,
     )
     return ToolResult(success=True, data=result)
 

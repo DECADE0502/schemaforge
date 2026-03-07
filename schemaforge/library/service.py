@@ -21,7 +21,7 @@ from schemaforge.ingest.easyeda_provider import (
     EasyEDASymbolResult,
 )
 from schemaforge.library.dedupe import DuplicateCheckResult, check_duplicate
-from schemaforge.library.models import DeviceModel, SymbolDef
+from schemaforge.library.models import DesignRecipe, DeviceModel, SymbolDef
 from schemaforge.library.store import ComponentStore
 from schemaforge.library.validator import (
     DeviceDraft,
@@ -192,6 +192,19 @@ class LibraryService:
         if device is None:
             return False
         device.symbol = symbol
+        self._store.save_device(device)
+        return True
+
+    def update_device_recipe(
+        self,
+        part_number: str,
+        recipe: DesignRecipe,
+    ) -> bool:
+        """附加或更新器件的设计 recipe（从 datasheet 提取）。"""
+        device = self._store.get_device(part_number)
+        if device is None:
+            return False
+        device.design_recipe = recipe
         self._store.save_device(device)
         return True
 

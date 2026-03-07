@@ -101,6 +101,7 @@ class SchemaForgeSession:
         self._bundle: DesignBundle | None = None
         self._parameter_overrides: dict[str, str] = {}
         self._pending_draft: DeviceDraft | None = None
+        self._pending_app_circuit: dict[str, object] = {}  # P3: 待附加的应用电路
 
     @property
     def bundle(self) -> DesignBundle | None:
@@ -184,6 +185,7 @@ class SchemaForgeSession:
             ).decode("ascii")
 
         self._pending_draft = draft
+        self._pending_app_circuit = result.application_circuit
         preview = ImportPreview(
             draft=draft,
             symbol_preview_base64=preview_base64,
@@ -278,6 +280,19 @@ class SchemaForgeSession:
         if symbol is not None:
             self._service.update_device_symbol(draft.part_number, symbol)
 
+        # 6. 附加 datasheet 提取的应用电路 recipe
+        if self._pending_app_circuit:
+            from schemaforge.ingest.datasheet_extractor import (
+                build_recipe_from_application_circuit,
+            )
+
+            recipe = build_recipe_from_application_circuit(
+                self._pending_app_circuit,
+                part_number=draft.part_number,
+            )
+            if recipe is not None:
+                self._service.update_device_recipe(draft.part_number, recipe)
+
         device = self._service.get(draft.part_number)
         if device is None:
             return SchemaForgeTurnResult(
@@ -287,6 +302,7 @@ class SchemaForgeSession:
             )
 
         self._pending_draft = None
+        self._pending_app_circuit = {}
         return self._build_from_device(device, message=f"已导入并应用 {device.part_number}。")
 
     def revise(self, user_input: str) -> SchemaForgeTurnResult:

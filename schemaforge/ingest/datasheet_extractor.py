@@ -12,7 +12,10 @@ GUI 可以展示追问卡片让用户补全。
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from schemaforge.library.models import DesignRecipe
 
 from schemaforge.common.progress import ProgressTracker
 from schemaforge.ingest.ai_analyzer import (
@@ -48,6 +51,8 @@ class ExtractionResult:
     error_message: str = ""
     needs_user_input: bool = False  # 是否需要用户补全
     questions: list[dict[str, Any]] = field(default_factory=list)
+    application_circuit: dict[str, Any] = field(default_factory=dict)
+    """AI 提取的典型应用电路信息（用于构建 DesignRecipe）"""
 
 
 # ============================================================
@@ -162,6 +167,7 @@ def extract_from_pdf(
 
     draft = _analysis_to_draft(analysis, source_file=filepath)
     result.draft = draft
+    result.application_circuit = analysis.application_circuit
 
     questions = _generate_questions(draft, analysis)
     if questions:
@@ -173,6 +179,8 @@ def extract_from_pdf(
             tracker.log(f"需要用户确认 {len(questions)} 项信息")
         else:
             tracker.log("信息完整，无需用户确认")
+        if analysis.application_circuit:
+            tracker.log("已提取典型应用电路信息")
         tracker.stage("提取完成", 80)
 
     result.success = True
@@ -473,3 +481,83 @@ def apply_user_answers(
     ]
 
     return DeviceDraft.model_validate(data)
+
+
+# ============================================================
+# P3: 典型应用电路 → DesignRecipe
+# ============================================================
+
+
+def build_recipe_from_application_circuit(
+    application_circuit: dict[str, Any],
+    part_number: str = "",
+) -> "DesignRecipe | None":
+    """将 AI 提取的典型应用电路信息转换为 DesignRecipe。
+
+    Args:
+        application_circuit: AI 分析返回的 application_circuit 字典
+        part_number: 器件型号（用于 summary）
+
+    Returns:
+        DesignRecipe 对象，或 None（如果数据不足）
+    """
+    if not application_circuit:
+        return None
+
+    from schemaforge.library.models import (
+        DesignRecipe,
+        RecipeComponent,
+        RecipeEvidence,
+        RecipeFormula,
+    )
+
+    topology = application_circuit.get("topology", "")
+    raw_formulas = application_circuit.get("formulas", [])
+    raw_components = application_circuit.get("components", [])
+    operating = application_circuit.get("operating_conditions", {})
+
+    if not raw_formulas and not raw_components:
+        return None
+
+    # 构建公式列表
+    formulas: list[RecipeFormula] = []
+    for f in raw_formulas:
+        if isinstance(f, dict) and f.get("name"):
+            formulas.append(RecipeFormula(
+                name=f["name"],
+                expression=f.get("expression", ""),
+                rationale=f.get("rationale", ""),
+            ))
+
+    # 构建元件列表
+    components: list[RecipeComponent] = []
+    for c in raw_components:
+        if isinstance(c, dict) and c.get("role"):
+            components.append(RecipeComponent(
+                role=c["role"],
+                value=c.get("value", ""),
+                formula=c.get("formula", ""),
+                rationale=c.get("rationale", ""),
+            ))
+
+    # 构建默认参数
+    default_params: dict[str, str] = {}
+    for key, val in operating.items():
+        if isinstance(val, str):
+            default_params[key] = val
+
+    recipe = DesignRecipe(
+        topology_family=topology,
+        summary=f"从 {part_number or '未知器件'} datasheet 典型应用电路提取的 recipe",
+        formulas=formulas,
+        sizing_components=components,
+        default_parameters=default_params,
+        evidence=[
+            RecipeEvidence(
+                source_type="datasheet_extracted",
+                summary="由 AI 从 datasheet 典型应用电路章节提取",
+                confidence=0.75,
+            ),
+        ],
+    )
+    return recipe
