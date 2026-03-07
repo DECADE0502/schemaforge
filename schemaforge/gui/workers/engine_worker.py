@@ -1,13 +1,14 @@
 """后台引擎工作线程
 
-提供两个 QThread worker，分别驱动旧主链和新主链：
+提供三个 QThread worker，分别驱动三条链路：
 
-- ``ClassicEngineWorker``:  SchemaForgeEngine（模板驱动）
-- ``DesignSessionWorker``: DesignSession（需求澄清→候选→审查→渲染）
+- ``ClassicEngineWorker``:    SchemaForgeEngine（模板驱动）
+- ``DesignSessionWorker``:    DesignSession（需求澄清→候选→审查→渲染）
+- ``SchemaForgeWorker``:      SchemaForgeSession（统一工作台：精确型号+公式驱动+多轮修改）
 
 用法::
 
-    worker = ClassicEngineWorker("5V转3.3V稳压", use_mock=True)
+    worker = SchemaForgeWorker("用 TPS54202 搭一个 20V转5V的DCDC电路", use_mock=True)
     worker.progress.connect(on_progress)
     worker.finished.connect(on_done)
     worker.error.connect(on_error)
@@ -128,3 +129,96 @@ class RetryDesignWorker(DesignSessionWorker):
     """
 
     pass
+
+
+# ============================================================
+# SchemaForgeWorker — 统一工作台（推荐）
+# ============================================================
+
+
+class SchemaForgeWorker(QThread):
+    """在后台线程中运行 SchemaForgeSession.start()。
+
+    SchemaForgeSession 是统一工作台，支持：
+    - 精确型号匹配
+    - Datasheet 公式驱动参数计算
+    - 通用拓扑渲染
+    - 多轮对话修改
+
+    Signals:
+        finished(object): 处理完成，携带 SchemaForgeTurnResult。
+        error(str): 处理异常，携带错误描述。
+        progress(str, int): 进度回调 (消息, 百分比)。
+    """
+
+    finished = Signal(object)
+    error = Signal(str)
+    progress = Signal(str, int)
+
+    def __init__(
+        self,
+        user_input: str,
+        use_mock: bool = True,
+        parent: object | None = None,
+    ) -> None:
+        super().__init__(parent)  # type: ignore[arg-type]
+        self.user_input = user_input
+        self.use_mock = use_mock
+
+    def run(self) -> None:
+        """执行统一工作台设计流程。"""
+        try:
+            self.progress.emit("正在解析设计需求…", 10)
+
+            from schemaforge.workflows.schemaforge_session import SchemaForgeSession
+
+            session = SchemaForgeSession(
+                store_dir=Path("schemaforge/store"),
+                use_mock=self.use_mock,
+            )
+
+            self.progress.emit("正在匹配器件并生成设计…", 40)
+            result = session.start(self.user_input)
+
+            self.progress.emit("设计完成", 100)
+            self.finished.emit(result)
+        except Exception as exc:
+            tb = traceback.format_exc()
+            self.error.emit(f"{exc}\n\n{tb}")
+
+
+class SchemaForgeReviseWorker(QThread):
+    """在后台线程中运行 SchemaForgeSession.revise()。
+
+    用于多轮对话修改 — 在已有设计基础上应用自然语言修改。
+
+    Signals:
+        finished(object): 处理完成，携带 SchemaForgeTurnResult。
+        error(str): 处理异常，携带错误描述。
+        progress(str, int): 进度回调 (消息, 百分比)。
+    """
+
+    finished = Signal(object)
+    error = Signal(str)
+    progress = Signal(str, int)
+
+    def __init__(
+        self,
+        session: object,
+        user_input: str,
+        parent: object | None = None,
+    ) -> None:
+        super().__init__(parent)  # type: ignore[arg-type]
+        self._session = session
+        self.user_input = user_input
+
+    def run(self) -> None:
+        """执行修改流程。"""
+        try:
+            self.progress.emit("正在应用修改…", 30)
+            result = self._session.revise(self.user_input)  # type: ignore[union-attr]
+            self.progress.emit("修改完成", 100)
+            self.finished.emit(result)
+        except Exception as exc:
+            tb = traceback.format_exc()
+            self.error.emit(f"{exc}\n\n{tb}")

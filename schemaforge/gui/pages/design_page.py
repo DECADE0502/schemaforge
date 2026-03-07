@@ -35,6 +35,7 @@ from schemaforge.gui.workers.engine_worker import (
     ClassicEngineWorker,
     DesignSessionWorker,
     RetryDesignWorker,
+    SchemaForgeWorker,
 )
 from schemaforge.library.service import LibraryService
 from schemaforge.workflows.design_session import MissingModule
@@ -69,7 +70,7 @@ class DesignPage(QWidget):
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
-        self._worker: ClassicEngineWorker | DesignSessionWorker | None = None
+        self._worker: ClassicEngineWorker | DesignSessionWorker | SchemaForgeWorker | None = None
         self._last_result: Any = None  # EngineResult | DesignSessionResult
 
         # --- 缺失器件待办状态 ---
@@ -81,6 +82,9 @@ class DesignPage(QWidget):
         self._original_input: str = ""
         self._use_mock: bool = True
         self._library_service: LibraryService | None = None
+
+        # --- 统一工作台会话（多轮复用） ---
+        self._sf_session: object | None = None  # SchemaForgeSession 实例
 
         self._init_ui()
         self._connect_signals()
@@ -156,7 +160,12 @@ class DesignPage(QWidget):
         chain_label = QLabel("后端链路")
         layout.addWidget(chain_label)
         self._chain_combo = QComboBox()
-        self._chain_combo.addItems(["经典链（模板驱动）", "新主链（库驱动+IR+审查）"])
+        self._chain_combo.addItems([
+            "经典链（模板驱动）",
+            "新主链（库驱动+IR+审查）",
+            "统一工作台（推荐）",
+        ])
+        self._chain_combo.setCurrentIndex(2)  # 默认选统一工作台
         layout.addWidget(self._chain_combo)
 
         # 按钮行
@@ -336,26 +345,37 @@ class DesignPage(QWidget):
         self._tab_log.append(f"[启动] 输入: {user_input[:80]}…")
 
         use_mock = self._mode_combo.currentIndex() == 0
-        use_new_chain = self._chain_combo.currentIndex() == 1
+        chain_index = self._chain_combo.currentIndex()
 
         # 保存输入信息，供缺失器件重试时复用
         self._original_input = user_input
         self._use_mock = use_mock
 
-        if use_new_chain:
+        if chain_index == 2:
+            # 统一工作台（推荐）
+            worker = SchemaForgeWorker(
+                user_input=user_input,
+                use_mock=use_mock,
+            )
+            worker.progress.connect(self._on_worker_progress)
+            worker.finished.connect(self._on_sf_worker_finished)
+            worker.error.connect(self._on_worker_error)
+        elif chain_index == 1:
             worker = DesignSessionWorker(
                 user_input=user_input,
                 use_mock=use_mock,
             )
+            worker.progress.connect(self._on_worker_progress)
+            worker.finished.connect(self._on_worker_finished)
+            worker.error.connect(self._on_worker_error)
         else:
             worker = ClassicEngineWorker(
                 user_input=user_input,
                 use_mock=use_mock,
             )
-
-        worker.progress.connect(self._on_worker_progress)
-        worker.finished.connect(self._on_worker_finished)
-        worker.error.connect(self._on_worker_error)
+            worker.progress.connect(self._on_worker_progress)
+            worker.finished.connect(self._on_worker_finished)
+            worker.error.connect(self._on_worker_error)
 
         self._worker = worker
         worker.start()
@@ -469,6 +489,94 @@ class DesignPage(QWidget):
             self._status_label.setText(f"❌ 生成失败: {error}")
             self._tab_log.append(f"[失败] {error}")
             self._chat_panel.add_message("assistant", f"生成失败: {error}")
+
+    @Slot(object)
+    def _on_sf_worker_finished(self, result: Any) -> None:
+        """统一工作台 SchemaForgeWorker 完成回调。
+
+        处理 SchemaForgeTurnResult: status = generated / needs_asset / error
+        """
+        self._worker = None
+        self._btn_generate.setEnabled(True)
+        self._last_result = result
+        self._progress_header.update_progress("完成", 100)
+
+        status = getattr(result, "status", "error")
+        message = getattr(result, "message", "")
+        bundle = getattr(result, "bundle", None)
+
+        if status == "generated" and bundle is not None:
+            self._status_label.setText("✅ 生成完成")
+
+            # 加载 SVG
+            svg_path = getattr(bundle, "svg_path", "")
+            if svg_path:
+                loaded = self._svg_viewer.load_file(svg_path)
+                if loaded:
+                    self._svg_viewer.fit_to_view()
+                    self._tab_log.append(f"[SVG] 已加载: {svg_path}")
+                else:
+                    self._tab_log.append(f"[SVG] 加载失败: {svg_path}")
+
+            # BOM / SPICE
+            bom_text = getattr(bundle, "bom_text", "")
+            spice_text = getattr(bundle, "spice_text", "")
+            self._tab_bom.setPlainText(bom_text or "（无 BOM 数据）")
+            self._tab_spice.setPlainText(spice_text or "（无 SPICE 数据）")
+            self._tab_erc.setPlainText("—")  # 统一工作台暂不集成 ERC
+
+            # 设计概要
+            device = getattr(bundle, "device", None)
+            params = getattr(bundle, "parameters", {})
+            rationale = getattr(bundle, "rationale", [])
+            summary_parts: list[str] = []
+            if device:
+                summary_parts.append(f"器件: {device.part_number}")
+                summary_parts.append(f"分类: {device.category or '—'}")
+            summary_parts.append(f"参数数量: {len(params)}")
+            for key, val in params.items():
+                summary_parts.append(f"  {key}: {val}")
+            if rationale:
+                summary_parts.append("")
+                summary_parts.append("设计依据:")
+                for r in rationale:
+                    summary_parts.append(f"  • {r}")
+            self._tab_summary.setPlainText("\n".join(summary_parts) or "（无概要）")
+
+            self._chat_panel.add_message("assistant", f"✅ {message}")
+            self._tab_log.append(f"[完成] {message}")
+
+        elif status == "needs_asset":
+            # 缺失器件 → 显示导入提示
+            missing_pn = getattr(result, "missing_part_number", "")
+            self._status_label.setText(f"⚠ 器件缺失: {missing_pn or '未知型号'}")
+            self._progress_header.update_progress("等待补录器件", 50)
+            self._tab_log.append(f"[缺失] 需要器件: {missing_pn}")
+            self._chat_panel.add_message(
+                "assistant",
+                f"⚠ {message}\n\n请点击「去补录」按钮上传 datasheet 导入器件。",
+            )
+
+            # 构造兼容 MissingModule 的结构给现有面板使用
+            from schemaforge.workflows.design_session import MissingModule as MM
+
+            fake_missing = [
+                MM(
+                    role="main",
+                    part_number=missing_pn,
+                    category=getattr(result, "request", None)
+                    and getattr(result.request, "category", "") or "",
+                    description=f"需要导入 {missing_pn} 的 datasheet",
+                    search_error="器件库中不存在",
+                ),
+            ]
+            self._show_missing_panel(fake_missing)
+
+        else:
+            # error
+            self._status_label.setText(f"❌ {message}")
+            self._tab_log.append(f"[失败] {message}")
+            self._chat_panel.add_message("assistant", f"❌ {message}")
 
     @Slot(str)
     def _on_worker_error(self, error_message: str) -> None:
