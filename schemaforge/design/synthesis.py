@@ -243,6 +243,11 @@ class DesignRecipeSynthesizer:
         )
         return enriched, recipe
 
+    # 工况敏感的电路类型 — 每次请求必须重新计算，不使用缓存 recipe
+    _RECALC_CATEGORIES: frozenset[str] = frozenset({
+        "buck", "ldo", "boost", "flyback", "sepic",
+    })
+
     def _try_recipe_driven_build(
         self,
         device: DeviceModel,
@@ -252,8 +257,13 @@ class DesignRecipeSynthesizer:
         """尝试用器件自带的 design_recipe 公式驱动参数计算。
 
         仅当器件已有 recipe 且 recipe 含有可求解公式时才使用。
+        对工况敏感类型（buck/ldo/boost 等）强制跳过缓存，走硬编码重算。
         返回 None 表示不满足条件，应回退到硬编码计算。
         """
+        # 工况敏感类型始终走硬编码重算路径，确保参数与请求匹配
+        if category in self._RECALC_CATEGORIES:
+            return None
+
         if device.design_recipe is None or device.topology is None:
             return None
 
@@ -335,24 +345,27 @@ class DesignRecipeSynthesizer:
         """从设备 specs 和用户请求构建公式求解的变量上下文。"""
         context: dict[str, float] = {}
 
-        # 从用户请求
+        # 从用户请求 → 典型值 → 额定值 → 保守通用值
+        # 绝不使用 absolute max 作为默认运行点
         v_in = _coalesce_numeric(
             request.v_in,
             device.specs.get("v_in_typ"),
-            _derate_abs_max(device.specs.get("v_in_max"), 0.6),
-            12.0,
+            device.specs.get("v_in_nom"),
+            device.operating_constraints.get("v_in_typ"),
+            12.0,  # 保守通用值
         )
         v_out = _coalesce_numeric(
             request.v_out,
             device.specs.get("v_out_typ"),
             device.specs.get("v_out"),
+            device.specs.get("v_out_nom"),
             3.3 if category == "ldo" else 5.0,
         )
         i_out = _coalesce_numeric(
             request.i_out,
             device.specs.get("i_out_typ"),
-            _derate_abs_max(device.specs.get("i_out_max"), 0.7),
-            1.0,
+            device.specs.get("i_out_nom"),
+            1.0,  # 保守通用值，不使用 i_out_max
         )
 
         context["v_in"] = v_in
@@ -429,19 +442,21 @@ class DesignRecipeSynthesizer:
         v_in = _coalesce_numeric(
             request.v_in,
             device.specs.get("v_in_typ"),
-            _derate_abs_max(device.specs.get("v_in_max"), 0.6),
+            device.specs.get("v_in_nom"),
+            device.operating_constraints.get("v_in_typ"),
             12.0,
         )
         v_out = _coalesce_numeric(
             request.v_out,
             device.specs.get("v_out_typ"),
             device.specs.get("v_out"),
+            device.specs.get("v_out_nom"),
             5.0,
         )
         i_out = _coalesce_numeric(
             request.i_out,
             device.specs.get("i_out_typ"),
-            _derate_abs_max(device.specs.get("i_out_max"), 0.7),
+            device.specs.get("i_out_nom"),
             1.0,
         )
         fsw_hz = _coalesce_numeric(device.specs.get("fsw"), 500000.0)
@@ -728,18 +743,19 @@ class DesignRecipeSynthesizer:
         v_in = _coalesce_numeric(
             request.v_in,
             device.specs.get("v_in_typ"),
-            _derate_abs_max(device.specs.get("v_in_max"), 0.6),
+            device.specs.get("v_in_nom"),
             5.0,
         )
         v_out = _coalesce_numeric(
             request.v_out,
             device.specs.get("v_out_typ"),
+            device.specs.get("v_out_nom"),
             12.0,
         )
         i_out = _coalesce_numeric(
             request.i_out,
             device.specs.get("i_out_typ"),
-            _derate_abs_max(device.specs.get("i_out_max"), 0.7),
+            device.specs.get("i_out_nom"),
             0.5,
         )
         fsw_hz = _coalesce_numeric(device.specs.get("fsw"), 500000.0)
@@ -923,18 +939,19 @@ class DesignRecipeSynthesizer:
         v_in = _coalesce_numeric(
             request.v_in,
             device.specs.get("v_in_typ"),
-            _derate_abs_max(device.specs.get("v_in_max"), 0.6),
+            device.specs.get("v_in_nom"),
             12.0,
         )
         v_out = _coalesce_numeric(
             request.v_out,
             device.specs.get("v_out_typ"),
+            device.specs.get("v_out_nom"),
             5.0,
         )
         i_out = _coalesce_numeric(
             request.i_out,
             device.specs.get("i_out_typ"),
-            _derate_abs_max(device.specs.get("i_out_max"), 0.7),
+            device.specs.get("i_out_nom"),
             0.5,
         )
         fsw_hz = _coalesce_numeric(device.specs.get("fsw"), 100000.0)

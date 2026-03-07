@@ -662,13 +662,17 @@ def test_spice_with_device_spice_model_template() -> None:
 
 
 def test_recipe_driven_calculation_uses_formula_eval() -> None:
-    """当器件自带含可求解公式的 design_recipe 时，应用 FormulaEvaluator 计算参数"""
+    """当器件自带含可求解公式的 design_recipe 时，应用 FormulaEvaluator 计算参数。
+
+    注意：buck/ldo/boost 等工况敏感类型强制走硬编码重算（_RECALC_CATEGORIES），
+    所以此测试使用 custom_power 类型验证 formula_eval 路径。
+    """
     device = DeviceModel(
-        part_number="TEST_BUCK_DS",
-        category="buck",
+        part_number="TEST_CUSTOM_DS",
+        category="custom_power",
         specs={"fsw": "500kHz", "v_ref": "0.8"},
         topology=TopologyDef(
-            circuit_type="buck",
+            circuit_type="custom_power",
             external_components=[
                 ExternalComponent(role="input_cap", ref_prefix="C",
                                   default_value="10uF", value_expression="{c_in}",
@@ -749,7 +753,7 @@ def test_recipe_driven_calculation_uses_formula_eval() -> None:
     assert params.get("c_in") == "10uF"
 
     # ic_model 应被设置
-    assert params.get("ic_model") == "TEST_BUCK_DS"
+    assert params.get("ic_model") == "TEST_CUSTOM_DS"
 
 
 def test_recipe_driven_falls_back_when_no_evaluable_formulas() -> None:

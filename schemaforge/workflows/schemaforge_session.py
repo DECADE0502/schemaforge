@@ -621,7 +621,8 @@ class SchemaForgeSession:
         )
         self._device = bundle.device
         self._bundle = bundle
-        self._store.save_device(bundle.device)
+        # 不将计算后的 enriched device 写回 store，避免 recipe 缓存污染。
+        # 器件 JSON 只在 confirm_import() 新增器件时写入。
 
         # --- 工程审查 (42 条规则) ---
         review_warnings: list[str] = []
