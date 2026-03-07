@@ -1,5 +1,6 @@
 {
   "part_number": "TPS5430",
+  "aliases": [],
   "manufacturer": "TI",
   "description": "Buck降压转换器 5.5V-36V输入 3A SOT-23-6/SOIC-8",
   "category": "buck",
@@ -75,7 +76,10 @@
         "description": "接地"
       }
     ],
-    "size": [5.0, 4.0],
+    "size": [
+      5.0,
+      4.0
+    ],
     "edge_pad_w": 0.5,
     "edge_pad_h": 0.5,
     "pin_spacing": 1.0,
@@ -91,7 +95,9 @@
         "required": true,
         "default_value": "10uF/50V",
         "value_expression": "{c_in}",
-        "constraints": {"voltage_rating": ">= v_in * 1.2"},
+        "constraints": {
+          "voltage_rating": ">= v_in * 1.2"
+        },
         "schemdraw_element": "Capacitor"
       },
       {
@@ -100,7 +106,10 @@
         "required": true,
         "default_value": "47uF/10V",
         "value_expression": "{c_out}",
-        "constraints": {"voltage_rating": ">= v_out * 1.5", "esr": "low"},
+        "constraints": {
+          "voltage_rating": ">= v_out * 1.5",
+          "esr": "low"
+        },
         "schemdraw_element": "Capacitor"
       },
       {
@@ -109,7 +118,9 @@
         "required": true,
         "default_value": "22uH",
         "value_expression": "{l_value}",
-        "constraints": {"i_sat": ">= i_out_max * 1.3"},
+        "constraints": {
+          "i_sat": ">= i_out_max * 1.3"
+        },
         "schemdraw_element": "Inductor2"
       },
       {
@@ -145,7 +156,10 @@
         "required": true,
         "default_value": "SS34",
         "value_expression": "{diode}",
-        "constraints": {"v_rrm": ">= v_in_max", "i_f": ">= i_out_max"},
+        "constraints": {
+          "v_rrm": ">= v_in_max",
+          "i_f": ">= i_out_max"
+        },
         "schemdraw_element": "Diode"
       }
     ],
@@ -153,49 +167,70 @@
       {
         "net_name": "VIN",
         "device_pin": "VIN",
-        "external_refs": ["input_cap.1"],
+        "external_refs": [
+          "input_cap.1"
+        ],
         "is_power": true,
         "is_ground": false
       },
       {
         "net_name": "SW",
         "device_pin": "SW",
-        "external_refs": ["inductor.1", "catch_diode.cathode"],
+        "external_refs": [
+          "inductor.1",
+          "catch_diode.cathode"
+        ],
         "is_power": false,
         "is_ground": false
       },
       {
         "net_name": "VOUT",
         "device_pin": "",
-        "external_refs": ["inductor.2", "output_cap.1", "fb_upper.1"],
+        "external_refs": [
+          "inductor.2",
+          "output_cap.1",
+          "fb_upper.1"
+        ],
         "is_power": true,
         "is_ground": false
       },
       {
         "net_name": "FB",
         "device_pin": "FB",
-        "external_refs": ["fb_upper.2", "fb_lower.1"],
+        "external_refs": [
+          "fb_upper.2",
+          "fb_lower.1"
+        ],
         "is_power": false,
         "is_ground": false
       },
       {
         "net_name": "BST",
         "device_pin": "BST",
-        "external_refs": ["boot_cap.1"],
+        "external_refs": [
+          "boot_cap.1"
+        ],
         "is_power": false,
         "is_ground": false
       },
       {
         "net_name": "BST_SW",
         "device_pin": "",
-        "external_refs": ["boot_cap.2"],
+        "external_refs": [
+          "boot_cap.2"
+        ],
         "is_power": false,
         "is_ground": false
       },
       {
         "net_name": "GND",
         "device_pin": "GND",
-        "external_refs": ["input_cap.2", "output_cap.2", "catch_diode.anode", "fb_lower.2"],
+        "external_refs": [
+          "input_cap.2",
+          "output_cap.2",
+          "catch_diode.anode",
+          "fb_lower.2"
+        ],
         "is_power": false,
         "is_ground": true
       }
@@ -291,6 +326,104 @@
       "反馈电阻分压比精度影响输出电压精度"
     ]
   },
+  "design_recipe": {
+    "topology_family": "buck",
+    "summary": "TPS5430 的降压设计 recipe，基于典型 Buck 拓扑自动生成外围参数。",
+    "pin_roles": {
+      "VIN": "power_input",
+      "EN": "enable",
+      "BST": "bootstrap",
+      "SW": "switch",
+      "FB": "feedback",
+      "GND": "ground"
+    },
+    "default_parameters": {
+      "v_in": "12",
+      "v_out": "3.3",
+      "i_out_max": "2.1",
+      "fsw": "500",
+      "ic_model": "TPS5430",
+      "c_in": "10uF",
+      "c_out": "22uF",
+      "l_value": "6.8uH",
+      "c_boot": "100nF",
+      "v_ref": "1.22",
+      "r_fb_upper": "18kΩ",
+      "r_fb_lower": "10kΩ",
+      "r_fb_total": "28",
+      "led_resistor": "1kΩ"
+    },
+    "sizing_components": [
+      {
+        "role": "input_cap",
+        "value": "10uF",
+        "formula": "Cin = Iout * D * (1 - D) / (fsw * ΔVin)",
+        "rationale": "按输入纹波电压估算，并设置 10μF 的工程下限。"
+      },
+      {
+        "role": "inductor",
+        "value": "6.8uH",
+        "formula": "L = Vout * (1 - D) / (fsw * ΔIL)",
+        "rationale": "按 30% 输出电流纹波设计，再圆整到常用电感系列。"
+      },
+      {
+        "role": "output_cap",
+        "value": "22uF",
+        "formula": "Cout = ΔIL / (8 * fsw * ΔVout)",
+        "rationale": "按 1% 输出纹波估算，并设置 22μF 的工程下限。"
+      },
+      {
+        "role": "fb_upper",
+        "value": "18kΩ",
+        "formula": "Rupper = Rlower * (Vout / Vref - 1)",
+        "rationale": "固定下拉电阻 10kΩ，再按反馈参考电压求上拉值。"
+      },
+      {
+        "role": "fb_lower",
+        "value": "10kΩ",
+        "formula": "Rlower = 10kΩ",
+        "rationale": "优先选用稳定、噪声适中的常见阻值作为反馈下拉。"
+      }
+    ],
+    "formulas": [
+      {
+        "name": "占空比",
+        "expression": "D = Vout / Vin",
+        "value": "0.275",
+        "rationale": "用于估算电感电流纹波与输入电容 RMS 应力。"
+      }
+    ],
+    "evidence": [
+      {
+        "source_type": "datasheet",
+        "summary": "优先沿用典型 Buck 拓扑中的输入电容、电感、输出电容与反馈网络。",
+        "source_ref": "https://www.ti.com/lit/ds/symlink/tps5430.pdf",
+        "page": null,
+        "confidence": 0.85
+      },
+      {
+        "source_type": "formula_eval",
+        "summary": "公式驱动计算: 5 个参数由 recipe 公式求解",
+        "source_ref": "",
+        "page": null,
+        "confidence": 0.6
+      },
+      {
+        "source_type": "formula_eval",
+        "summary": "公式驱动计算: 5 个参数由 recipe 公式求解",
+        "source_ref": "",
+        "page": null,
+        "confidence": 0.6
+      },
+      {
+        "source_type": "formula_eval",
+        "summary": "公式驱动计算: 5 个参数由 recipe 公式求解",
+        "source_ref": "",
+        "page": null,
+        "confidence": 0.6
+      }
+    ]
+  },
   "spice_model": "XU{ref} {VIN} {GND} {EN} {BST} {SW} {FB} TPS5430",
   "spice_model_ref": "",
   "lcsc_part": "C9854",
@@ -300,12 +433,59 @@
   "source": "manual",
   "confidence": 1.0,
   "notes": "Step 6: 第二个复杂电路类型 — Buck降压转换器",
-  "design_roles": ["main_regulator", "step_down", "dc_dc"],
-  "selection_hints": ["宽输入电压范围（5.5V~36V）", "高效率降压场景", "中等负载（≤3A）", "工业级应用", "替代LDO降低功耗"],
-  "anti_patterns": ["输入输出压差<2V（LDO更合适）", "超低噪声要求（开关纹波难消除）", "极轻载（<50mA效率下降）", "无PCB空间放电感"],
-  "required_companions": ["功率电感22uH（饱和电流≥3.9A）", "输入电容10uF/50V（陶瓷）", "输出电容47uF（低ESR）", "自举电容100nF", "续流二极管SS34", "反馈电阻分压网络"],
-  "operating_constraints": {"min_v_in": "5.5V", "max_v_in": "36V", "max_i_out": "3A", "v_fb": "1.22V", "fsw_typ": "500kHz"},
-  "layout_hints": ["输入电容紧贴VIN和GND引脚", "SW走线尽量短粗（高di/dt）", "电感靠近SW引脚", "反馈走线远离SW节点（避免噪声耦合）", "GND铺铜面积尽量大", "自举电容靠近BST和SW引脚"],
-  "failure_modes": ["电感饱和导致电流失控", "输入电容ESR过高引起VIN纹波大", "续流二极管反向恢复导致开关损耗", "反馈走线拾取SW噪声导致输出不稳", "热关断（过载或散热不足）"],
-  "review_rules": ["check_inductor_saturation", "check_input_cap_rms", "check_diode_rating", "check_feedback_accuracy", "check_bootstrap_cap"]
+  "design_roles": [
+    "main_regulator",
+    "step_down",
+    "dc_dc"
+  ],
+  "selection_hints": [
+    "宽输入电压范围（5.5V~36V）",
+    "高效率降压场景",
+    "中等负载（≤3A）",
+    "工业级应用",
+    "替代LDO降低功耗"
+  ],
+  "anti_patterns": [
+    "输入输出压差<2V（LDO更合适）",
+    "超低噪声要求（开关纹波难消除）",
+    "极轻载（<50mA效率下降）",
+    "无PCB空间放电感"
+  ],
+  "required_companions": [
+    "功率电感22uH（饱和电流≥3.9A）",
+    "输入电容10uF/50V（陶瓷）",
+    "输出电容47uF（低ESR）",
+    "自举电容100nF",
+    "续流二极管SS34",
+    "反馈电阻分压网络"
+  ],
+  "operating_constraints": {
+    "min_v_in": "5.5V",
+    "max_v_in": "36V",
+    "max_i_out": "3A",
+    "v_fb": "1.22V",
+    "fsw_typ": "500kHz"
+  },
+  "layout_hints": [
+    "输入电容紧贴VIN和GND引脚",
+    "SW走线尽量短粗（高di/dt）",
+    "电感靠近SW引脚",
+    "反馈走线远离SW节点（避免噪声耦合）",
+    "GND铺铜面积尽量大",
+    "自举电容靠近BST和SW引脚"
+  ],
+  "failure_modes": [
+    "电感饱和导致电流失控",
+    "输入电容ESR过高引起VIN纹波大",
+    "续流二极管反向恢复导致开关损耗",
+    "反馈走线拾取SW噪声导致输出不稳",
+    "热关断（过载或散热不足）"
+  ],
+  "review_rules": [
+    "check_inductor_saturation",
+    "check_input_cap_rms",
+    "check_diode_rating",
+    "check_feedback_accuracy",
+    "check_bootstrap_cap"
+  ]
 }

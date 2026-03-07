@@ -27,9 +27,9 @@ Desktop.ini
 
 # Project specific
 schemaforge/store/library.db
-schemaforge/output/*.svg
-schemaforge/output/*.png
+schemaforge/output/
 *.svg
+*.png
 !schemaforge/store/devices/*.json
 
 # Pytest
@@ -43,23 +43,14 @@ htmlcov/
 # OpenCode / Agent state
 .opencode/
 .omc/
+.claude/
 
-# Output artifacts
-schemaforge/output/
-
-# Temp files
+# Temp / runtime directories
 .tmp/
-%TEMP%/
-nul
 .test-runtime/
 .codex-cache/
 .codex-tmp/
 .manual-tmp/
-PROMPT.md
-
-# Screenshots (dev-only)
-*.png
-
-# Old GUI files
-gui_pyside6_old.py
-web_gui.py
+.review-tmp*/
+%TEMP%/
+nul
