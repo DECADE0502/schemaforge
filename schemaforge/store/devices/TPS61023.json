@@ -1,0 +1,297 @@
+{
+  "part_number": "TPS61023",
+  "aliases": [],
+  "manufacturer": "Texas Instruments",
+  "description": "3.7A同步升压转换器，具有0.5V超低输入电压，支持超级电容备份电源应用",
+  "category": "boost",
+  "specs": {
+    "v_in_min": "0.5 V",
+    "v_in_max": "5.5 V",
+    "v_in_startup_min": "1.8 V",
+    "v_out_min": "2.2 V",
+    "v_out_max": "5.5 V",
+    "i_out_max": "3.7 A (valley switching current limit)",
+    "fsw_typ": "1 MHz (VIN > 1.5 V)",
+    "fsw_min": "0.5 MHz (VIN < 1 V)",
+    "efficiency_typ": "94% (VIN=3.6V, VOUT=5V, IOUT=1.5A)",
+    "i_q_typ": "20 µA (light load from VOUT)",
+    "i_shutdown": "0.1 µA",
+    "rds_on_ls": "47 mΩ",
+    "rds_on_hs": "68 mΩ",
+    "v_ref_accuracy": "±2.5%",
+    "ovp_threshold": "5.7 V",
+    "thermal_shutdown": "150°C",
+    "thermal_recovery": "130°C"
+  },
+  "symbol": {
+    "pins": [
+      {
+        "name": "VIN",
+        "pin_number": "1",
+        "side": "left",
+        "pin_type": "power_in",
+        "slot": "1/2",
+        "inverted": false,
+        "anchor_name": "",
+        "description": "输入电源引脚，输入电压范围0.5V至5.5V"
+      },
+      {
+        "name": "EN",
+        "pin_number": "2",
+        "side": "left",
+        "pin_type": "input",
+        "slot": "2/2",
+        "inverted": false,
+        "anchor_name": "",
+        "description": "使能引脚，高电平使能器件，低电平关断"
+      },
+      {
+        "name": "SW",
+        "pin_number": "3",
+        "side": "right",
+        "pin_type": "output",
+        "slot": "2/3",
+        "inverted": false,
+        "anchor_name": "",
+        "description": "开关节点，连接电感"
+      },
+      {
+        "name": "GND",
+        "pin_number": "4",
+        "side": "bottom",
+        "pin_type": "ground",
+        "slot": "1/1",
+        "inverted": false,
+        "anchor_name": "",
+        "description": "地引脚"
+      },
+      {
+        "name": "FB",
+        "pin_number": "5",
+        "side": "right",
+        "pin_type": "input",
+        "slot": "1/3",
+        "inverted": false,
+        "anchor_name": "",
+        "description": "反馈引脚，通过电阻分压设置输出电压"
+      },
+      {
+        "name": "VOUT",
+        "pin_number": "6",
+        "side": "right",
+        "pin_type": "output",
+        "slot": "3/3",
+        "inverted": false,
+        "anchor_name": "",
+        "description": "输出电压引脚，输出范围2.2V至5.5V"
+      }
+    ],
+    "size": [
+      6.0,
+      4.5
+    ],
+    "edge_pad_w": 0.5,
+    "edge_pad_h": 0.5,
+    "pin_spacing": 1.0,
+    "lead_len": 0.5,
+    "label_position": "top"
+  },
+  "topology": {
+    "circuit_type": "boost",
+    "external_components": [
+      {
+        "role": "input_cap",
+        "ref_prefix": "C",
+        "required": true,
+        "default_value": "10uF",
+        "value_expression": "{c_in}",
+        "constraints": {},
+        "schemdraw_element": "Capacitor"
+      },
+      {
+        "role": "inductor",
+        "ref_prefix": "L",
+        "required": true,
+        "default_value": "1.5uH",
+        "value_expression": "{l_value}",
+        "constraints": {},
+        "schemdraw_element": "Inductor2"
+      },
+      {
+        "role": "output_cap",
+        "ref_prefix": "C",
+        "required": true,
+        "default_value": "10uF",
+        "value_expression": "{c_out}",
+        "constraints": {},
+        "schemdraw_element": "Capacitor"
+      },
+      {
+        "role": "fb_upper",
+        "ref_prefix": "R",
+        "required": true,
+        "default_value": "30kΩ",
+        "value_expression": "{r_fb_upper}",
+        "constraints": {},
+        "schemdraw_element": "Resistor"
+      },
+      {
+        "role": "fb_lower",
+        "ref_prefix": "R",
+        "required": true,
+        "default_value": "10kΩ",
+        "value_expression": "{r_fb_lower}",
+        "constraints": {},
+        "schemdraw_element": "Resistor"
+      }
+    ],
+    "connections": [
+      {
+        "net_name": "VIN",
+        "device_pin": "VIN",
+        "external_refs": [
+          "input_cap.1",
+          "inductor.1"
+        ],
+        "is_power": true,
+        "is_ground": false
+      },
+      {
+        "net_name": "SW",
+        "device_pin": "SW",
+        "external_refs": [
+          "inductor.2"
+        ],
+        "is_power": false,
+        "is_ground": false
+      },
+      {
+        "net_name": "VOUT",
+        "device_pin": "",
+        "external_refs": [
+          "output_cap.1",
+          "fb_upper.1"
+        ],
+        "is_power": true,
+        "is_ground": false
+      },
+      {
+        "net_name": "FB",
+        "device_pin": "FB",
+        "external_refs": [
+          "fb_upper.2",
+          "fb_lower.1"
+        ],
+        "is_power": false,
+        "is_ground": false
+      },
+      {
+        "net_name": "GND",
+        "device_pin": "GND",
+        "external_refs": [
+          "input_cap.2",
+          "output_cap.2",
+          "fb_lower.2"
+        ],
+        "is_power": false,
+        "is_ground": true
+      }
+    ],
+    "parameters": {},
+    "calculations": {},
+    "design_rules": []
+  },
+  "design_recipe": {
+    "topology_family": "boost",
+    "summary": "TPS61023 Boost 升压拓扑计算 recipe。",
+    "pin_roles": {
+      "VIN": "power_input",
+      "EN": "enable",
+      "SW": "switch",
+      "GND": "ground",
+      "FB": "feedback",
+      "VOUT": "power_output"
+    },
+    "default_parameters": {
+      "v_in": "3.7",
+      "v_out": "5",
+      "i_out_max": "2.59",
+      "fsw": "500",
+      "ic_model": "TPS61023",
+      "c_in": "10uF",
+      "c_out": "10uF",
+      "l_value": "1.5uH",
+      "r_fb_upper": "30kΩ",
+      "r_fb_lower": "10kΩ",
+      "led_resistor": "1kΩ"
+    },
+    "sizing_components": [
+      {
+        "role": "inductor",
+        "value": "1.5uH",
+        "formula": "L = Vin * D / (fsw * ΔIL)",
+        "rationale": "确保连续导通模式并限制纹波电流在 30% 以内。"
+      },
+      {
+        "role": "output_cap",
+        "value": "10uF",
+        "formula": "Cout = Iout * D / (fsw * ΔVout)",
+        "rationale": "输出电容抑制开关纹波到 1% 以内。"
+      },
+      {
+        "role": "input_cap",
+        "value": "10uF",
+        "formula": "Cin ≥ Cout / 2",
+        "rationale": "输入去耦，至少 10μF。"
+      },
+      {
+        "role": "fb_upper",
+        "value": "30kΩ",
+        "formula": "Rupper = Rlower * (Vout / Vref - 1)",
+        "rationale": "反馈分压设定输出电压。"
+      },
+      {
+        "role": "fb_lower",
+        "value": "10kΩ",
+        "formula": "Rlower = 10kΩ",
+        "rationale": "固定下拉电阻。"
+      }
+    ],
+    "formulas": [
+      {
+        "name": "占空比",
+        "expression": "D = 1 - Vin / Vout",
+        "value": "0.26",
+        "rationale": "Boost 转换器占空比。"
+      }
+    ],
+    "evidence": [
+      {
+        "source_type": "datasheet",
+        "summary": "沿用 Boost 拓扑的标准电感、输出电容与反馈网络。",
+        "source_ref": "",
+        "page": null,
+        "confidence": 0.8
+      }
+    ]
+  },
+  "spice_model": "",
+  "spice_model_ref": "",
+  "lcsc_part": "",
+  "datasheet_url": "",
+  "easyeda_id": "",
+  "package": "SOT563 (DRL)",
+  "source": "pdf_parsed",
+  "confidence": 0.95,
+  "notes": "从 PDF 提取: test_assets\\TPS61023.pdf",
+  "design_roles": [
+    "dc_dc_converter"
+  ],
+  "selection_hints": [],
+  "anti_patterns": [],
+  "required_companions": [],
+  "operating_constraints": {},
+  "layout_hints": [],
+  "failure_modes": [],
+  "review_rules": []
+}

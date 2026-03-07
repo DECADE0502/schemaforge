@@ -29,7 +29,6 @@ from schemaforge.library.store import ComponentStore
 from schemaforge.library.symbol_builder import build_symbol
 from schemaforge.library.validator import DeviceDraft, PinDraft
 from schemaforge.schematic.renderer import TopologyRenderer
-from schemaforge.workflows.design_session import DesignSession
 
 
 @dataclass(slots=True)
@@ -180,17 +179,95 @@ class SchemaForgeSession:
                 )
             return self._build_from_device(device, message=f"已精确命中 {device.part_number}。")
 
-        legacy = DesignSession(self.store_dir).run(user_input)
-        matched = next((item for item in legacy.modules if item.device), None)
-        if matched and matched.device:
-            return self._build_from_device(
-                matched.device,
-                message="已按现有主链识别器件并生成设计。",
+        # --- 多模块分解：用 Planner 解析需求，逐模块匹配器件 ---
+        return self._start_multi_module(user_input, request)
+
+    def _start_multi_module(
+        self, user_input: str, request: UserDesignRequest,
+    ) -> SchemaForgeTurnResult:
+        """无精确型号时，用 Planner 分解为多模块，逐一检索匹配器件。"""
+        from schemaforge.design.planner import DesignPlanner
+        from schemaforge.design.retrieval import DeviceRetriever
+
+        planner = DesignPlanner()
+        plan = planner.plan(user_input)
+
+        if not plan.modules:
+            return SchemaForgeTurnResult(
+                status="error",
+                message="无法从需求中识别出任何电路模块，请描述更具体的电路需求。",
+                request=request,
             )
-        return SchemaForgeTurnResult(
-            status="error",
-            message=legacy.error or "当前请求无法自动完成，请明确器件型号或上传资料。",
-            request=request,
+
+        retriever = DeviceRetriever(self._store)
+        primary_device = None
+        aux_params: dict[str, str] = {}
+        module_info: list[str] = []
+
+        for mod in plan.modules:
+            # 如果模块指定了料号，优先精确匹配
+            if mod.part_number:
+                device = self._resolver.resolve(mod.part_number)
+                if device is None:
+                    return SchemaForgeTurnResult(
+                        status="needs_asset",
+                        message=(
+                            f"本地器件库里没有精确型号 {mod.part_number}，"
+                            "请上传 datasheet PDF 或引脚图片继续导入。"
+                        ),
+                        request=request,
+                        missing_part_number=mod.part_number,
+                    )
+                if primary_device is None:
+                    primary_device = device
+                    # 合并模块参数到 request
+                    if mod.parameters.get("v_in") and not request.v_in:
+                        request = apply_request_updates(request, v_in=mod.parameters["v_in"])
+                    if mod.parameters.get("v_out") and not request.v_out:
+                        request = apply_request_updates(request, v_out=mod.parameters["v_out"])
+                    self._request = request
+                module_info.append(f"{mod.role}: {device.part_number}")
+                continue
+
+            # 无料号：按分类检索
+            dev_req = mod.to_device_requirement()
+            matches = retriever.search_by_requirement(dev_req)
+            if matches:
+                device = matches[0].device
+                if primary_device is None and mod.category not in ("led", "voltage_divider", "rc_filter"):
+                    primary_device = device
+                    if mod.parameters.get("v_in") and not request.v_in:
+                        request = apply_request_updates(request, v_in=mod.parameters["v_in"])
+                    if mod.parameters.get("v_out") and not request.v_out:
+                        request = apply_request_updates(request, v_out=mod.parameters["v_out"])
+                    self._request = request
+                module_info.append(f"{mod.role}: {device.part_number}")
+            else:
+                module_info.append(f"{mod.role}: 未找到匹配器件")
+
+            # 辅助模块参数（LED 等）合并到 request/overrides
+            if mod.category == "led":
+                request = apply_request_updates(
+                    request,
+                    wants_led=True,
+                    led_color=mod.parameters.get("led_color", "green"),
+                )
+                self._request = request
+            elif mod.category in ("voltage_divider", "rc_filter"):
+                aux_params.update(mod.parameters)
+
+        if primary_device is None:
+            return SchemaForgeTurnResult(
+                status="error",
+                message="器件库中没有匹配的器件，请指定具体型号或上传 datasheet。",
+                request=request,
+            )
+
+        self._parameter_overrides.update(aux_params)
+        modules_desc = "、".join(module_info)
+        return self._build_from_device(
+            primary_device,
+            message=f"已按规划匹配器件（{modules_desc}）。",
         )
 
     def ingest_asset(self, filepath: str) -> SchemaForgeTurnResult:
