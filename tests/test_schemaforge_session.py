@@ -9,6 +9,7 @@ from schemaforge.design.synthesis import (
     ExactPartResolver,
     UserDesignRequest,
     parse_design_request,
+    parse_revision_request_v2,
 )
 from schemaforge.library.models import (
     DesignRecipe,
@@ -408,3 +409,155 @@ def test_recipe_driven_falls_back_when_no_evaluable_formulas() -> None:
 
     # 应回退到硬编码 LDO 计算（无 formula_eval evidence）
     assert not any(e.source_type == "formula_eval" for e in recipe.evidence)
+
+
+# ============================================================
+# P5: 多轮修改 — parse_revision_request_v2 测试
+# ============================================================
+
+
+class TestParseRevisionRequestV2:
+    """parse_revision_request_v2 增强解析测试。"""
+
+    def test_output_capacitor_change(self) -> None:
+        result = parse_revision_request_v2("把输出电容改成 47uF")
+        assert result.param_updates.get("c_out") == "47uF"
+
+    def test_input_capacitor_change(self) -> None:
+        result = parse_revision_request_v2("输入电容换成 22uF")
+        assert result.param_updates.get("c_in") == "22uF"
+
+    def test_inductor_change(self) -> None:
+        result = parse_revision_request_v2("电感用 22uH 的")
+        assert result.param_updates.get("l_value") == "22uH"
+
+    def test_output_voltage_change(self) -> None:
+        result = parse_revision_request_v2("输出调到 1.8V")
+        assert result.request_updates.get("v_out") is not None
+
+    def test_add_led(self) -> None:
+        result = parse_revision_request_v2("加一个红色 LED 指示灯")
+        assert result.request_updates.get("wants_led") is True
+        assert result.request_updates.get("led_color") == "red"
+
+    def test_remove_led(self) -> None:
+        result = parse_revision_request_v2("去掉 LED 指示灯")
+        assert result.request_updates.get("wants_led") is False
+
+    def test_device_replacement(self) -> None:
+        result = parse_revision_request_v2("换成 TPS5430")
+        assert result.replace_device == "TPS5430"
+
+    def test_device_replacement_chinese(self) -> None:
+        result = parse_revision_request_v2("改用 AMS1117-3.3 这个芯片")
+        assert result.replace_device == "AMS1117-3.3"
+
+    def test_frequency_change_khz(self) -> None:
+        result = parse_revision_request_v2("开关频率改成 600kHz")
+        assert result.param_updates.get("fsw") == "600000"
+
+    def test_frequency_change_mhz(self) -> None:
+        result = parse_revision_request_v2("fsw 设为 1.2MHz")
+        assert result.param_updates.get("fsw") == "1200000"
+
+    def test_generic_param_change(self) -> None:
+        result = parse_revision_request_v2("把 c_out 改成 100uF")
+        assert result.param_updates.get("c_out") == "100uF"
+
+    def test_output_current_change(self) -> None:
+        result = parse_revision_request_v2("输出电流调到 500mA")
+        assert result.request_updates.get("i_out") == "0.5"
+
+    def test_add_module_filter(self) -> None:
+        result = parse_revision_request_v2("加一个滤波器")
+        assert len(result.structural_ops) == 1
+        assert result.structural_ops[0]["op_type"] == "add_module"
+        assert result.structural_ops[0]["category"] == "rc_filter"
+
+    def test_remove_module(self) -> None:
+        result = parse_revision_request_v2("去掉分压器")
+        assert len(result.structural_ops) == 1
+        assert result.structural_ops[0]["op_type"] == "remove_module"
+
+    def test_empty_input(self) -> None:
+        result = parse_revision_request_v2("你好")
+        assert not result.param_updates
+        assert not result.request_updates
+        assert not result.replace_device
+        assert not result.structural_ops
+
+    def test_combined_changes(self) -> None:
+        """同时修改多个参数。"""
+        result = parse_revision_request_v2("输出电容改成 47uF，加一个 LED 指示灯")
+        assert result.param_updates.get("c_out") == "47uF"
+        assert result.request_updates.get("wants_led") is True
+
+
+class TestSchemaForgeSessionReviseEnhanced:
+    """SchemaForgeSession.revise() 增强功能测试。"""
+
+    def test_revise_replaces_device(self, tmp_path: Path) -> None:
+        """器件替换: 库中有新器件时自动重建。"""
+        store = ComponentStore(tmp_path / "store")
+        store.save_device(
+            DeviceModel(part_number="AMS1117-3.3", category="ldo",
+                        specs={"v_out": "3.3V"})
+        )
+        store.save_device(
+            DeviceModel(part_number="AMS1117-5.0", category="ldo",
+                        specs={"v_out": "5.0V"})
+        )
+        session = SchemaForgeSession(tmp_path / "store", use_mock=True)
+
+        # 初始设计
+        r1 = session.start("用 AMS1117-3.3 搭一个 5V 转 3.3V 稳压电路")
+        assert r1.status == "generated"
+        assert session.bundle is not None
+        assert session.bundle.device.part_number == "AMS1117-3.3"
+
+        # 替换器件
+        r2 = session.revise("换成 AMS1117-5.0")
+        assert r2.status == "generated"
+        assert session.bundle is not None
+        assert session.bundle.device.part_number == "AMS1117-5.0"
+
+    def test_revise_device_not_found(self, tmp_path: Path) -> None:
+        """器件替换: 库中没有新器件时返回 needs_asset。"""
+        store = ComponentStore(tmp_path / "store")
+        store.save_device(
+            DeviceModel(part_number="AMS1117-3.3", category="ldo",
+                        specs={"v_out": "3.3V"})
+        )
+        session = SchemaForgeSession(tmp_path / "store", use_mock=True)
+        session.start("用 AMS1117-3.3 搭一个 5V 转 3.3V 稳压电路")
+
+        r = session.revise("换成 TPS5430")
+        assert r.status == "needs_asset"
+        assert r.missing_part_number == "TPS5430"
+
+    def test_revise_frequency_change(self, tmp_path: Path) -> None:
+        """修改开关频率并重建。"""
+        store = ComponentStore(tmp_path / "store")
+        store.save_device(
+            DeviceModel(part_number="AMS1117-3.3", category="ldo",
+                        specs={"v_out": "3.3V"})
+        )
+        session = SchemaForgeSession(tmp_path / "store", use_mock=True)
+        session.start("用 AMS1117-3.3 搭一个 5V 转 3.3V 稳压电路")
+
+        r = session.revise("开关频率改成 600kHz")
+        assert r.status == "generated"
+
+    def test_revise_with_summary_message(self, tmp_path: Path) -> None:
+        """修改后消息中包含变更摘要。"""
+        store = ComponentStore(tmp_path / "store")
+        store.save_device(
+            DeviceModel(part_number="AMS1117-3.3", category="ldo",
+                        specs={"v_out": "3.3V"})
+        )
+        session = SchemaForgeSession(tmp_path / "store", use_mock=True)
+        session.start("用 AMS1117-3.3 搭一个 5V 转 3.3V 稳压电路")
+
+        r = session.revise("输出电容改成 100uF")
+        assert r.status == "generated"
+        assert "c_out" in r.message

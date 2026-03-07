@@ -13,7 +13,7 @@ from schemaforge.design.synthesis import (
     UserDesignRequest,
     apply_request_updates,
     parse_design_request,
-    parse_revision_request,
+    parse_revision_request_v2,
 )
 from schemaforge.ingest.datasheet_extractor import (
     apply_user_answers,
@@ -312,20 +312,80 @@ class SchemaForgeSession:
                 message="当前还没有可修改的设计。",
             )
 
-        param_updates, request_updates = parse_revision_request(user_input)
-        if not param_updates and not request_updates:
+        revision = parse_revision_request_v2(user_input)
+
+        # 检查是否有任何可执行的修改
+        has_changes = bool(
+            revision.param_updates
+            or revision.request_updates
+            or revision.replace_device
+            or revision.structural_ops
+        )
+        if not has_changes:
             return SchemaForgeTurnResult(
                 status="error",
                 message="暂时无法理解这条修改请求，请再具体一点。",
                 request=self._request,
             )
 
-        if request_updates:
-            self._request = apply_request_updates(self._request, **request_updates)
-        self._parameter_overrides.update(param_updates)
+        # 1. 器件替换: 尝试从库中解析新器件
+        if revision.replace_device:
+            new_device = self._resolver.resolve(revision.replace_device)
+            if new_device is None:
+                return SchemaForgeTurnResult(
+                    status="needs_asset",
+                    message=(
+                        f"本地器件库里没有型号 {revision.replace_device}，"
+                        "请上传 datasheet PDF 或引脚图片继续导入。"
+                    ),
+                    request=self._request,
+                    missing_part_number=revision.replace_device,
+                )
+            # 替换器件并重建设计
+            self._parameter_overrides.clear()  # 器件变了，旧参数覆盖不再适用
+            if revision.request_updates:
+                self._request = apply_request_updates(
+                    self._request, **revision.request_updates,
+                )
+            return self._build_from_device(
+                new_device,
+                message=f"已将器件替换为 {new_device.part_number}，重新生成设计。",
+            )
+
+        # 2. 应用请求级更新
+        if revision.request_updates:
+            self._request = apply_request_updates(
+                self._request, **revision.request_updates,
+            )
+
+        # 3. 应用参数级覆盖
+        self._parameter_overrides.update(revision.param_updates)
+
+        # 4. 收集修改说明
+        change_parts: list[str] = []
+        if revision.param_updates:
+            change_parts.append(
+                "参数: " + ", ".join(
+                    f"{k}={v}" for k, v in revision.param_updates.items()
+                )
+            )
+        if revision.request_updates:
+            change_parts.append(
+                "约束: " + ", ".join(
+                    f"{k}={v}" for k, v in revision.request_updates.items()
+                )
+            )
+        if revision.structural_ops:
+            change_parts.append(
+                "结构: " + ", ".join(
+                    str(op.get("op_type", "")) for op in revision.structural_ops
+                )
+            )
+
+        summary = "；".join(change_parts) if change_parts else "局部修改"
         return self._build_from_device(
             self._device,
-            message="已在现有设计上完成局部修改。",
+            message=f"已在现有设计上完成修改（{summary}）。",
         )
 
     def _build_from_device(self, device, *, message: str) -> SchemaForgeTurnResult:

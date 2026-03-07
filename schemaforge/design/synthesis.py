@@ -700,44 +700,219 @@ def apply_request_updates(
     return replace(request, **updates)
 
 
-def parse_revision_request(user_input: str) -> tuple[dict[str, str], dict[str, object]]:
-    """将常见自然语言修改解析为参数与请求更新。"""
-    text = user_input.lower()
-    param_updates: dict[str, str] = {}
-    request_updates: dict[str, object] = {}
+@dataclass(slots=True)
+class RevisionResult:
+    """修改解析结果（增强版）。"""
 
+    param_updates: dict[str, str] = field(default_factory=dict)
+    """直接参数覆盖 (key → value)"""
+
+    request_updates: dict[str, object] = field(default_factory=dict)
+    """UserDesignRequest 字段更新"""
+
+    replace_device: str = ""
+    """如果非空，表示需要换用该型号器件"""
+
+    structural_ops: list[dict[str, object]] = field(default_factory=list)
+    """结构化操作描述 (add_module / remove_module 等)"""
+
+    explanation: str = ""
+    """修改说明"""
+
+
+def parse_revision_request(user_input: str) -> tuple[dict[str, str], dict[str, object]]:
+    """将常见自然语言修改解析为参数与请求更新。
+
+    返回 (param_updates, request_updates) 兼容旧接口。
+    """
+    result = parse_revision_request_v2(user_input)
+    return result.param_updates, result.request_updates
+
+
+def parse_revision_request_v2(user_input: str) -> RevisionResult:
+    """增强版修改解析 — 支持结构化操作、器件替换等。"""
+    text = user_input.lower()
+    result = RevisionResult()
+
+    # ---- 参数级修改 ----
+
+    # 输出电容
     if "输出电容" in user_input or "output cap" in text:
         value = _extract_value_token(user_input)
         if value:
-            param_updates["c_out"] = value
+            result.param_updates["c_out"] = value
 
+    # 输入电容
     if "输入电容" in user_input or "input cap" in text:
         value = _extract_value_token(user_input)
         if value:
-            param_updates["c_in"] = value
+            result.param_updates["c_in"] = value
 
+    # 电感
     if "电感" in user_input or "inductor" in text:
         value = _extract_value_token(user_input)
         if value:
-            param_updates["l_value"] = value
+            result.param_updates["l_value"] = value
 
+    # 反馈电阻上
+    if any(kw in user_input for kw in ["上分压", "上臂", "反馈上"]) or "r_fb_upper" in text:
+        value = _extract_value_token(user_input)
+        if value:
+            result.param_updates["r_fb_upper"] = value
+
+    # 反馈电阻下
+    if any(kw in user_input for kw in ["下分压", "下臂", "反馈下"]) or "r_fb_lower" in text:
+        value = _extract_value_token(user_input)
+        if value:
+            result.param_updates["r_fb_lower"] = value
+
+    # 通用电阻/电容/电感值修改: "把 xxx 改成 yyy"
+    generic_change = re.search(
+        r"把\s*(\w+)\s*(?:改成|改为|换成|设为|设置为)\s*(\d+(?:\.\d+)?\s*(?:uF|μF|µF|nF|pF|uH|μH|µH|mH|kΩ|Ω|k|V|A|mA)\b)",
+        user_input,
+        re.IGNORECASE,
+    )
+    if generic_change:
+        param_name = _normalize_param_name(generic_change.group(1))
+        param_value = generic_change.group(2).strip()
+        if param_name:
+            result.param_updates[param_name] = param_value
+
+    # 开关频率
+    fsw_match = re.search(
+        r"(?:开关频率|fsw|频率)\s*(?:改成|改为|换成|设为|设置为|=|:)?\s*(\d+(?:\.\d+)?)\s*(kHz|MHz|Hz)\b",
+        user_input,
+        re.IGNORECASE,
+    )
+    if fsw_match:
+        fsw_val = float(fsw_match.group(1))
+        fsw_unit = fsw_match.group(2).lower()
+        if fsw_unit == "khz":
+            fsw_val *= 1000
+        elif fsw_unit == "mhz":
+            fsw_val *= 1e6
+        result.param_updates["fsw"] = _trim_float(fsw_val)
+
+    # ---- 请求级修改 ----
+
+    # 输出电压变更
     if "输出" in user_input and "v" in text:
         voltage = _extract_voltage_token(user_input)
         if voltage:
-            request_updates["v_out"] = voltage
+            result.request_updates["v_out"] = voltage
 
+    # 输入电压变更
+    if "输入" in user_input and "v" in text and "输出" not in user_input:
+        voltage = _extract_voltage_token(user_input)
+        if voltage:
+            result.request_updates["v_in"] = voltage
+
+    # 更一般的 "电压改成 XY" 模式
+    voltage_change = re.search(
+        r"(?:输出|v_?out)\s*(?:改成|改为|换成|设为|调到|调整到|设置为)?\s*(\d+(?:\.\d+)?)\s*[Vv]",
+        user_input,
+    )
+    if voltage_change and "v_out" not in result.request_updates:
+        result.request_updates["v_out"] = voltage_change.group(1)
+
+    # 输出电流变更
+    current_change = re.search(
+        r"(?:输出电流|电流|i_?out)\s*(?:改成|改为|换成|设为|调到|设置为)?\s*(\d+(?:\.\d+)?)\s*(mA|A)\b",
+        user_input,
+        re.IGNORECASE,
+    )
+    if current_change:
+        i_val = float(current_change.group(1))
+        i_unit = current_change.group(2).lower()
+        if i_unit == "ma":
+            i_val /= 1000.0
+        result.request_updates["i_out"] = _trim_float(i_val)
+
+    # LED 添加
     if ("加" in user_input or "添加" in user_input) and (
         "led" in text or "指示灯" in user_input
     ):
-        request_updates["wants_led"] = True
-        request_updates["led_color"] = _extract_led_color(user_input)
+        result.request_updates["wants_led"] = True
+        result.request_updates["led_color"] = _extract_led_color(user_input)
 
+    # LED 删除
     if ("去掉" in user_input or "删除" in user_input) and (
         "led" in text or "指示灯" in user_input
     ):
-        request_updates["wants_led"] = False
+        result.request_updates["wants_led"] = False
 
-    return param_updates, request_updates
+    # ---- 器件替换 ----
+    replace_match = re.search(
+        r"(?:换成|替换为|改用|改成用|换用|替换成)\s*([A-Z][A-Z0-9._-]{2,}\d[A-Z0-9._-]*)",
+        user_input,
+        re.IGNORECASE,
+    )
+    if replace_match:
+        result.replace_device = replace_match.group(1).upper()
+        result.explanation = f"替换器件为 {result.replace_device}"
+
+    # ---- 结构化操作 ----
+
+    # 添加模块: "加一个滤波器/分压器/..."
+    add_module_match = re.search(
+        r"(?:加|添加|增加)\s*(?:一个|个)?\s*(滤波器|分压器|稳压器|LDO|DCDC|运放|LED|指示灯|去耦电容)",
+        user_input,
+    )
+    if add_module_match:
+        module_type = add_module_match.group(1)
+        category_map = {
+            "滤波器": "rc_filter",
+            "分压器": "voltage_divider",
+            "稳压器": "ldo",
+            "ldo": "ldo",
+            "dcdc": "buck",
+            "运放": "opamp",
+            "led": "led_indicator",
+            "指示灯": "led_indicator",
+            "去耦电容": "decoupling",
+        }
+        cat = category_map.get(module_type.lower(), module_type.lower())
+        result.structural_ops.append({
+            "op_type": "add_module",
+            "category": cat,
+            "description": module_type,
+        })
+
+    # 删除模块: "去掉滤波器/分压器/..."
+    remove_module_match = re.search(
+        r"(?:去掉|删除|移除|去除)\s*(?:那个|这个)?\s*(滤波器|分压器|稳压器|LDO|DCDC|运放|LED模块|指示灯模块|去耦电容)",
+        user_input,
+    )
+    if remove_module_match:
+        module_type = remove_module_match.group(1)
+        result.structural_ops.append({
+            "op_type": "remove_module",
+            "target": module_type,
+        })
+
+    return result
+
+
+def _normalize_param_name(raw: str) -> str:
+    """将中文/缩写参数名规范化为 recipe 字段名。"""
+    mapping: dict[str, str] = {
+        "输出电容": "c_out",
+        "cout": "c_out",
+        "c_out": "c_out",
+        "输入电容": "c_in",
+        "cin": "c_in",
+        "c_in": "c_in",
+        "电感": "l_value",
+        "l": "l_value",
+        "l_value": "l_value",
+        "上臂电阻": "r_fb_upper",
+        "r_fb_upper": "r_fb_upper",
+        "下臂电阻": "r_fb_lower",
+        "r_fb_lower": "r_fb_lower",
+        "led电阻": "led_resistor",
+        "led限流电阻": "led_resistor",
+    }
+    return mapping.get(raw.lower().strip(), raw.lower().strip())
 
 
 def _extract_part_number(user_input: str) -> str:
