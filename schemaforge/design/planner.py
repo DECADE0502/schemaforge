@@ -132,8 +132,13 @@ PLANNER_SYSTEM_PROMPT = """\
 2. 电源模块和负载模块分开
 3. parameters 只填用户明确给出的参数
 4. category 可选: ldo, buck, led, voltage_divider, rc_filter, passive, memory, mcu, sensor, connector, other
-   如果用户指定了具体料号，category 可以填 other，料号填入 part_number
-5. connections_to 描述模块间的电气连接关系
+5. **型号精确性**：如果用户明确指定了器件型号（如 TPS54202、AMS1117-3.3），
+   你必须原样保留在 part_number 字段，**严禁替换为近似型号或其他型号**。
+   TPS54202 就是 TPS54202，不是 TPS54200，不是 TPS5430。
+   同时根据上下文推断 category（如 DCDC→buck，稳压→ldo）。
+6. connections_to 描述模块间的电气连接关系
+7. 当用户同时指定了型号和电路类型，应将两者合并到同一个 module 中，
+   不要拆成"型号模块"和"电路模块"两个独立 module。
 """
 
 
@@ -197,27 +202,48 @@ class DesignPlanner:
         v_in, v_out = _extract_voltages(user_input)
 
         # ── 料号直接引用检测 ──
-        # 匹配真实料号：必须同时包含字母和数字，且长度 >= 4
-        # 排除纯缩写关键字 (LDO, LED, MCU, ADC, DAC, etc.)
         import re
         _KEYWORD_ABBRS = {"LDO", "LED", "MCU", "ADC", "DAC", "USB", "SPI",
                           "I2C", "CAN", "PWM", "GPIO", "UART", "BUCK"}
         pn_match = re.search(
             r"([A-Z][A-Z0-9]{2,}[-]?[A-Z0-9]*\d[A-Z0-9]*)", user_input,
         )
+        detected_pn = ""
         if pn_match and pn_match.group(1) not in _KEYWORD_ABBRS:
-            pn = pn_match.group(1)
-            modules.append(ModuleRequirement(
-                role="user_specified",
-                category="other",
-                description=f"用户指定器件 {pn}",
-                part_number=pn,
-            ))
+            detected_pn = pn_match.group(1)
 
-        # LDO / 稳压
+        # ── 推断电路类别 ──
         has_ldo = any(kw in text for kw in ["ldo", "稳压", "线性稳压"])
-        if has_ldo:
+        has_buck = any(kw in text for kw in [
+            "buck", "降压", "开关电源", "dcdc", "dc-dc",
+        ])
+
+        # 当检测到料号时，与电路类别合并为一个模块
+        if detected_pn:
+            # 从上下文推断 category（不硬编码为 "other"）
+            if has_buck:
+                category = "buck"
+            elif has_ldo:
+                category = "ldo"
+            else:
+                category = "other"
+
             params: dict[str, str] = {}
+            if v_in:
+                params["v_in"] = v_in
+            if v_out:
+                params["v_out"] = v_out
+
+            modules.append(ModuleRequirement(
+                role="main_regulator",
+                category=category,
+                description=f"用户指定器件 {detected_pn}",
+                part_number=detected_pn,
+                parameters=params,
+            ))
+        elif has_ldo:
+            # 无料号的 LDO
+            params = {}
             if v_in:
                 params["v_in"] = v_in
             if v_out:
@@ -228,10 +254,8 @@ class DesignPlanner:
                 description=f"LDO稳压器 {v_in or '?'}V→{v_out or '?'}V",
                 parameters=params,
             ))
-
-        # Buck / 降压
-        has_buck = any(kw in text for kw in ["buck", "降压", "开关电源"])
-        if has_buck and not has_ldo:
+        elif has_buck:
+            # 无料号的 Buck
             params = {}
             if v_in:
                 params["v_in"] = v_in

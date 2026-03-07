@@ -1,6 +1,6 @@
 """SchemaForge 拓扑布局策略
 
-5种电路布局策略函数，通过装饰器注册到 TopologyRenderer。
+5种电路布局策略函数 + 1个通用泛型布局，通过装饰器注册到 TopologyRenderer。
 每个函数从 DeviceModel 数据动态生成原理图SVG。
 """
 
@@ -17,7 +17,7 @@ from schemaforge.core.calculator import (
     calculate_led_resistor,
     calculate_rc_filter,
 )
-from schemaforge.library.models import DeviceModel
+from schemaforge.library.models import DeviceModel, ExternalComponent, TopologyConnection
 from schemaforge.render.base import find_nearest_e24, format_value, output_path
 from schemaforge.schematic.renderer import TopologyRenderer
 
@@ -456,5 +456,317 @@ def layout_rc_filter(
         # 输出端
         elm.Line().right(1.5)
         elm.Dot(open=True).label(f'OUT\nfc={f_cutoff}Hz', 'right')
+
+    return filepath
+
+
+# ============================================================
+# schemdraw 元件名 → 类的映射
+# ============================================================
+
+_ELEMENT_MAP: dict[str, type] = {
+    "Capacitor": elm.Capacitor,
+    "Resistor": elm.Resistor,
+    "Inductor": elm.Inductor,
+    "Inductor2": elm.Inductor2,
+    "LED": elm.LED,
+    "Diode": elm.Diode,
+}
+
+
+def _resolve_element_class(name: str) -> type:
+    """将 schemdraw_element 字符串映射为 schemdraw 元件类。"""
+    cls = _ELEMENT_MAP.get(name)
+    if cls is None:
+        # 尝试从 elm 模块动态查找
+        cls = getattr(elm, name, None)
+    return cls or elm.Resistor  # 兜底用电阻符号
+
+
+def _resolve_value(comp: ExternalComponent, params: dict[str, Any]) -> str:
+    """从 params 解析 value_expression，回退到 default_value。
+
+    value_expression 格式: "{c_in}" -> 查找 params["c_in"]
+    """
+    expr = comp.value_expression.strip()
+    if expr.startswith("{") and expr.endswith("}"):
+        key = expr[1:-1]
+        if key in params:
+            return str(params[key])
+    # 回退到默认值
+    return comp.default_value
+
+
+def _classify_connections(
+    connections: list[TopologyConnection],
+) -> tuple[
+    TopologyConnection | None,
+    TopologyConnection | None,
+    TopologyConnection | None,
+    list[TopologyConnection],
+]:
+    """将 connections 分类为 VIN、VOUT、GND 和其他。
+
+    Returns:
+        (vin_conn, vout_conn, gnd_conn, others)
+    """
+    vin: TopologyConnection | None = None
+    vout: TopologyConnection | None = None
+    gnd: TopologyConnection | None = None
+    others: list[TopologyConnection] = []
+
+    for conn in connections:
+        if conn.is_ground and gnd is None:
+            gnd = conn
+        elif conn.is_power and conn.device_pin and vin is None:
+            # 有 device_pin 的 power net 优先视为 VIN
+            vin = conn
+        elif conn.is_power and vout is None:
+            vout = conn
+        else:
+            others.append(conn)
+
+    # 如果没找到带 device_pin 的 VIN，但有两个 power net，
+    # 按出现顺序把第一个当 VIN
+    if vin is None and vout is not None:
+        # 扫描 others 看有没有 power net 被分到 others
+        pass  # vout 已是唯一 power net，保持原样
+
+    return vin, vout, gnd, others
+
+
+def _build_component_map(
+    components: list[ExternalComponent],
+) -> dict[str, ExternalComponent]:
+    """按 role 建立外部元件索引。"""
+    return {comp.role: comp for comp in components}
+
+
+# ============================================================
+# 通用泛型布局（fallback）
+# ============================================================
+
+
+def layout_generic(
+    device: DeviceModel,
+    params: dict[str, Any],
+    filename: str | None = None,
+) -> str:
+    """通用泛型布局 — 从 TopologyDef 数据驱动渲染任意电路。
+
+    布局策略：
+    1. 左侧输入 (VIN/IN/VCC)
+    2. 输入侧被动元件（电容等，向下接地）
+    3. 中央 IC（若有 device.symbol 或拓扑有 device_pin）
+    4. 输出侧被动元件
+    5. 右侧输出 (VOUT/OUT)
+    6. 底部接地
+    """
+    topology = device.topology
+    assert topology is not None  # 调用方已保证
+
+    comp_map = _build_component_map(topology.external_components)
+    vin_conn, vout_conn, gnd_conn, other_conns = _classify_connections(
+        topology.connections,
+    )
+
+    # 判断是否需要画 IC（有任何 connection 引用了 device_pin 说明有主IC）
+    has_ic = any(c.device_pin for c in topology.connections)
+
+    # 收集引用到各 net 的外部元件 role（从 external_refs 解析 "role.pin"）
+    def _roles_on_net(conn: TopologyConnection | None) -> list[str]:
+        if conn is None:
+            return []
+        roles: list[str] = []
+        for ref in conn.external_refs:
+            role = ref.split(".")[0] if "." in ref else ref
+            if role not in roles:
+                roles.append(role)
+        return roles
+
+    input_roles = _roles_on_net(vin_conn)
+    output_roles = _roles_on_net(vout_conn)
+    gnd_roles = _roles_on_net(gnd_conn)
+
+    # 确定输入/输出标签
+    vin_label = (vin_conn.net_name if vin_conn else "IN")
+    vout_label = (vout_conn.net_name if vout_conn else "OUT")
+    v_in_val = _safe_float(params.get("v_in", params.get("v_supply", "")), 0)
+    v_out_val = _safe_float(params.get("v_out", ""), 0)
+    vin_text = f"{vin_label}\n{v_in_val}V" if v_in_val else vin_label
+    vout_text = f"{vout_label}\n{v_out_val}V" if v_out_val else vout_label
+
+    ic_model = str(params.get("ic_model", device.part_number))
+
+    # 文件名
+    if filename is None:
+        filename = f"topo_generic_{topology.circuit_type}.svg"
+    filepath = output_path(filename)
+
+    # power_led 可选段（与现有布局行为一致）
+    power_led = str(params.get("power_led", "")).lower() == "true"
+    led_color = str(params.get("led_color", "green"))
+    led_resistor = str(params.get("led_resistor", "1k\u03a9"))
+
+    # --- 解析各元件的显示值 ---
+    def _display_value(comp: ExternalComponent) -> str:
+        raw = _resolve_value(comp, params)
+        return raw.replace("u", "\u03bc") if raw else ""
+
+    # 收集「输入侧向下接地」的元件 = 同时出现在 input net 和 gnd net 的 role
+    input_to_gnd = [r for r in input_roles if r in gnd_roles]
+    # 收集「输出侧向下接地」的元件
+    output_to_gnd = [r for r in output_roles if r in gnd_roles]
+
+    with schemdraw.Drawing(file=filepath, show=False) as d:
+        d.config(fontsize=11, unit=3)
+
+        # ── 输入端标记 ──
+        elm.Dot(open=True).label(vin_text, "left")
+        elm.Line().right(1)
+
+        # ── 输入侧无源器件（向下到地） ──
+        ref_counter = 1
+        for role in input_to_gnd:
+            comp = comp_map.get(role)
+            if comp is None:
+                continue
+            elm.Dot()
+            d.push()
+            elem_cls = _resolve_element_class(comp.schemdraw_element)
+            val = _display_value(comp)
+            label_text = f"{comp.ref_prefix}{ref_counter}\n{val}" if val else f"{comp.ref_prefix}{ref_counter}"
+            elem_cls().down().label(label_text, "right")
+            elm.Ground()
+            d.pop()
+            ref_counter += 1
+
+        # ── IC 中心 ──
+        if has_ic:
+            elm.Line().right(1)
+
+            if device.symbol:
+                u1 = TopologyRenderer.build_ic_element(device.symbol, ic_model)
+                u1.anchor("inL1")
+            else:
+                # 从拓扑连接推断引脚：先收集 (name, side)，再统一计算 slot
+                pin_specs: list[tuple[str, str]] = []  # (name, side)
+                for conn in topology.connections:
+                    if not conn.device_pin:
+                        continue
+                    if conn.is_ground:
+                        pin_specs.append((conn.device_pin, "bottom"))
+                    elif conn.is_power and conn == vin_conn:
+                        pin_specs.append((conn.device_pin, "left"))
+                    elif conn.is_power:
+                        pin_specs.append((conn.device_pin, "right"))
+                    elif conn.device_pin.upper() in ("SW", "OUT", "VOUT"):
+                        pin_specs.append((conn.device_pin, "right"))
+                    elif conn.device_pin.upper() in ("BOOT", "BST"):
+                        pin_specs.append((conn.device_pin, "top"))
+                    else:
+                        pin_specs.append((conn.device_pin, "left"))
+
+                if not pin_specs:
+                    pin_specs = [("IN", "left"), ("OUT", "right")]
+
+                # 保证右侧至少有一个引脚（用于输出连线）
+                if not any(s == "right" for _, s in pin_specs):
+                    pin_specs.append(("OUT", "right"))
+
+                # 统计每侧的引脚数
+                side_counts: dict[str, int] = {}
+                for _, side in pin_specs:
+                    side_counts[side] = side_counts.get(side, 0) + 1
+
+                # 构建 IcPin（slot = idx/total）
+                side_idx: dict[str, int] = {}
+                ic_pins: list[elm.IcPin] = []
+                for name, side in pin_specs:
+                    side_idx[side] = side_idx.get(side, 0) + 1
+                    ic_pins.append(
+                        elm.IcPin(
+                            name=name,
+                            side=side,
+                            slot=f"{side_idx[side]}/{side_counts[side]}",
+                        )
+                    )
+
+                u1 = elm.Ic(
+                    pins=ic_pins,
+                    size=(4, 3),
+                ).label(ic_model, "top").anchor("inL1")
+
+            # IC GND 连接
+            has_bottom = any(
+                c.device_pin and c.is_ground for c in topology.connections
+            )
+            if has_bottom:
+                d.push()
+                elm.Line().at(u1.inB1).down(1)  # type: ignore[call-arg]
+                elm.Ground()
+                d.pop()
+
+            # IC 输出引脚
+            elm.Line().at(u1.inR1).right(1)  # type: ignore[call-arg]
+        else:
+            # 无IC：直接在输入侧无源器件之后继续水平连线
+            # 对于水平串联的元件（出现在 input net 但不接地的 role）
+            for role in input_roles:
+                if role in input_to_gnd:
+                    continue
+                comp = comp_map.get(role)
+                if comp is None:
+                    continue
+                elem_cls = _resolve_element_class(comp.schemdraw_element)
+                val = _display_value(comp)
+                label_text = f"{comp.ref_prefix}{ref_counter}\n{val}" if val else f"{comp.ref_prefix}{ref_counter}"
+                elem_cls().right().label(label_text, "top")
+                ref_counter += 1
+
+            # 处理 "other" nets 中的串联元件
+            for conn in other_conns:
+                for ref in conn.external_refs:
+                    role = ref.split(".")[0] if "." in ref else ref
+                    comp = comp_map.get(role)
+                    if comp is None:
+                        continue
+                    # 避免重复绘制已在 input/output 侧画过的
+                    if role in input_to_gnd or role in output_to_gnd:
+                        continue
+                    if role in input_roles or role in output_roles:
+                        continue
+                    elem_cls = _resolve_element_class(comp.schemdraw_element)
+                    val = _display_value(comp)
+                    label_text = f"{comp.ref_prefix}{ref_counter}\n{val}" if val else f"{comp.ref_prefix}{ref_counter}"
+                    elem_cls().right().label(label_text, "top")
+                    ref_counter += 1
+
+        # ── 输出侧无源器件（向下到地） ──
+        for role in output_to_gnd:
+            comp = comp_map.get(role)
+            if comp is None:
+                continue
+            elm.Dot()
+            d.push()
+            elem_cls = _resolve_element_class(comp.schemdraw_element)
+            val = _display_value(comp)
+            label_text = f"{comp.ref_prefix}{ref_counter}\n{val}" if val else f"{comp.ref_prefix}{ref_counter}"
+            elem_cls().down().label(label_text, "right")
+            elm.Ground()
+            d.pop()
+            ref_counter += 1
+
+        # ── Power LED（可选） ──
+        if power_led:
+            d.push()
+            elm.Resistor().down().label(f"RLED\n{led_resistor}", "right")
+            elm.LED().down().label(f"DLED\n{led_color}", "right")
+            elm.Ground()
+            d.pop()
+
+        # ── 输出端标记 ──
+        elm.Line().right(1)
+        elm.Dot(open=True).label(vout_text, "right")
 
     return filepath

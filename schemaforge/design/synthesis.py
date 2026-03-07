@@ -155,14 +155,16 @@ class DesignRecipeSynthesizer:
         device: DeviceModel,
         request: UserDesignRequest,
     ) -> tuple[DeviceModel, DesignRecipe]:
-        if device.design_recipe is not None and device.topology is not None:
-            return device, device.design_recipe
-
         category = (device.category or request.category).lower()
+
+        # 对 buck/ldo 总是按当前请求参数重新计算，避免复用陈旧缓存
         if category == "buck":
             recipe, topology = self._build_buck_recipe(device, request)
         elif category == "ldo":
             recipe, topology = self._build_ldo_recipe(device, request)
+        elif device.design_recipe is not None and device.topology is not None:
+            # 未知类型且库里已有完整 recipe，直接沿用
+            return device, device.design_recipe
         else:
             recipe, topology = self._build_generic_recipe(device)
 
@@ -218,7 +220,7 @@ class DesignRecipeSynthesizer:
         v_in = _coalesce_numeric(
             request.v_in,
             device.specs.get("v_in_typ"),
-            device.specs.get("v_in_max"),
+            _derate_abs_max(device.specs.get("v_in_max"), 0.6),
             12.0,
         )
         v_out = _coalesce_numeric(
@@ -227,7 +229,12 @@ class DesignRecipeSynthesizer:
             device.specs.get("v_out"),
             5.0,
         )
-        i_out = _coalesce_numeric(request.i_out, device.specs.get("i_out_max"), 1.0)
+        i_out = _coalesce_numeric(
+            request.i_out,
+            device.specs.get("i_out_typ"),
+            _derate_abs_max(device.specs.get("i_out_max"), 0.7),
+            1.0,
+        )
         fsw_hz = _coalesce_numeric(device.specs.get("fsw"), 500000.0)
         if fsw_hz < 10000:
             fsw_hz *= 1000.0
@@ -625,6 +632,20 @@ def _parse_engineering_value(value: str | float | int | None) -> float | None:
     return number * multipliers.get(unit, 1.0)
 
 
+def _derate_abs_max(value: str | None, ratio: float) -> str | None:
+    """对绝对最大值按比例降额，返回工程合理的典型工况值。
+
+    例如 v_in_max="36V", ratio=0.6 → "21.6" (60% of 36)。
+    如果解析失败则返回 None，让 _coalesce_numeric 继续回退。
+    """
+    if value is None:
+        return None
+    parsed = _parse_engineering_value(value)
+    if parsed is None or parsed <= 0:
+        return None
+    return _trim_float(parsed * ratio)
+
+
 def _coalesce_numeric(*values: object) -> float:
     for value in values:
         parsed = _parse_engineering_value(value)  # type: ignore[arg-type]
@@ -757,27 +778,79 @@ def _render_bom(device: DeviceModel, params: dict[str, str]) -> str:
 
 
 def _render_spice(device: DeviceModel, params: dict[str, str]) -> str:
-    circuit_type = device.topology.circuit_type if device.topology else device.category
+    """生成 SPICE 网表。
+
+    优先级:
+    1. device.spice_model 模板 + topology.connections 映射引脚
+    2. topology.connections 自动推导（无 spice_model 时）
+    3. 旧版硬编码回退（无 topology 时）
+    """
+    topology = device.topology
     lines = ["* SchemaForge synthesized netlist", f"* Device: {device.part_number}", ""]
-    if circuit_type == "buck":
-        lines.append(f"V1 VIN 0 DC {params.get('v_in', '12')}")
-        lines.append(f"XU1 VIN SW FB 0 {device.part_number}")
-        lines.append(f"CIN VIN 0 {_spice_passive(params.get('c_in', '10uF'))}")
-        lines.append(f"L1 SW VOUT {_spice_passive(params.get('l_value', '10uH'))}")
-        lines.append(f"COUT VOUT 0 {_spice_passive(params.get('c_out', '22uF'))}")
-        lines.append(
-            f"RFB1 VOUT FB {_spice_passive(params.get('r_fb_upper', '52.3kΩ'))}"
-        )
-        lines.append(
-            f"RFB2 FB 0 {_spice_passive(params.get('r_fb_lower', '10kΩ'))}"
-        )
-    elif circuit_type == "ldo":
-        lines.append(f"V1 VIN 0 DC {params.get('v_in', '5')}")
-        lines.append(f"XU1 VIN VOUT 0 {device.part_number}")
-        lines.append(f"CIN VIN 0 {_spice_passive(params.get('c_in', '10uF'))}")
-        lines.append(f"COUT VOUT 0 {_spice_passive(params.get('c_out', '22uF'))}")
+
+    # 总是加输入电源
+    lines.append(f"V1 VIN 0 DC {params.get('v_in', '12')}")
+
+    if topology is not None and topology.connections:
+        # 构建 net_name → SPICE 节点名 映射
+        net_map: dict[str, str] = {}
+        for conn in topology.connections:
+            if conn.is_ground:
+                net_map[conn.net_name] = "0"
+            else:
+                net_map[conn.net_name] = conn.net_name
+
+        # --- 主 IC 行 ---
+        if device.spice_model:
+            # spice_model 格式: "XU{ref} {VIN} {GND} {EN} {BST} {SW} {FB} TPS5430"
+            # 将 {PIN_NAME} 占位符映射到拓扑中的网络名
+            ic_line = device.spice_model.replace("{ref}", "1")
+            for conn in topology.connections:
+                if conn.device_pin:
+                    placeholder = "{" + conn.device_pin + "}"
+                    ic_line = ic_line.replace(placeholder, net_map.get(conn.net_name, conn.net_name))
+            # 清理未映射的占位符（用 0 代替）
+            ic_line = re.sub(r"\{[^}]+\}", "0", ic_line)
+            lines.append(ic_line)
+        else:
+            # 无 spice_model: 按 topology connections 中有 device_pin 的生成 XU1
+            ic_pins = [
+                net_map.get(conn.net_name, conn.net_name)
+                for conn in topology.connections
+                if conn.device_pin
+            ]
+            lines.append(f"XU1 {' '.join(ic_pins)} {device.part_number}")
+
+        # --- 外围元件行 ---
+        ref_count: dict[str, int] = {}
+
+        for comp in topology.external_components:
+            ref_count[comp.ref_prefix] = ref_count.get(comp.ref_prefix, 0) + 1
+            ref = f"{comp.ref_prefix}{ref_count[comp.ref_prefix]}"
+            value = _resolve_component_value(comp, params)
+
+            # 找该元件连接的两个网络节点
+            comp_nets = _find_component_spice_nets(comp.role, topology.connections, net_map)
+            if len(comp_nets) >= 2:
+                lines.append(f"{ref} {comp_nets[0]} {comp_nets[1]} {_spice_passive(value)}")
+            elif len(comp_nets) == 1:
+                lines.append(f"{ref} {comp_nets[0]} 0 {_spice_passive(value)}")
     else:
-        lines.append("* 当前仅对 Buck / LDO 生成结构化 SPICE 网表")
+        # 旧版硬编码回退（无 topology 时）
+        circuit_type = device.category or ""
+        if circuit_type == "buck":
+            lines.append(f"XU1 VIN SW FB 0 {device.part_number}")
+            lines.append(f"CIN VIN 0 {_spice_passive(params.get('c_in', '10uF'))}")
+            lines.append(f"L1 SW VOUT {_spice_passive(params.get('l_value', '10uH'))}")
+            lines.append(f"COUT VOUT 0 {_spice_passive(params.get('c_out', '22uF'))}")
+            lines.append(f"RFB1 VOUT FB {_spice_passive(params.get('r_fb_upper', '52.3kΩ'))}")
+            lines.append(f"RFB2 FB 0 {_spice_passive(params.get('r_fb_lower', '10kΩ'))}")
+        elif circuit_type == "ldo":
+            lines.append(f"XU1 VIN VOUT 0 {device.part_number}")
+            lines.append(f"CIN VIN 0 {_spice_passive(params.get('c_in', '10uF'))}")
+            lines.append(f"COUT VOUT 0 {_spice_passive(params.get('c_out', '22uF'))}")
+        else:
+            lines.append("* 当前仅对 Buck / LDO 生成结构化 SPICE 网表")
 
     if params.get("power_led", "").lower() == "true":
         lines.append(
@@ -788,6 +861,34 @@ def _render_spice(device: DeviceModel, params: dict[str, str]) -> str:
     lines.append("")
     lines.append(".end")
     return "\n".join(lines)
+
+
+def _find_component_spice_nets(
+    role: str,
+    connections: list[TopologyConnection],
+    net_map: dict[str, str],
+) -> list[str]:
+    """根据拓扑连接找到外围元件的两个 SPICE 网络节点。
+
+    在 topology connections 中，外围元件以 "role.1" / "role.2" 引用。
+    返回 [pin1_net, pin2_net]。
+    """
+    pin1_ref = f"{role}.1"
+    pin2_ref = f"{role}.2"
+    pin1_net = ""
+    pin2_net = ""
+    for conn in connections:
+        for ext_ref in conn.external_refs:
+            if ext_ref == pin1_ref:
+                pin1_net = net_map.get(conn.net_name, conn.net_name)
+            elif ext_ref == pin2_ref:
+                pin2_net = net_map.get(conn.net_name, conn.net_name)
+    result: list[str] = []
+    if pin1_net:
+        result.append(pin1_net)
+    if pin2_net:
+        result.append(pin2_net)
+    return result
 
 
 def _component_label(role: str) -> str:

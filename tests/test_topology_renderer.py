@@ -19,9 +19,11 @@ import pytest
 
 from schemaforge.library.models import (
     DeviceModel,
+    ExternalComponent,
     PinSide,
     SymbolDef,
     SymbolPin,
+    TopologyConnection,
     TopologyDef,
 )
 from schemaforge.library.store import ComponentStore
@@ -280,12 +282,17 @@ class TestRenderDispatch:
         with pytest.raises(ValueError, match="没有拓扑定义"):
             renderer.render(no_topology_device, {})
 
-    def test_render_raises_for_unknown_type(
+    def test_render_falls_back_to_generic_for_unknown_type(
         self, renderer: TopologyRenderer, unknown_type_device: DeviceModel
     ) -> None:
-        """未知电路类型应抛出 ValueError"""
-        with pytest.raises(ValueError, match="不支持的电路类型"):
-            renderer.render(unknown_type_device, {})
+        """未知电路类型应通过 layout_generic 泛型布局渲染"""
+        path = renderer.render(
+            unknown_type_device, {}, filename="test_generic_fallback.svg",
+        )
+        assert os.path.exists(path)
+        with open(path, encoding="utf-8") as f:
+            content = f.read()
+        assert "<svg" in content
 
     def test_render_from_params_alias(
         self, renderer: TopologyRenderer, ams1117_device: DeviceModel
@@ -361,3 +368,169 @@ class TestOldVsNewRendering:
 
         new_path = renderer.render(divider_device, params, filename="test_new_divider.svg")
         assert os.path.exists(new_path)
+
+
+# ============================================================
+# 通用泛型布局测试
+# ============================================================
+
+class TestLayoutGeneric:
+    """测试 layout_generic 通用泛型布局"""
+
+    def test_generic_novel_circuit_with_ic(self, renderer: TopologyRenderer) -> None:
+        """新电路类型 + IC + 外部元件可通过泛型布局渲染"""
+        device = DeviceModel(
+            part_number="FLYBACK_CTRL_X1",
+            description="Flyback controller (hypothetical)",
+            symbol=SymbolDef(
+                pins=[
+                    SymbolPin(name="VIN", side=PinSide.LEFT, pin_number="1"),
+                    SymbolPin(name="GND", side=PinSide.BOTTOM, pin_number="2"),
+                    SymbolPin(name="DRV", side=PinSide.RIGHT, pin_number="3"),
+                ],
+                size=(4.0, 3.0),
+            ),
+            topology=TopologyDef(
+                circuit_type="flyback",
+                external_components=[
+                    ExternalComponent(
+                        role="input_cap",
+                        ref_prefix="C",
+                        default_value="10uF",
+                        value_expression="{c_in}",
+                        schemdraw_element="Capacitor",
+                    ),
+                    ExternalComponent(
+                        role="output_cap",
+                        ref_prefix="C",
+                        default_value="47uF",
+                        value_expression="{c_out}",
+                        schemdraw_element="Capacitor",
+                    ),
+                ],
+                connections=[
+                    TopologyConnection(
+                        net_name="VIN",
+                        device_pin="VIN",
+                        external_refs=["input_cap.1"],
+                        is_power=True,
+                    ),
+                    TopologyConnection(
+                        net_name="VOUT",
+                        device_pin="",
+                        external_refs=["output_cap.1"],
+                        is_power=True,
+                    ),
+                    TopologyConnection(
+                        net_name="GND",
+                        device_pin="GND",
+                        external_refs=["input_cap.2", "output_cap.2"],
+                        is_ground=True,
+                    ),
+                ],
+            ),
+        )
+        params = {"v_in": 24.0, "v_out": 5.0, "c_in": "22uF", "c_out": "100uF"}
+        path = renderer.render(device, params, filename="test_generic_flyback.svg")
+        assert os.path.exists(path)
+        assert os.path.getsize(path) > 100
+        with open(path, encoding="utf-8") as f:
+            content = f.read()
+        assert "<svg" in content
+        assert "</svg>" in content
+
+    def test_generic_passive_only_circuit(self, renderer: TopologyRenderer) -> None:
+        """纯无源电路（无IC）可通过泛型布局渲染"""
+        device = DeviceModel(
+            part_number="NOTCH_FILTER",
+            description="Twin-T notch filter (hypothetical)",
+            topology=TopologyDef(
+                circuit_type="notch_filter",
+                external_components=[
+                    ExternalComponent(
+                        role="r_series",
+                        ref_prefix="R",
+                        default_value="10k",
+                        value_expression="{r_val}",
+                        schemdraw_element="Resistor",
+                    ),
+                    ExternalComponent(
+                        role="c_shunt",
+                        ref_prefix="C",
+                        default_value="100nF",
+                        value_expression="{c_val}",
+                        schemdraw_element="Capacitor",
+                    ),
+                ],
+                connections=[
+                    TopologyConnection(
+                        net_name="IN",
+                        device_pin="",
+                        external_refs=["r_series.1"],
+                        is_power=False,
+                    ),
+                    TopologyConnection(
+                        net_name="OUT",
+                        device_pin="",
+                        external_refs=["r_series.2", "c_shunt.1"],
+                        is_power=True,
+                    ),
+                    TopologyConnection(
+                        net_name="GND",
+                        device_pin="",
+                        external_refs=["c_shunt.2"],
+                        is_ground=True,
+                    ),
+                ],
+            ),
+        )
+        params = {"r_val": "4.7k", "c_val": "220nF"}
+        path = renderer.render(device, params, filename="test_generic_notch.svg")
+        assert os.path.exists(path)
+        with open(path, encoding="utf-8") as f:
+            content = f.read()
+        assert "<svg" in content
+
+    def test_generic_with_power_led(self, renderer: TopologyRenderer) -> None:
+        """泛型布局的 power_led 可选段正常工作"""
+        device = DeviceModel(
+            part_number="BOOST_X1",
+            description="Boost converter (hypothetical)",
+            topology=TopologyDef(
+                circuit_type="boost",
+                external_components=[
+                    ExternalComponent(
+                        role="input_cap",
+                        ref_prefix="C",
+                        default_value="10uF",
+                        schemdraw_element="Capacitor",
+                    ),
+                ],
+                connections=[
+                    TopologyConnection(
+                        net_name="VIN",
+                        device_pin="VIN",
+                        external_refs=["input_cap.1"],
+                        is_power=True,
+                    ),
+                    TopologyConnection(
+                        net_name="VOUT",
+                        device_pin="",
+                        external_refs=[],
+                        is_power=True,
+                    ),
+                    TopologyConnection(
+                        net_name="GND",
+                        device_pin="GND",
+                        external_refs=["input_cap.2"],
+                        is_ground=True,
+                    ),
+                ],
+            ),
+        )
+        params = {"v_in": 3.3, "v_out": 5.0, "power_led": "true", "led_color": "red"}
+        path = renderer.render(device, params, filename="test_generic_boost_led.svg")
+        assert os.path.exists(path)
+        with open(path, encoding="utf-8") as f:
+            content = f.read()
+        assert "<svg" in content

@@ -208,18 +208,29 @@ class SchemaForgeSession:
             )
 
         draft = self._apply_draft_answers(self._pending_draft, answers or {})
-        add_result = self._service.add_device_from_draft(
-            draft,
-            force=True,
-            skip_validation=True,
-        )
-        if not add_result.success or add_result.device is None:
+
+        # --- 安全落库流程: 校验 → 生成 symbol → 试转换(不写盘) → 写盘 ---
+
+        # 1. 校验草稿（不跳过）
+        validation = self._service.validate_only(draft)
+        if not validation.is_valid:
             return SchemaForgeTurnResult(
-                status="error",
-                message=add_result.error_message or "器件入库失败。",
+                status="needs_confirmation",
+                message="草稿校验未通过，请补充信息: "
+                + "; ".join(e.message for e in validation.errors),
                 request=self._request,
+                import_preview=ImportPreview(
+                    draft=draft,
+                    symbol_preview_base64="",
+                    questions=[
+                        {"field": e.field_path, "message": e.message, "suggestion": e.suggestion}
+                        for e in validation.errors
+                    ],
+                ),
             )
 
+        # 2. 生成 symbol（在落库前）
+        symbol = None
         if draft.pins:
             symbol = build_symbol(
                 part_number=draft.part_number,
@@ -235,6 +246,36 @@ class SchemaForgeSession:
                 category=draft.category,
                 package=draft.package,
             )
+
+        # 3. 试转换（不写盘），确保 DeviceModel 构造成功
+        dry_run = self._service.add_device_from_draft(
+            draft,
+            force=True,
+            skip_dedupe=True,
+            persist=False,
+        )
+        if not dry_run.success or dry_run.device is None:
+            return SchemaForgeTurnResult(
+                status="error",
+                message=dry_run.error_message or "器件模型转换失败，无法入库。",
+                request=self._request,
+            )
+
+        # 4. 一切通过，写盘
+        add_result = self._service.add_device_from_draft(
+            draft,
+            force=True,
+            skip_dedupe=True,
+        )
+        if not add_result.success or add_result.device is None:
+            return SchemaForgeTurnResult(
+                status="error",
+                message=add_result.error_message or "器件入库失败。",
+                request=self._request,
+            )
+
+        # 5. 附加 symbol
+        if symbol is not None:
             self._service.update_device_symbol(draft.part_number, symbol)
 
         device = self._service.get(draft.part_number)

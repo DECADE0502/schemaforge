@@ -56,7 +56,10 @@ class TopologyRenderer:
 
         layout_fn = self.LAYOUT_STRATEGIES.get(topology.circuit_type)
         if layout_fn is None:
-            raise ValueError(f"不支持的电路类型: {topology.circuit_type}")
+            # 泛型布局 fallback — 从 TopologyDef 数据驱动渲染
+            from schemaforge.schematic.topology import layout_generic
+
+            layout_fn = layout_generic
 
         return layout_fn(device, params, filename)
 

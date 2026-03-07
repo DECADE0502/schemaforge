@@ -107,6 +107,7 @@ class LibraryService:
         force: bool = False,
         skip_validation: bool = False,
         skip_dedupe: bool = False,
+        persist: bool = True,
     ) -> AddDeviceResult:
         """从草稿创建器件并入库
 
@@ -117,6 +118,7 @@ class LibraryService:
             force: 强制入库（跳过重复检测阻塞）
             skip_validation: 跳过校验（仅用于迁移/修复）
             skip_dedupe: 跳过去重检测
+            persist: 是否持久化到存储（False 仅做转换+校验，不写盘）
 
         Returns:
             AddDeviceResult
@@ -162,16 +164,17 @@ class LibraryService:
                 error_message=f"器件模型转换失败: {exc}",
             )
 
-        # 4. 保存
-        try:
-            self._store.save_device(device)
-        except Exception as exc:
-            return AddDeviceResult(
-                success=False,
-                validation=validation,
-                duplicate_check=dup_result,
-                error_message=f"保存失败: {exc}",
-            )
+        # 4. 保存（仅在 persist=True 时写盘）
+        if persist:
+            try:
+                self._store.save_device(device)
+            except Exception as exc:
+                return AddDeviceResult(
+                    success=False,
+                    validation=validation,
+                    duplicate_check=dup_result,
+                    error_message=f"保存失败: {exc}",
+                )
 
         return AddDeviceResult(
             success=True,
