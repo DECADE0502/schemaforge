@@ -154,6 +154,20 @@ class ToolRegistry:
             tools = [t for t in tools if t.category == category]
         return tools
 
+    def merge(self, other: ToolRegistry) -> ToolRegistry:
+        """合并另一个注册表的工具到新注册表中。
+
+        冲突时以 *other* 为准（覆盖）。
+        原始注册表不会被修改。
+
+        Returns:
+            新的 ToolRegistry，包含两个注册表的全部工具
+        """
+        merged = ToolRegistry()
+        merged._tools.update(self._tools)
+        merged._tools.update(other._tools)
+        return merged
+
     def get_tool_descriptions(self, category: str | None = None) -> list[dict[str, Any]]:
         """生成工具描述列表（用于 AI system prompt）
 

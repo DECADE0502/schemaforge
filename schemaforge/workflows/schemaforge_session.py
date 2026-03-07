@@ -4,7 +4,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 import base64
+import json
 from pathlib import Path
+from typing import Any, Callable
 
 from schemaforge.design.synthesis import (
     DesignBundle,
@@ -20,6 +22,7 @@ from schemaforge.ingest.datasheet_extractor import (
     extract_from_image,
     extract_from_pdf,
 )
+from schemaforge.library.models import DeviceModel
 from schemaforge.library.service import LibraryService
 from schemaforge.library.store import ComponentStore
 from schemaforge.library.symbol_builder import build_symbol
@@ -89,23 +92,75 @@ class SchemaForgeTurnResult:
 class SchemaForgeSession:
     """统一设计会话。"""
 
-    def __init__(self, store_dir: Path | str, use_mock: bool = True) -> None:
+    def __init__(
+        self,
+        store_dir: Path | str,
+        use_mock: bool = True,
+        on_event: Callable[..., Any] | None = None,
+    ) -> None:
         self.store_dir = Path(store_dir)
         self.use_mock = use_mock
+        self._on_event = on_event
         self._store = ComponentStore(self.store_dir)
         self._service = LibraryService(self.store_dir)
         self._resolver = ExactPartResolver(self._store)
         self._synthesizer = DesignRecipeSynthesizer()
         self._request: UserDesignRequest | None = None
-        self._device = None
+        self._device: DeviceModel | None = None
         self._bundle: DesignBundle | None = None
         self._parameter_overrides: dict[str, str] = {}
         self._pending_draft: DeviceDraft | None = None
         self._pending_app_circuit: dict[str, object] = {}  # P3: 待附加的应用电路
+        self._orchestrator: Any | None = None
 
     @property
     def bundle(self) -> DesignBundle | None:
         return self._bundle
+
+    # ----------------------------------------------------------
+    # Orchestrator（AI 多轮编排）
+    # ----------------------------------------------------------
+
+    def _build_orchestrator(self) -> Any:
+        """懒构建 Orchestrator: 合并全局工具 + 会话工具，注入 system prompt。"""
+        from schemaforge.agent.design_tools import build_design_tool_registry
+        from schemaforge.agent.orchestrator import Orchestrator
+        from schemaforge.agent.tools import default_registry
+        from schemaforge.ai.prompts import build_design_workbench_prompt
+
+        session_registry = build_design_tool_registry(self)
+        merged = default_registry.merge(session_registry)
+
+        tool_desc_list = merged.get_tool_descriptions()
+        tool_desc_text = json.dumps(tool_desc_list, ensure_ascii=False, indent=2)
+        system_prompt = build_design_workbench_prompt(tool_desc_text)
+
+        return Orchestrator(
+            tool_registry=merged,
+            system_prompt=system_prompt,
+            on_event=self._on_event,
+        )
+
+    def get_orchestrator(self) -> Any:
+        """获取或创建 Orchestrator 实例。"""
+        if self._orchestrator is None:
+            self._orchestrator = self._build_orchestrator()
+        return self._orchestrator
+
+    def run_orchestrated(self, user_input: str) -> Any:
+        """通过 Orchestrator 的 AI 多轮循环处理用户输入。
+
+        Orchestrator 自动执行工具调用循环，直到返回需要
+        GUI 响应的动作（ask_user / present_draft / finalize / fail）。
+
+        Args:
+            user_input: 用户自然语言消息
+
+        Returns:
+            AgentStep — 需要 GUI 处理的动作
+        """
+        orch = self.get_orchestrator()
+        return orch.run_turn(user_input)
 
     def start(self, user_input: str) -> SchemaForgeTurnResult:
         request = parse_design_request(user_input)
@@ -361,7 +416,23 @@ class SchemaForgeSession:
         # 3. 应用参数级覆盖
         self._parameter_overrides.update(revision.param_updates)
 
-        # 4. 收集修改说明
+        # 4. 执行结构化操作（add_module / remove_module）
+        structural_warnings: list[str] = []
+        for op in revision.structural_ops:
+            op_type = str(op.get("op_type", ""))
+            if op_type == "add_module":
+                category = str(op.get("category", ""))
+                desc = str(op.get("description", category))
+                warning = self._execute_add_module(category, desc)
+                if warning:
+                    structural_warnings.append(warning)
+            elif op_type == "remove_module":
+                target = str(op.get("target", ""))
+                warning = self._execute_remove_module(target)
+                if warning:
+                    structural_warnings.append(warning)
+
+        # 5. 收集修改说明
         change_parts: list[str] = []
         if revision.param_updates:
             change_parts.append(
@@ -376,19 +447,96 @@ class SchemaForgeSession:
                 )
             )
         if revision.structural_ops:
-            change_parts.append(
-                "结构: " + ", ".join(
-                    str(op.get("op_type", "")) for op in revision.structural_ops
+            executed_ops = [
+                str(op.get("op_type", "")) + ":" + str(
+                    op.get("category", op.get("target", ""))
                 )
-            )
+                for op in revision.structural_ops
+            ]
+            change_parts.append("结构: " + ", ".join(executed_ops))
 
         summary = "；".join(change_parts) if change_parts else "局部修改"
-        return self._build_from_device(
+        result = self._build_from_device(
             self._device,
             message=f"已在现有设计上完成修改（{summary}）。",
         )
+        result.warnings.extend(structural_warnings)
+        return result
 
-    def _build_from_device(self, device, *, message: str) -> SchemaForgeTurnResult:
+    # ----------------------------------------------------------
+    # 结构化操作执行
+    # ----------------------------------------------------------
+
+    _MODULE_CATEGORY_TO_REQUEST: dict[str, dict[str, object]] = {
+        "led_indicator": {"wants_led": True, "led_color": "green"},
+    }
+
+    _MODULE_CATEGORY_TO_PARAMS: dict[str, dict[str, str]] = {
+        "decoupling": {"c_decoupling": "100nF"},
+        "rc_filter": {"rc_filter_r": "10kΩ", "rc_filter_c": "100nF"},
+        "voltage_divider": {"divider_r1": "10kΩ", "divider_r2": "10kΩ"},
+    }
+
+    _REMOVE_TARGET_MAP: dict[str, str] = {
+        "led": "led_indicator",
+        "指示灯": "led_indicator",
+        "led模块": "led_indicator",
+        "指示灯模块": "led_indicator",
+        "滤波器": "rc_filter",
+        "分压器": "voltage_divider",
+        "去耦电容": "decoupling",
+        "稳压器": "ldo",
+        "ldo": "ldo",
+    }
+
+    def _execute_add_module(self, category: str, description: str) -> str:
+        """执行 add_module 结构化操作。
+
+        将模块类型映射到 request 更新或 parameter 覆盖。
+        返回空字符串表示成功，非空字符串为警告信息。
+        """
+        # LED 直接走 request 级别
+        if category in self._MODULE_CATEGORY_TO_REQUEST:
+            updates = self._MODULE_CATEGORY_TO_REQUEST[category]
+            if self._request is not None:
+                self._request = apply_request_updates(self._request, **updates)
+            return ""
+
+        # 其他辅助模块走参数覆盖
+        if category in self._MODULE_CATEGORY_TO_PARAMS:
+            params = self._MODULE_CATEGORY_TO_PARAMS[category]
+            self._parameter_overrides.update(params)
+            return ""
+
+        return f"不支持自动添加 '{description}' 类型的模块，需手动配置。"
+
+    def _execute_remove_module(self, target: str) -> str:
+        """执行 remove_module 结构化操作。
+
+        返回空字符串表示成功，非空字符串为警告信息。
+        """
+        category = self._REMOVE_TARGET_MAP.get(target.lower(), target.lower())
+
+        # LED 移除
+        if category == "led_indicator":
+            if self._request is not None:
+                self._request = apply_request_updates(
+                    self._request, wants_led=False,
+                )
+            # 清理相关参数
+            for key in ["power_led", "led_color", "led_current_ma"]:
+                self._parameter_overrides.pop(key, None)
+            return ""
+
+        # 辅助模块参数移除
+        if category in self._MODULE_CATEGORY_TO_PARAMS:
+            for key in self._MODULE_CATEGORY_TO_PARAMS[category]:
+                self._parameter_overrides.pop(key, None)
+            return ""
+
+        return f"未找到可移除的 '{target}' 模块。"
+
+    def _build_from_device(self, device: DeviceModel, *, message: str) -> SchemaForgeTurnResult:
         assert self._request is not None
         bundle = self._synthesizer.build_bundle(
             device,
@@ -419,8 +567,9 @@ class SchemaForgeSession:
             "package",
             "datasheet_url",
         ]:
-            if key in answers and isinstance(answers[key], str):
-                simple_answers[key] = answers[key]
+            val = answers.get(key)
+            if isinstance(val, str):
+                simple_answers[key] = val
 
         updated = apply_user_answers(draft, simple_answers)
         updates: dict[str, object] = {}
