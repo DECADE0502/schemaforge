@@ -149,21 +149,25 @@ class SchemaForgeWorker(QThread):
         finished(object): 处理完成，携带 SchemaForgeTurnResult。
         error(str): 处理异常，携带错误描述。
         progress(str, int): 进度回调 (消息, 百分比)。
+        session_ready(object): 会话对象创建后发出，供外部持久化保存。
     """
 
     finished = Signal(object)
     error = Signal(str)
     progress = Signal(str, int)
+    session_ready = Signal(object)
 
     def __init__(
         self,
         user_input: str,
         use_mock: bool = True,
+        session: object | None = None,
         parent: object | None = None,
     ) -> None:
         super().__init__(parent)  # type: ignore[arg-type]
         self.user_input = user_input
         self.use_mock = use_mock
+        self._session = session
 
     def run(self) -> None:
         """执行统一工作台设计流程。"""
@@ -172,10 +176,14 @@ class SchemaForgeWorker(QThread):
 
             from schemaforge.workflows.schemaforge_session import SchemaForgeSession
 
-            session = SchemaForgeSession(
-                store_dir=Path("schemaforge/store"),
-                use_mock=self.use_mock,
-            )
+            if isinstance(self._session, SchemaForgeSession):
+                session = self._session
+            else:
+                session = SchemaForgeSession(
+                    store_dir=Path("schemaforge/store"),
+                    use_mock=self.use_mock,
+                )
+            self.session_ready.emit(session)
 
             self.progress.emit("正在匹配器件并生成设计…", 40)
             result = session.start(self.user_input)
@@ -218,6 +226,51 @@ class SchemaForgeReviseWorker(QThread):
             self.progress.emit("正在应用修改…", 30)
             result = self._session.revise(self.user_input)  # type: ignore[union-attr]
             self.progress.emit("修改完成", 100)
+            self.finished.emit(result)
+        except Exception as exc:
+            tb = traceback.format_exc()
+            self.error.emit(f"{exc}\n\n{tb}")
+
+
+# ============================================================
+# SchemaForgeOrchestratedWorker — AI 多轮编排（高级模式）
+# ============================================================
+
+
+class SchemaForgeOrchestratedWorker(QThread):
+    """在后台线程中运行 SchemaForgeSession.run_orchestrated()。
+
+    使用 Orchestrator AI 多轮循环：AI 解析需求 → 调用工具 → 判断下一步。
+    返回 AgentStep 而非 SchemaForgeTurnResult。
+
+    Signals:
+        finished(object): 处理完成，携带 AgentStep。
+        error(str): 处理异常，携带错误描述。
+        progress(str, int): 进度回调 (消息, 百分比)。
+        session_ready(object): 会话对象创建后发出，供外部持久化保存。
+    """
+
+    finished = Signal(object)
+    error = Signal(str)
+    progress = Signal(str, int)
+    session_ready = Signal(object)
+
+    def __init__(
+        self,
+        session: object,
+        user_input: str,
+        parent: object | None = None,
+    ) -> None:
+        super().__init__(parent)  # type: ignore[arg-type]
+        self._session = session
+        self.user_input = user_input
+
+    def run(self) -> None:
+        """执行 AI 编排流程。"""
+        try:
+            self.progress.emit("AI 正在分析需求…", 20)
+            result = self._session.run_orchestrated(self.user_input)  # type: ignore[union-attr]
+            self.progress.emit("AI 编排完成", 100)
             self.finished.emit(result)
         except Exception as exc:
             tb = traceback.format_exc()
