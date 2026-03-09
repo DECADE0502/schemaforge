@@ -19,6 +19,7 @@ v3 把管线拆成原子工具，AI 自己编排调用顺序：
 from __future__ import annotations
 
 import logging
+from collections import Counter
 from typing import Any
 
 from schemaforge.agent.tool_registry import ToolRegistry, ToolResult
@@ -1189,6 +1190,143 @@ def build_atomic_design_tools(session: SystemDesignSession) -> ToolRegistry:
 
 
 # ------------------------------------------------------------------
+# LDO 布局函数
+# ------------------------------------------------------------------
+
+
+def _layout_ldo(
+    idx: int, mid: str, pn: str,
+    ext_comps: list[dict[str, str]], inst: Any,
+    components: list[dict[str, Any]],
+    wires: list[dict[str, Any]],
+    ic_data: list[dict[str, Any]],
+    canvas_w: int, rail_y: int, gnd_y: int,
+    _vert_component: Any, _find_ext_value_fn: Any,
+    cap_body_h: int, cap_lead: int, cap_half: int,
+) -> None:
+    """LDO 布局: IC (VIN/VOUT/GND/EN) + C_in + C_out。
+
+    LDO 比 Buck 简单得多:
+    - IC 左侧: VIN, EN
+    - IC 右侧: VOUT
+    - IC 底部: GND
+    - 外围: C_in (VIN rail → GND), C_out (VOUT → GND)
+    """
+    IC_PIN_STUB = 25
+
+    # --- IC 矩形 ---
+    ic_cx = 350 + idx * 500
+    ic_cy = 340
+    ic_w, ic_h = 120, 140
+    ic_left = ic_cx - ic_w // 2
+    ic_top = ic_cy - ic_h // 2
+    ic_right = ic_cx + ic_w // 2
+    ic_bottom = ic_cy + ic_h // 2
+
+    # --- 引脚位置 (pin endpoint 含 stub) ---
+    pin_positions: dict[str, dict[str, Any]] = {
+        "VIN":  {"x": ic_left - IC_PIN_STUB,  "y": ic_top + 35,   "side": "left"},
+        "EN":   {"x": ic_left - IC_PIN_STUB,  "y": ic_top + 95,   "side": "left"},
+        "VOUT": {"x": ic_right + IC_PIN_STUB, "y": ic_top + 35,   "side": "right"},
+        "GND":  {"x": ic_cx,                  "y": ic_bottom + IC_PIN_STUB, "side": "bottom"},
+    }
+
+    ic_data.append({
+        "module_id": mid,
+        "ic_rect": {"x": ic_left, "y": ic_top, "w": ic_w, "h": ic_h},
+        "label": pn,
+        "ref": f"U{idx + 1}",
+        "pins": pin_positions,
+    })
+
+    vin_pin = pin_positions["VIN"]
+    vout_pin = pin_positions["VOUT"]
+    gnd_pin = pin_positions["GND"]
+    en_pin = pin_positions["EN"]
+
+    # ---- X 坐标 ----
+    cin_x = ic_left - 100
+    cout_x = ic_right + 100
+
+    # ============================================================
+    # 1. 输入电容 C_in: VIN rail → GND
+    # ============================================================
+    cin_center_y = rail_y + cap_half  # pin1_y = rail_y
+    comp_cin = _vert_component(
+        "capacitor", "input_cap", "C1",
+        _find_ext_value_fn(ext_comps, "input_cap", "10uF"),
+        cin_x, cin_center_y, cap_body_h, cap_lead,
+    )
+    components.append(comp_cin)
+    cin_pin1 = comp_cin["pins"]["1"]
+    cin_pin2 = comp_cin["pins"]["2"]
+
+    # VIN rail: C_in pin1 → VIN pin
+    wires.append({
+        "from": cin_pin1,
+        "to": {"x": vin_pin["x"], "y": rail_y},
+        "label": "VIN rail", "weight": 3,
+    })
+    wires.append({
+        "from": {"x": vin_pin["x"], "y": rail_y},
+        "to": vin_pin,
+        "label": "VIN→IC",
+    })
+    # C_in pin2 → GND
+    wires.append({
+        "from": cin_pin2,
+        "to": {"x": cin_x, "y": gnd_y},
+        "label": "C_in→GND",
+    })
+
+    # ============================================================
+    # 2. 输出电容 C_out: VOUT → GND
+    # ============================================================
+    # VOUT 轨道高度 = 与 VOUT pin 同高
+    vout_rail_y = int(vout_pin["y"])
+    cout_center_y = vout_rail_y + cap_half  # pin1_y = vout_rail_y
+    comp_cout = _vert_component(
+        "capacitor", "output_cap", "C2",
+        _find_ext_value_fn(ext_comps, "output_cap", "22uF"),
+        cout_x, cout_center_y, cap_body_h, cap_lead,
+    )
+    components.append(comp_cout)
+    cout_pin1 = comp_cout["pins"]["1"]
+    cout_pin2 = comp_cout["pins"]["2"]
+
+    # VOUT pin → C_out pin1
+    wires.append({
+        "from": vout_pin,
+        "to": cout_pin1,
+        "label": "VOUT→Cout", "weight": 3,
+    })
+    # C_out pin2 → GND
+    wires.append({
+        "from": cout_pin2,
+        "to": {"x": cout_x, "y": gnd_y},
+        "label": "Cout→GND",
+    })
+
+    # ============================================================
+    # 3. GND 引脚 → GND 轨
+    # ============================================================
+    wires.append({
+        "from": gnd_pin,
+        "to": {"x": gnd_pin["x"], "y": gnd_y},
+        "label": "IC GND",
+    })
+
+    # ============================================================
+    # 4. EN 上拉到 VIN rail
+    # ============================================================
+    wires.append({
+        "from": en_pin,
+        "to": {"x": en_pin["x"], "y": rail_y},
+        "label": "EN pullup to VIN rail",
+    })
+
+
+# ------------------------------------------------------------------
 # SVG 坐标模板生成器
 # ------------------------------------------------------------------
 
@@ -1305,10 +1443,29 @@ def _build_svg_template(ir: Any) -> dict[str, Any]:
         }
 
     for idx, (mid, inst) in enumerate(power_modules):
+        category = getattr(inst, "resolved_category", "buck")
         device = getattr(inst, "device", None)
         pn = getattr(device, "part_number", mid) if device else mid
         ext_comps = getattr(inst, "external_components", [])
 
+        # ============================================================
+        # 根据拓扑类型分派布局
+        # ============================================================
+        if category == "ldo":
+            # ---- LDO 布局 ----
+            # LDO 比 Buck 简单: 只有 VIN/VOUT/GND/EN 引脚 + C_in + C_out
+            _layout_ldo(
+                idx, mid, pn, ext_comps, inst,
+                components, wires, ic_data,
+                canvas_w, rail_y, gnd_y,
+                _vert_component, _find_ext_value,
+                CAP_BODY_H, CAP_LEAD, CAP_HALF,
+            )
+            # 更新 cout_x 用于标签定位
+            cout_x = 350 + idx * 500 + 70 + 100 + 80
+            continue
+
+        # ---- Buck / Boost 布局 (默认) ----
         # --- IC 矩形 ---
         # 每个电源模块占 500px 水平空间
         ic_cx = 350 + idx * 500
@@ -1611,15 +1768,22 @@ def _build_svg_template(ir: Any) -> dict[str, Any]:
     ]
     if power_modules:
         _, first_inst = power_modules[0]
+        first_cat = getattr(first_inst, "resolved_category", "buck")
         params = dict(getattr(first_inst, "parameters", {}))
         v_in = params.get("v_in", "")
         v_out = params.get("v_out", "")
         if v_in:
             labels[0]["text"] = f"VIN {v_in}V"
+        # VOUT 标签 y 位置: Buck 用 sw_rail_y, LDO 用 IC VOUT pin 高度
+        vout_label_y = sw_rail_y
+        if first_cat == "ldo" and ic_data:
+            vout_pins = ic_data[0].get("pins", {})
+            if "VOUT" in vout_pins:
+                vout_label_y = int(vout_pins["VOUT"]["y"])
         labels.append({
             "text": f"VOUT {v_out}V" if v_out else "VOUT",
             "x": cout_x + 40,
-            "y": sw_rail_y, "color": "blue", "font_size": 16,
+            "y": vout_label_y, "color": "blue", "font_size": 16,
         })
 
     gnd_rail = {"y": gnd_y, "x_start": 80, "x_end": canvas_w - 80}
@@ -1745,6 +1909,24 @@ def _render_svg_from_template(template: dict[str, Any]) -> str:
     # ---- 走线 ----
     for wire in template.get("wires", []):
         _svg_wire(lines, wire)
+
+    # ---- Junction dots (T 型交叉点) ----
+    # 统计每个坐标点被多少条走线端点引用
+    endpoint_count: Counter[tuple[int, int]] = Counter()
+    for wire in template.get("wires", []):
+        path = wire.get("path")
+        if path and len(path) >= 2:
+            for p in path:
+                endpoint_count[(int(p["x"]), int(p["y"]))] += 1
+        else:
+            f = wire["from"]
+            t = wire["to"]
+            endpoint_count[(int(f["x"]), int(f["y"]))] += 1
+            endpoint_count[(int(t["x"]), int(t["y"]))] += 1
+    # 3+ 条走线在同一点 → 需要 junction dot
+    for (jx, jy), cnt in endpoint_count.items():
+        if cnt >= 3:
+            _a(f'<circle cx="{jx}" cy="{jy}" r="3" class="junction"/>')
 
     _a("</svg>")
     return "\n".join(lines)
