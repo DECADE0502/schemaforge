@@ -1008,10 +1008,14 @@ def build_atomic_design_tools(session: SystemDesignSession) -> ToolRegistry:
     )
 
     # ================================================================
-    # 工具 11: render_schematic_ai — AI 自己写 SVG
+    # 工具 11: render_schematic_ai — 本地确定性 SVG 渲染
     # ================================================================
-    def _handle_render_schematic_ai(svg_code: str) -> ToolResult:
-        """AI 自己生成的 SVG 源码 → 保存文件 + 转 PNG 供审查。"""
+    def _handle_render_schematic_ai() -> ToolResult:
+        """根据当前 IR 数据，本地生成 SVG 原理图 + PNG 截图。
+
+        不需要 AI 写 SVG 代码，由本地渲染器确定性生成。
+        前置条件: resolve_modules + resolve_connections + synthesize_parameters 已完成。
+        """
         try:
             if session._ir is None:
                 return ToolResult(
@@ -1028,24 +1032,31 @@ def build_atomic_design_tools(session: SystemDesignSession) -> ToolRegistry:
 
             from schemaforge.render.base import output_path
 
-            # 保存 SVG 文件
+            # 1. 生成坐标模板
+            ir = session._ir
+            template = _build_svg_template(ir)
+
+            # 2. 本地确定性渲染 SVG
+            svg_code = _render_svg_from_template(template)
+
+            # 3. 保存 SVG 文件
             ts = int(time.time() * 1000) % 100000
             svg_filename = f"ai_schematic_{ts}.svg"
             svg_path = output_path(svg_filename)
             with open(svg_path, "w", encoding="utf-8") as f:
                 f.write(svg_code)
 
-            # SVG → PNG 用于视觉审查
+            # 4. SVG → PNG 用于视觉审查
             png_path = svg_path.replace(".svg", ".png")
             _svg_to_png(svg_path, png_path)
 
-            # 读取 PNG 的 base64
+            # 5. 读取 PNG 的 base64
             png_b64 = ""
             if os.path.exists(png_path):
                 with open(png_path, "rb") as f:
                     png_b64 = base64.b64encode(f.read()).decode("ascii")
 
-            # 暂存到 session
+            # 6. 暂存到 session
             session._last_svg_path = svg_path  # type: ignore[attr-defined]
             session._last_svg_content = svg_code  # type: ignore[attr-defined]
             session._last_png_path = png_path  # type: ignore[attr-defined]
@@ -1058,7 +1069,12 @@ def build_atomic_design_tools(session: SystemDesignSession) -> ToolRegistry:
                     "png_path": png_path,
                     "svg_length": len(svg_code),
                     "has_png": bool(png_b64),
-                    "message": "SVG 已保存，PNG 已生成。可调用 review_schematic_visual 审查渲染效果。",
+                    "component_count": len(template.get("components", [])),
+                    "wire_count": len(template.get("wires", [])),
+                    "message": (
+                        "原理图已由本地渲染器生成。"
+                        "SVG 和 PNG 已保存。可调用 review_schematic_visual 审查渲染效果。"
+                    ),
                 },
             )
         except Exception as exc:
@@ -1067,7 +1083,7 @@ def build_atomic_design_tools(session: SystemDesignSession) -> ToolRegistry:
                 success=False,
                 error=ToolError(
                     code=ErrorCode.RENDER_FAILED,
-                    message=f"AI SVG 保存/转换失败: {exc}",
+                    message=f"本地 SVG 渲染失败: {exc}",
                     retriable=True,
                 ),
             )
@@ -1075,17 +1091,12 @@ def build_atomic_design_tools(session: SystemDesignSession) -> ToolRegistry:
     registry.register_fn(
         name="render_schematic_ai",
         description=(
-            "保存 AI 生成的 SVG 原理图源码，并自动转换为 PNG 图片供审查。"
-            "传入完整的 SVG 源码字符串。保存后可调用 review_schematic_visual 审查。"
+            "根据当前设计数据，由本地渲染器自动生成 SVG 原理图和 PNG 截图。"
+            "无需传入 SVG 代码，渲染器会根据 IR 数据自动生成。"
+            "前置条件: resolve_modules + resolve_connections + synthesize_parameters 已完成。"
         ),
         handler=_handle_render_schematic_ai,
-        parameters_schema={
-            "svg_code": {
-                "type": "string",
-                "description": "完整的 SVG 源码（包括 <svg> 根元素和所有内容）",
-            },
-        },
-        required_params=["svg_code"],
+        parameters_schema={},
         category="design",
     )
 
@@ -1170,31 +1181,9 @@ def build_atomic_design_tools(session: SystemDesignSession) -> ToolRegistry:
         category="design",
     )
 
-    # ================================================================
-    # 工具 12: revise_schematic_svg — 提交修改后的 SVG
-    # ================================================================
-    def _handle_revise_schematic_svg(svg_code: str) -> ToolResult:
-        """接收修改后的完整 SVG，覆盖保存 + 重新生成 PNG。"""
-        # 复用 render_schematic_ai 的逻辑
-        return _handle_render_schematic_ai(svg_code)
-
-    registry.register_fn(
-        name="revise_schematic_svg",
-        description=(
-            "提交修改后的完整 SVG 源码，覆盖保存并重新生成 PNG。"
-            "用于在 review_schematic_visual 审查后修改原理图。"
-            "传入完整的修改后 SVG（不是 diff，是整个文件）。"
-        ),
-        handler=_handle_revise_schematic_svg,
-        parameters_schema={
-            "svg_code": {
-                "type": "string",
-                "description": "修改后的完整 SVG 源码",
-            },
-        },
-        required_params=["svg_code"],
-        category="design",
-    )
+    # revise_schematic_svg 已移除 —
+    # 本地渲染是确定性的，修改设计应通过 synthesize_parameters 等工具修改 IR，
+    # 然后重新调用 render_schematic_ai 即可。
 
     return registry
 
@@ -1528,6 +1517,274 @@ def _find_ext_value(
 
 
 # ------------------------------------------------------------------
+# 本地确定性 SVG 渲染器
+# ------------------------------------------------------------------
+
+
+def _render_svg_from_template(template: dict[str, Any]) -> str:
+    """根据坐标模板生成完整 SVG 源码（确定性，无 AI）。
+
+    输入: _build_svg_template() 的返回值
+    输出: 完整 SVG 字符串，可直接保存为 .svg 文件
+    """
+    cw = template["canvas"]["width"]
+    ch = template["canvas"]["height"]
+    gnd = template["gnd_rail"]
+    rail_y = template["rail_y"]
+    gnd_y = template["gnd_y"]
+
+    lines: list[str] = []
+
+    def _a(s: str) -> None:
+        lines.append(s)
+
+    # ---- SVG 头 ----
+    _a('<?xml version="1.0" encoding="UTF-8"?>')
+    _a(
+        f'<svg xmlns="http://www.w3.org/2000/svg" '
+        f'viewBox="0 0 {cw} {ch}" width="{cw}" height="{ch}" '
+        f'style="background:#ffffff">'
+    )
+    _a("<defs>")
+    # 箭头标记（用于标注走线方向，可选）
+    _a(
+        '<marker id="dot" viewBox="0 0 6 6" refX="3" refY="3" '
+        'markerWidth="4" markerHeight="4">'
+    )
+    _a('  <circle cx="3" cy="3" r="2.5" fill="#333"/>')
+    _a("</marker>")
+    _a("</defs>")
+    _a("<style>")
+    _a("  text { font-family: 'Consolas','Courier New',monospace; font-size: 11px; fill: #222; }")
+    _a("  .wire { stroke: #333; stroke-width: 1.8; fill: none; stroke-linecap: round; }")
+    _a("  .pwr  { stroke: #333; stroke-width: 2.5; fill: none; stroke-linecap: round; }")
+    _a("  .ic   { stroke: #000; stroke-width: 2; fill: #fffde7; }")
+    _a("  .comp { stroke: #000; stroke-width: 1.8; fill: none; }")
+    _a("  .gnd-rail { stroke: #2e7d32; stroke-width: 2.5; stroke-dasharray: none; }")
+    _a("  .vin-rail { stroke: #c62828; stroke-width: 2.5; }")
+    _a("  .pin  { stroke: #555; stroke-width: 1.4; }")
+    _a("  .junction { fill: #333; }")
+    _a("  .label-ref  { font-size: 10px; fill: #000; font-weight: bold; }")
+    _a("  .label-val  { font-size: 9px; fill: #555; }")
+    _a("  .label-pin  { font-size: 9px; fill: #444; }")
+    _a("  .label-pwr  { font-size: 14px; font-weight: bold; }")
+    _a("</style>")
+
+    # ---- GND 轨道 ----
+    _a(
+        f'<line x1="{gnd["x_start"]}" y1="{gnd["y"]}" '
+        f'x2="{gnd["x_end"]}" y2="{gnd["y"]}" class="gnd-rail"/>'
+    )
+    # GND 符号（每隔一段画一个）
+    for gx in range(gnd["x_start"], gnd["x_end"] + 1, 200):
+        _svg_gnd_symbol(lines, gx, gnd_y)
+
+    # ---- 标签 ----
+    for lb in template.get("labels", []):
+        _a(
+            f'<text x="{lb["x"]}" y="{lb["y"] - 12}" '
+            f'fill="{lb.get("color", "#000")}" class="label-pwr">'
+            f'{lb["text"]}</text>'
+        )
+
+    # ---- VIN 轨道（从最左元件到 IC 左侧）----
+    if template.get("ic_modules"):
+        ic = template["ic_modules"][0]
+        vin_rail_x_end = ic["ic_rect"]["x"] + 10
+        # 找最左边的 x
+        min_x = vin_rail_x_end
+        for c in template["components"]:
+            cx = c.get("x", c.get("x1", 9999))
+            if cx < min_x:
+                min_x = cx
+        _a(
+            f'<line x1="{min_x - 30}" y1="{rail_y}" '
+            f'x2="{vin_rail_x_end}" y2="{rail_y}" class="vin-rail"/>'
+        )
+
+    # ---- IC 模块 ----
+    for ic in template.get("ic_modules", []):
+        _svg_ic_module(lines, ic)
+
+    # ---- 元件 ----
+    for comp in template.get("components", []):
+        _svg_component(lines, comp)
+
+    # ---- 走线 ----
+    for wire in template.get("wires", []):
+        _svg_wire(lines, wire)
+
+    _a("</svg>")
+    return "\n".join(lines)
+
+
+def _svg_gnd_symbol(lines: list[str], x: int, y: int) -> None:
+    """在 (x, y) 画一个 GND 符号（三条递减横线）。"""
+    lines.append(f'<line x1="{x - 8}" y1="{y}" x2="{x + 8}" y2="{y}" stroke="#2e7d32" stroke-width="2"/>')
+    lines.append(f'<line x1="{x - 5}" y1="{y + 4}" x2="{x + 5}" y2="{y + 4}" stroke="#2e7d32" stroke-width="1.5"/>')
+    lines.append(f'<line x1="{x - 2}" y1="{y + 8}" x2="{x + 2}" y2="{y + 8}" stroke="#2e7d32" stroke-width="1"/>')
+
+
+def _svg_ic_module(lines: list[str], ic: dict[str, Any]) -> None:
+    """绘制 IC 矩形 + 引脚 + 标注。"""
+    r = ic["ic_rect"]
+    rx, ry, rw, rh = r["x"], r["y"], r["w"], r["h"]
+
+    # IC 矩形
+    lines.append(f'<rect x="{rx}" y="{ry}" width="{rw}" height="{rh}" class="ic" rx="3"/>')
+
+    # IC 标注（ref + label）
+    cx = rx + rw // 2
+    cy = ry + rh // 2
+    lines.append(f'<text x="{cx}" y="{cy - 6}" text-anchor="middle" class="label-ref" font-size="12">{ic["ref"]}</text>')
+    label = ic.get("label", "")
+    if label and label != ic["ref"]:
+        lines.append(f'<text x="{cx}" y="{cy + 10}" text-anchor="middle" class="label-val" font-size="10">{label}</text>')
+
+    # 引脚
+    pin_len = 25  # 引脚短线长度
+    for pname, pp in ic.get("pins", {}).items():
+        px, py, side = int(pp["x"]), int(pp["y"]), pp["side"]
+        if side == "left":
+            lines.append(f'<line x1="{px - pin_len}" y1="{py}" x2="{px}" y2="{py}" class="pin"/>')
+            lines.append(f'<text x="{px + 6}" y="{py + 4}" class="label-pin">{pname}</text>')
+        elif side == "right":
+            lines.append(f'<line x1="{px}" y1="{py}" x2="{px + pin_len}" y2="{py}" class="pin"/>')
+            lines.append(f'<text x="{px - 6}" y="{py + 4}" text-anchor="end" class="label-pin">{pname}</text>')
+        elif side == "bottom":
+            lines.append(f'<line x1="{px}" y1="{py}" x2="{px}" y2="{py + pin_len}" class="pin"/>')
+            lines.append(f'<text x="{px}" y="{py - 6}" text-anchor="middle" class="label-pin">{pname}</text>')
+        elif side == "top":
+            lines.append(f'<line x1="{px}" y1="{py - pin_len}" x2="{px}" y2="{py}" class="pin"/>')
+            lines.append(f'<text x="{px}" y="{py + 14}" text-anchor="middle" class="label-pin">{pname}</text>')
+
+
+def _svg_component(lines: list[str], comp: dict[str, Any]) -> None:
+    """根据元件类型绘制标准原理图符号。"""
+    ctype = comp["type"]
+    ref = comp.get("ref", "")
+    val = comp.get("value", "")
+
+    if ctype == "capacitor":
+        _svg_capacitor(lines, comp, ref, val)
+    elif ctype == "inductor":
+        _svg_inductor(lines, comp, ref, val)
+    elif ctype == "resistor":
+        _svg_resistor(lines, comp, ref, val)
+    elif ctype == "diode":
+        _svg_diode(lines, comp, ref, val)
+
+
+def _svg_capacitor(lines: list[str], c: dict[str, Any], ref: str, val: str) -> None:
+    """竖直电容符号：两条平行横线 + 上下引线。"""
+    x = int(c["x"])
+    ct_y = int(c["connect_top"]["y"])
+    cb_y = int(c["connect_bottom"]["y"])
+    yt = int(c["y_top"])
+    yb = int(c["y_bottom"])
+    mid = (yt + yb) // 2
+    gap = 5  # 两极板间距的一半
+    pw = 12  # 极板半宽
+
+    # 上引线
+    lines.append(f'<line x1="{x}" y1="{ct_y}" x2="{x}" y2="{mid - gap}" class="comp"/>')
+    # 上极板
+    lines.append(f'<line x1="{x - pw}" y1="{mid - gap}" x2="{x + pw}" y2="{mid - gap}" stroke="#000" stroke-width="2"/>')
+    # 下极板
+    lines.append(f'<line x1="{x - pw}" y1="{mid + gap}" x2="{x + pw}" y2="{mid + gap}" stroke="#000" stroke-width="2"/>')
+    # 下引线
+    lines.append(f'<line x1="{x}" y1="{mid + gap}" x2="{x}" y2="{cb_y}" class="comp"/>')
+    # 标注
+    lines.append(f'<text x="{x + pw + 4}" y="{mid - 2}" class="label-ref">{ref}</text>')
+    lines.append(f'<text x="{x + pw + 4}" y="{mid + 11}" class="label-val">{val}</text>')
+
+
+def _svg_inductor(lines: list[str], c: dict[str, Any], ref: str, val: str) -> None:
+    """水平电感符号：4 个半圆弧（标准原理图风格）。"""
+    x1 = int(c["x1"])
+    x2 = int(c["x2"])
+    y = int(c["y"])
+    seg = (x2 - x1) / 4  # 每段弧的宽度
+    # 用 4 个半圆弧
+    d_parts = [f"M{x1},{y}"]
+    for i in range(4):
+        sx = x1 + i * seg
+        ex = sx + seg
+        mx = (sx + ex) / 2
+        d_parts.append(f"A{seg / 2},{seg / 2} 0 0 1 {ex},{y}")
+    d_str = " ".join(d_parts)
+    lines.append(f'<path d="{d_str}" class="comp"/>')
+    # 标注
+    mx = (x1 + x2) // 2
+    lines.append(f'<text x="{mx}" y="{y - 14}" text-anchor="middle" class="label-ref">{ref}</text>')
+    lines.append(f'<text x="{mx}" y="{y - 4}" text-anchor="middle" class="label-val">{val}</text>')
+
+
+def _svg_resistor(lines: list[str], c: dict[str, Any], ref: str, val: str) -> None:
+    """竖直电阻符号：矩形框 + 上下引线。"""
+    x = int(c["x"])
+    ct_y = int(c["connect_top"]["y"])
+    cb_y = int(c["connect_bottom"]["y"])
+    yt = int(c["y_top"])
+    yb = int(c["y_bottom"])
+    hw = 7  # 矩形半宽
+
+    # 上引线
+    lines.append(f'<line x1="{x}" y1="{ct_y}" x2="{x}" y2="{yt}" class="comp"/>')
+    # 矩形体
+    lines.append(f'<rect x="{x - hw}" y="{yt}" width="{hw * 2}" height="{yb - yt}" class="comp"/>')
+    # 下引线
+    lines.append(f'<line x1="{x}" y1="{yb}" x2="{x}" y2="{cb_y}" class="comp"/>')
+    # 标注
+    lines.append(f'<text x="{x + hw + 4}" y="{(yt + yb) // 2 - 2}" class="label-ref">{ref}</text>')
+    lines.append(f'<text x="{x + hw + 4}" y="{(yt + yb) // 2 + 11}" class="label-val">{val}</text>')
+
+
+def _svg_diode(lines: list[str], c: dict[str, Any], ref: str, val: str) -> None:
+    """竖直二极管符号：三角形 + 横线（阳极在上，阴极在下）。"""
+    x = int(c["x"])
+    ct_y = int(c["connect_top"]["y"])
+    cb_y = int(c["connect_bottom"]["y"])
+    yt = int(c["y_top"])
+    yb = int(c["y_bottom"])
+    hw = 12  # 三角形半宽
+
+    # 上引线（阳极）
+    lines.append(f'<line x1="{x}" y1="{ct_y}" x2="{x}" y2="{yt}" class="comp"/>')
+    # 三角形（尖朝下）
+    lines.append(
+        f'<polygon points="{x - hw},{yt} {x + hw},{yt} {x},{yb}" '
+        f'fill="none" stroke="#000" stroke-width="1.8"/>'
+    )
+    # 阴极横线
+    lines.append(f'<line x1="{x - hw}" y1="{yb}" x2="{x + hw}" y2="{yb}" stroke="#000" stroke-width="2"/>')
+    # 下引线（阴极）
+    lines.append(f'<line x1="{x}" y1="{yb}" x2="{x}" y2="{cb_y}" class="comp"/>')
+    # 标注
+    lines.append(f'<text x="{x + hw + 4}" y="{(yt + yb) // 2 - 2}" class="label-ref">{ref}</text>')
+    lines.append(f'<text x="{x + hw + 4}" y="{(yt + yb) // 2 + 11}" class="label-val">{val}</text>')
+
+
+def _svg_wire(lines: list[str], wire: dict[str, Any]) -> None:
+    """绘制一条走线（支持直线和折线路径）。"""
+    path = wire.get("path")
+    weight = wire.get("weight", 0)
+    css = "pwr" if weight >= 3 else "wire"
+
+    if path and len(path) >= 2:
+        # 折线路径
+        points = " ".join(f'{p["x"]},{p["y"]}' for p in path)
+        lines.append(f'<polyline points="{points}" class="{css}"/>')
+    else:
+        fx, fy = int(wire["from"]["x"]), int(wire["from"]["y"])
+        tx, ty = int(wire["to"]["x"]), int(wire["to"]["y"])
+        # 跳过零长度线
+        if fx == tx and fy == ty:
+            return
+        lines.append(f'<line x1="{fx}" y1="{fy}" x2="{tx}" y2="{ty}" class="{css}"/>')
+
+
+# ------------------------------------------------------------------
 # SVG → PNG 转换辅助
 # ------------------------------------------------------------------
 
@@ -1535,9 +1792,13 @@ def _find_ext_value(
 def _svg_to_png(svg_path: str, png_path: str, width: int = 1200) -> None:
     """SVG 文件转 PNG 文件。
 
-    优先使用 cairosvg（高保真），fallback 到 Pillow + svglib，
-    最后 fallback 到空白占位 PNG。
+    Fallback 链:
+    1. cairosvg（高保真）
+    2. Qt QSvgRenderer（Windows 上最可靠）
+    3. svglib + reportlab renderPM
+    4. PIL 占位图
     """
+    # --- 1. cairosvg ---
     try:
         import cairosvg
         cairosvg.svg2png(url=svg_path, write_to=png_path, output_width=width)
@@ -1547,12 +1808,46 @@ def _svg_to_png(svg_path: str, png_path: str, width: int = 1200) -> None:
     except Exception:
         pass
 
+    # --- 2. Qt SVG 渲染（Windows 首选） ---
+    try:
+        from PySide6.QtCore import QSize, Qt
+        from PySide6.QtGui import QImage, QPainter
+        from PySide6.QtSvg import QSvgRenderer
+        from PySide6.QtWidgets import QApplication
+
+        # 确保 QApplication 存在
+        app = QApplication.instance()
+        if app is None:
+            import sys
+            app = QApplication(sys.argv)
+
+        renderer = QSvgRenderer(svg_path)
+        if renderer.isValid():
+            default_size = renderer.defaultSize()
+            scale = width / max(default_size.width(), 1)
+            render_size = QSize(
+                int(default_size.width() * scale),
+                int(default_size.height() * scale),
+            )
+            img = QImage(render_size, QImage.Format.Format_ARGB32)
+            img.fill(Qt.GlobalColor.white)
+            painter = QPainter(img)
+            renderer.render(painter)
+            painter.end()
+            img.save(png_path)
+            return
+    except ImportError:
+        pass
+    except Exception:
+        pass
+
+    # --- 3. svglib + reportlab ---
     try:
         from io import BytesIO
 
         from PIL import Image
-        from svglib.svglib import svg2rlg
         from reportlab.graphics import renderPM
+        from svglib.svglib import svg2rlg
 
         drawing = svg2rlg(svg_path)
         if drawing:
@@ -1567,7 +1862,7 @@ def _svg_to_png(svg_path: str, png_path: str, width: int = 1200) -> None:
     except Exception:
         pass
 
-    # 最终 fallback：用 schemdraw 生成空白提示图
+    # --- 4. PIL 占位图 ---
     try:
         from PIL import Image, ImageDraw
 
@@ -1575,12 +1870,11 @@ def _svg_to_png(svg_path: str, png_path: str, width: int = 1200) -> None:
         draw = ImageDraw.Draw(img)
         draw.text(
             (20, 180),
-            "SVG→PNG 转换需要 cairosvg 或 svglib 库",
+            "SVG to PNG: cairosvg / Qt / svglib all unavailable",
             fill="red",
         )
         img.save(png_path)
     except Exception:
-        # 写一个最小的 1x1 PNG 保证文件存在
         import struct
         import zlib
 
@@ -1605,104 +1899,27 @@ def _svg_to_png(svg_path: str, png_path: str, width: int = 1200) -> None:
 # ------------------------------------------------------------------
 
 AGENT_SYSTEM_PROMPT_AI_SVG = """\
-你是 SchemaForge 电路设计 AI 助手（AI SVG 绘图模式）。
+你是 SchemaForge 电路设计 AI 助手（本地渲染模式）。
 
-在此模式下，你负责电路设计编排，并**亲自编写 SVG 源码**绘制原理图。
+在此模式下，你负责电路设计决策（选型、参数、连接），原理图由**本地渲染器自动生成**。
+你不需要编写任何 SVG 代码。
 
 ## 工作流程（严格按顺序）
 
 1. **调用 resolve_modules** — 提交模块意图，查器件库
 2. **调用 resolve_connections** — 提交连接意图
 3. **调用 synthesize_parameters** — 计算外围元件参数
-4. **调用 get_svg_template** — 获取 SVG 坐标模板（关键！）
-5. **根据模板编写 SVG** → 调用 render_schematic_ai 保存
-6. **调用 review_schematic_visual** — 审查（可选）
-7. **根据审查修改** → 调用 revise_schematic_svg（可选）
-8. **调用 export_outputs** — 导出 BOM + SPICE
-9. **总结结果**
+4. **调用 render_schematic_ai** — 本地渲染器自动生成 SVG + PNG（无需传参数）
+5. **调用 review_schematic_visual** — 视觉审查（可选）
+6. **调用 export_outputs** — 导出 BOM + SPICE
+7. **总结结果** — 输出设计概要
 
-## 核心规则：使用 get_svg_template 的坐标
+## 核心规则
 
-**你必须先调用 get_svg_template 获取布局模板，然后严格按照模板中的坐标画 SVG。**
-
-模板返回的数据结构：
-- `ic_modules`: IC 矩形位置、引脚精确坐标
-- `components`: 每个外围元件的坐标、朝向、connect_top/connect_bottom 端点
-- `wires`: 每条连线的起止坐标（有些还有 path 中间点）
-- `gnd_rail`: GND 总线的 Y 坐标和起止 X
-- `labels`: 文字标签位置
-
-## SVG 绘图规范
-
-### 画布
-- `viewBox="0 0 1200 800"`, 白色背景
-
-### 元件符号（必须画在模板指定的坐标上）
-
-**IC 芯片**：
-```svg
-<rect x="{ic_rect.x}" y="{ic_rect.y}" width="{ic_rect.w}" height="{ic_rect.h}"
-      fill="#f5f5f5" stroke="black" stroke-width="2"/>
-<!-- 每个引脚: 从 IC 边缘伸出 20px 短线 -->
-<line x1="{pin.x}" y1="{pin.y}" x2="{pin.x - 20}" y2="{pin.y}" stroke="black" stroke-width="2"/>
-<text x="{pin.x - 25}" y="{pin.y + 4}" text-anchor="end" font-size="12">VIN</text>
-```
-
-**电容（竖直）**：两条平行水平短线，间距 5px
-```svg
-<line x1="{x-8}" y1="{y}" x2="{x+8}" y2="{y}" stroke="black" stroke-width="2"/>
-<line x1="{x-8}" y1="{y+5}" x2="{x+8}" y2="{y+5}" stroke="black" stroke-width="2"/>
-<!-- 上方引线 -->
-<line x1="{x}" y1="{connect_top.y}" x2="{x}" y2="{y}" stroke="black" stroke-width="2"/>
-<!-- 下方引线 -->
-<line x1="{x}" y1="{y+5}" x2="{x}" y2="{connect_bottom.y}" stroke="black" stroke-width="2"/>
-<!-- 标签在右侧 -->
-<text x="{x+12}" y="{y}" font-size="11">{ref}</text>
-<text x="{x+12}" y="{y+12}" font-size="10">{value}</text>
-```
-
-**电阻（竖直）**：小矩形 12×35
-```svg
-<rect x="{x-6}" y="{y_top}" width="12" height="35" fill="none" stroke="black" stroke-width="2"/>
-<!-- 上方引线 -->
-<line x1="{x}" y1="{connect_top.y}" x2="{x}" y2="{y_top}" stroke="black" stroke-width="2"/>
-<!-- 下方引线 -->
-<line x1="{x}" y1="{y_top+35}" x2="{x}" y2="{connect_bottom.y}" stroke="black" stroke-width="2"/>
-<!-- 标签在右侧 -->
-<text x="{x+10}" y="{y_top+15}" font-size="11">{ref}</text>
-<text x="{x+10}" y="{y_top+27}" font-size="10">{value}</text>
-```
-
-**电感（水平）**：4 个半圆弧
-```svg
-<path d="M {x1} {y} Q {x1+10} {y-15} {x1+20} {y}
-         Q {x1+30} {y-15} {x1+40} {y}
-         Q {x1+50} {y-15} {x1+60} {y}
-         Q {x1+70} {y-15} {x1+80} {y}" fill="none" stroke="black" stroke-width="2"/>
-```
-
-**二极管（竖直，阳极朝上阴极朝下）**：
-```svg
-<polygon points="{x-10},{y_top} {x+10},{y_top} {x},{y_top+20}" fill="none" stroke="black" stroke-width="2"/>
-<line x1="{x-10}" y1="{y_top+20}" x2="{x+10}" y2="{y_top+20}" stroke="black" stroke-width="2"/>
-```
-
-**GND 符号**：
-```svg
-<line x1="{x-12}" y1="{gnd_y}" x2="{x+12}" y2="{gnd_y}" stroke="black" stroke-width="2"/>
-<line x1="{x-8}" y1="{gnd_y+4}" x2="{x+8}" y2="{gnd_y+4}" stroke="black" stroke-width="2"/>
-<line x1="{x-4}" y1="{gnd_y+8}" x2="{x+4}" y2="{gnd_y+8}" stroke="black" stroke-width="2"/>
-```
-
-### 连线
-- 严格使用 wires 中的 from/to 坐标
-- 用 `<line>` 画直线段（横平竖直）
-- 如果 wire 有 path 字段，按 path 中的点画折线（每两点之间一条 line）
-- 电源线 weight=3 时用 stroke-width="3"
-- T 形节点处画实心小圆点: `<circle cx="{x}" cy="{y}" r="3" fill="black"/>`
-
-### 标签
-- 按 labels 中的坐标和颜色放置文字
+- **不需要调用 get_svg_template** — 渲染器内部自动使用
+- **不需要编写 SVG 代码** — render_schematic_ai 会自动生成
+- 如果审查发现问题，可修改参数后重新调用 render_schematic_ai
+- 专注于电路设计本身：器件选型、参数计算、连接关系
 
 ## 设计规则
 
@@ -1710,8 +1927,7 @@ AGENT_SYSTEM_PROMPT_AI_SVG = """\
 - category_hint：buck, ldo, boost, mcu, led
 - signal_type：power_supply, gpio, spi, i2c, uart, analog, enable, feedback, other
 - connection_semantics：supply_chain, gpio_drive, bus_connect, enable_control, ground_tie
-- 不要在 resolve_modules 时指定电阻电容电感数值
-- SVG 必须完整可渲染（含 `<?xml?>` 和 `<svg>` 根元素）
+- 不要在 resolve_modules 时指定电阻电容电感数值，让 synthesize_parameters 自动计算
 
 用中文回复用户。
 """
