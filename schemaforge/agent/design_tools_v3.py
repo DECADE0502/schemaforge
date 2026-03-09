@@ -1200,17 +1200,15 @@ def _layout_ldo(
     components: list[dict[str, Any]],
     wires: list[dict[str, Any]],
     ic_data: list[dict[str, Any]],
-    canvas_w: int, rail_y: int, gnd_y: int,
+    gnd_symbols: list[dict[str, int]],
+    power_flags: list[dict[str, Any]],
     _vert_component: Any, _find_ext_value_fn: Any,
     cap_body_h: int, cap_lead: int, cap_half: int,
+    gnd_stub: int,
 ) -> None:
     """LDO 布局: IC (VIN/VOUT/GND/EN) + C_in + C_out。
 
-    LDO 比 Buck 简单得多:
-    - IC 左侧: VIN, EN
-    - IC 右侧: VOUT
-    - IC 底部: GND
-    - 外围: C_in (VIN rail → GND), C_out (VOUT → GND)
+    不使用全局 rail 横线。接地用 GND 符号，电源用 power flag 标注。
     """
     IC_PIN_STUB = 40
 
@@ -1248,10 +1246,16 @@ def _layout_ldo(
     cin_x = ic_left - 100
     cout_x = ic_right + 100
 
+    # 获取电压参数
+    params = dict(getattr(inst, "parameters", {}))
+    v_in = params.get("v_in", "")
+    v_out = params.get("v_out", "")
+
     # ============================================================
-    # 1. 输入电容 C_in: VIN rail → GND
+    # 1. 输入电容 C_in: VIN → GND
     # ============================================================
-    cin_center_y = rail_y + cap_half  # pin1_y = rail_y
+    # C_in 中心与 VIN pin 同高
+    cin_center_y = int(vin_pin["y"])
     comp_cin = _vert_component(
         "capacitor", "input_cap", "C1",
         _find_ext_value_fn(ext_comps, "input_cap", "10uF"),
@@ -1261,30 +1265,31 @@ def _layout_ldo(
     cin_pin1 = comp_cin["pins"]["1"]
     cin_pin2 = comp_cin["pins"]["2"]
 
-    # VIN rail: C_in pin1 → VIN pin
+    # C_in pin1 → VIN pin（水平直连）
     wires.append({
         "from": cin_pin1,
-        "to": {"x": vin_pin["x"], "y": rail_y},
-        "label": "VIN rail", "weight": 3,
-    })
-    wires.append({
-        "from": {"x": vin_pin["x"], "y": rail_y},
         "to": vin_pin,
-        "label": "VIN→IC",
+        "label": "C_in→VIN",
     })
-    # C_in pin2 → GND
+    # C_in pin2 → GND 符号
+    gnd_symbols.append({"x": cin_x, "y": int(cin_pin2["y"]) + gnd_stub})
     wires.append({
         "from": cin_pin2,
-        "to": {"x": cin_x, "y": gnd_y},
+        "to": {"x": cin_x, "y": int(cin_pin2["y"]) + gnd_stub},
         "label": "C_in→GND",
+    })
+    # VIN power flag 在 C_in pin1 上方
+    power_flags.append({
+        "x": cin_x, "y": int(cin_pin1["y"]),
+        "text": f"VIN {v_in}V" if v_in else "VIN",
+        "color": "#c62828", "direction": "up",
     })
 
     # ============================================================
     # 2. 输出电容 C_out: VOUT → GND
     # ============================================================
-    # VOUT 轨道高度 = 与 VOUT pin 同高
-    vout_rail_y = int(vout_pin["y"])
-    cout_center_y = vout_rail_y + cap_half  # pin1_y = vout_rail_y
+    vout_y = int(vout_pin["y"])
+    cout_center_y = vout_y
     comp_cout = _vert_component(
         "capacitor", "output_cap", "C2",
         _find_ext_value_fn(ext_comps, "output_cap", "22uF"),
@@ -1294,35 +1299,48 @@ def _layout_ldo(
     cout_pin1 = comp_cout["pins"]["1"]
     cout_pin2 = comp_cout["pins"]["2"]
 
-    # VOUT pin → C_out pin1
+    # VOUT pin → C_out pin1（水平直连）
     wires.append({
         "from": vout_pin,
         "to": cout_pin1,
         "label": "VOUT→Cout", "weight": 3,
     })
-    # C_out pin2 → GND
+    # C_out pin2 → GND 符号
+    gnd_symbols.append({"x": cout_x, "y": int(cout_pin2["y"]) + gnd_stub})
     wires.append({
         "from": cout_pin2,
-        "to": {"x": cout_x, "y": gnd_y},
+        "to": {"x": cout_x, "y": int(cout_pin2["y"]) + gnd_stub},
         "label": "Cout→GND",
+    })
+    # VOUT power flag
+    power_flags.append({
+        "x": cout_x + 40, "y": vout_y,
+        "text": f"VOUT {v_out}V" if v_out else "VOUT",
+        "color": "#1565c0", "direction": "up",
     })
 
     # ============================================================
-    # 3. GND 引脚 → GND 轨
+    # 3. GND 引脚 → GND 符号
     # ============================================================
+    gnd_symbols.append({"x": int(gnd_pin["x"]), "y": int(gnd_pin["y"]) + gnd_stub})
     wires.append({
         "from": gnd_pin,
-        "to": {"x": gnd_pin["x"], "y": gnd_y},
+        "to": {"x": gnd_pin["x"], "y": int(gnd_pin["y"]) + gnd_stub},
         "label": "IC GND",
     })
 
     # ============================================================
-    # 4. EN 上拉到 VIN rail
+    # 4. EN 上拉: 短竖线 + VIN power flag
     # ============================================================
+    en_flag_y = int(en_pin["y"]) - 40
     wires.append({
         "from": en_pin,
-        "to": {"x": en_pin["x"], "y": rail_y},
-        "label": "EN pullup to VIN rail",
+        "to": {"x": en_pin["x"], "y": en_flag_y},
+        "label": "EN pullup",
+    })
+    power_flags.append({
+        "x": int(en_pin["x"]), "y": en_flag_y,
+        "text": "VIN", "color": "#c62828", "direction": "up",
     })
 
 
@@ -1354,9 +1372,8 @@ def _build_svg_template(ir: Any) -> dict[str, Any]:
     - R1/R2: VOUT → FB 分压（竖直，在 IC 右下方）
     """
     canvas_w, canvas_h = 1400, 900
-    rail_y = 120          # VIN 水平轨道 Y
-    gnd_y = 750           # GND 水平轨道 Y
     sw_rail_y = 320       # SW / inductor / VOUT 水平轨道 Y
+    GND_STUB = 25         # 接地 pin 下方短引线长度（到 GND 符号）
 
     # ---- 标准元件尺寸（body 高/宽 + pin 引线长度）----
     # lead 要足够长，让走线连接点远离器件本体，拐弯空间充裕
@@ -1379,6 +1396,8 @@ def _build_svg_template(ir: Any) -> dict[str, Any]:
     components: list[dict[str, Any]] = []
     wires: list[dict[str, Any]] = []
     ic_data: list[dict[str, Any]] = []
+    gnd_symbols: list[dict[str, int]] = []       # 每个接地点 {x, y}
+    power_flags: list[dict[str, Any]] = []        # 电源标号 {x, y, text, color}
     cout_x = canvas_w - 200  # 默认值，power_modules 循环中会覆盖
 
     modules = list(ir.module_instances.items())
@@ -1458,9 +1477,10 @@ def _build_svg_template(ir: Any) -> dict[str, Any]:
             _layout_ldo(
                 idx, mid, pn, ext_comps, inst,
                 components, wires, ic_data,
-                canvas_w, rail_y, gnd_y,
+                gnd_symbols, power_flags,
                 _vert_component, _find_ext_value,
                 CAP_BODY_H, CAP_LEAD, CAP_HALF,
+                GND_STUB,
             )
             # 更新 cout_x 用于标签定位
             cout_x = 350 + idx * 500 + 70 + 100 + 80
@@ -1517,37 +1537,43 @@ def _build_svg_template(ir: Any) -> dict[str, Any]:
         cout_x = out_x + 80            # 输出电容
         fb_x = out_x                   # FB 分压电阻 X（与 VOUT 同列）
 
+        # 获取电压参数
+        params = dict(getattr(inst, "parameters", {}))
+        v_in = params.get("v_in", "")
+        v_out = params.get("v_out", "")
+
         # ============================================================
-        # 1. 输入电容 C_in: VIN rail → GND
+        # 1. 输入电容 C_in: VIN → GND
         # ============================================================
-        # 电容 center 在 rail_y 下方，pin1 刚好在 rail_y
-        cin_center_y = rail_y + CAP_HALF  # pin1_y = rail_y
+        # C_in 中心与 VIN pin 同高
+        cin_center_y = int(vin_pin["y"])
         comp_cin = _vert_component(
             "capacitor", "input_cap", "C1",
             _find_ext_value(ext_comps, "input_cap", "10uF"),
             cin_x, cin_center_y, CAP_BODY_H, CAP_LEAD,
         )
         components.append(comp_cin)
-        cin_pin1 = comp_cin["pins"]["1"]  # top pin (y=rail_y)
+        cin_pin1 = comp_cin["pins"]["1"]  # top pin
         cin_pin2 = comp_cin["pins"]["2"]  # bottom pin
 
-        # VIN rail 水平线: C_in pin1 → 到 IC 左侧区域
+        # C_in pin1 → VIN pin（水平直连）
         wires.append({
             "from": cin_pin1,
-            "to": {"x": vin_pin["x"], "y": rail_y},
-            "label": "VIN rail", "weight": 3,
-        })
-        # VIN rail 下拐到 VIN 引脚
-        wires.append({
-            "from": {"x": vin_pin["x"], "y": rail_y},
             "to": vin_pin,
-            "label": "VIN→IC",
+            "label": "C_in→VIN",
         })
-        # C_in pin2 → GND rail
+        # C_in pin2 → GND 符号
+        gnd_symbols.append({"x": cin_x, "y": int(cin_pin2["y"]) + GND_STUB})
         wires.append({
             "from": cin_pin2,
-            "to": {"x": cin_x, "y": gnd_y},
+            "to": {"x": cin_x, "y": int(cin_pin2["y"]) + GND_STUB},
             "label": "C_in→GND",
+        })
+        # VIN power flag 在 C_in pin1 上方
+        power_flags.append({
+            "x": cin_x, "y": int(cin_pin1["y"]),
+            "text": f"VIN {v_in}V" if v_in else "VIN",
+            "color": "#c62828", "direction": "up",
         })
 
         # ============================================================
@@ -1626,10 +1652,11 @@ def _build_svg_template(ir: Any) -> dict[str, Any]:
             "to": d_pin1,
             "label": "SW→D1 anode",
         })
-        # D1 pin2 → GND rail
+        # D1 pin2 → GND 符号
+        gnd_symbols.append({"x": sw_node_x, "y": int(d_pin2["y"]) + GND_STUB})
         wires.append({
             "from": d_pin2,
-            "to": {"x": sw_node_x, "y": gnd_y},
+            "to": {"x": sw_node_x, "y": int(d_pin2["y"]) + GND_STUB},
             "label": "D1→GND",
         })
 
@@ -1652,10 +1679,11 @@ def _build_svg_template(ir: Any) -> dict[str, Any]:
             "to": cout_pin1,
             "label": "VOUT→Cout",
         })
-        # C_out pin2 → GND rail
+        # C_out pin2 → GND 符号
+        gnd_symbols.append({"x": cout_x, "y": int(cout_pin2["y"]) + GND_STUB})
         wires.append({
             "from": cout_pin2,
-            "to": {"x": cout_x, "y": gnd_y},
+            "to": {"x": cout_x, "y": int(cout_pin2["y"]) + GND_STUB},
             "label": "Cout→GND",
         })
 
@@ -1727,10 +1755,11 @@ def _build_svg_template(ir: Any) -> dict[str, Any]:
             "to": r2_pin1,
             "label": "R1→R2 (FB mid)",
         })
-        # R2 pin2 → GND rail
+        # R2 pin2 → GND 符号
+        gnd_symbols.append({"x": fb_x, "y": int(r2_pin2["y"]) + GND_STUB})
         wires.append({
             "from": r2_pin2,
-            "to": {"x": fb_x, "y": gnd_y},
+            "to": {"x": fb_x, "y": int(r2_pin2["y"]) + GND_STUB},
             "label": "R2→GND",
         })
         # FB 中点 → FB 引脚（水平线 + 竖直线）
@@ -1746,59 +1775,43 @@ def _build_svg_template(ir: Any) -> dict[str, Any]:
         })
 
         # ============================================================
-        # 8. GND 引脚 → GND 轨
+        # 8. GND 引脚 → GND 符号
         # ============================================================
+        gnd_symbols.append({"x": int(gnd_pin["x"]), "y": int(gnd_pin["y"]) + GND_STUB})
         wires.append({
             "from": gnd_pin,
-            "to": {"x": gnd_pin["x"], "y": gnd_y},
+            "to": {"x": gnd_pin["x"], "y": int(gnd_pin["y"]) + GND_STUB},
             "label": "IC GND",
         })
 
         # ============================================================
-        # 9. EN 上拉到 VIN rail
+        # 9. EN 上拉: 短竖线 + VIN power flag
         # ============================================================
+        en_flag_y = int(en_pin["y"]) - 40
         wires.append({
             "from": en_pin,
-            "to": {"x": en_pin["x"], "y": rail_y},
-            "label": "EN pullup to VIN rail",
+            "to": {"x": en_pin["x"], "y": en_flag_y},
+            "label": "EN pullup",
+        })
+        power_flags.append({
+            "x": int(en_pin["x"]), "y": en_flag_y,
+            "text": "VIN", "color": "#c62828", "direction": "up",
         })
 
-    # ---- 标签 ----
-    labels = [
-        {"text": "VIN", "x": 60, "y": rail_y, "color": "red", "font_size": 16},
-    ]
-    if power_modules:
-        _, first_inst = power_modules[0]
-        first_cat = getattr(first_inst, "resolved_category", "buck")
-        params = dict(getattr(first_inst, "parameters", {}))
-        v_in = params.get("v_in", "")
-        v_out = params.get("v_out", "")
-        if v_in:
-            labels[0]["text"] = f"VIN {v_in}V"
-        # VOUT 标签 y 位置: Buck 用 sw_rail_y, LDO 用 IC VOUT pin 高度
-        vout_label_y = sw_rail_y
-        if first_cat == "ldo" and ic_data:
-            vout_pins = ic_data[0].get("pins", {})
-            if "VOUT" in vout_pins:
-                vout_label_y = int(vout_pins["VOUT"]["y"])
-        labels.append({
+        # VOUT power flag
+        power_flags.append({
+            "x": cout_x + 40, "y": sw_rail_y,
             "text": f"VOUT {v_out}V" if v_out else "VOUT",
-            "x": cout_x + 40,
-            "y": vout_label_y, "color": "blue", "font_size": 16,
+            "color": "#1565c0", "direction": "up",
         })
-
-    gnd_rail = {"y": gnd_y, "x_start": 80, "x_end": canvas_w - 80}
 
     return {
         "canvas": {"width": canvas_w, "height": canvas_h},
-        "rail_y": rail_y,
-        "sw_rail_y": sw_rail_y,
-        "gnd_y": gnd_y,
-        "gnd_rail": gnd_rail,
         "ic_modules": ic_data,
         "components": components,
         "wires": wires,
-        "labels": labels,
+        "gnd_symbols": gnd_symbols,
+        "power_flags": power_flags,
     }
 
 
@@ -1822,12 +1835,11 @@ def _render_svg_from_template(template: dict[str, Any]) -> str:
 
     输入: _build_svg_template() 的返回值
     输出: 完整 SVG 字符串，可直接保存为 .svg 文件
+
+    不画全局 VIN/GND 横轨。接地用 GND 符号，电源用 power flag 标注。
     """
     cw = template["canvas"]["width"]
     ch = template["canvas"]["height"]
-    gnd = template["gnd_rail"]
-    rail_y = template["rail_y"]
-    gnd_y = template["gnd_y"]
 
     lines: list[str] = []
 
@@ -1842,7 +1854,6 @@ def _render_svg_from_template(template: dict[str, Any]) -> str:
         f'style="background:#ffffff">'
     )
     _a("<defs>")
-    # 箭头标记（用于标注走线方向，可选）
     _a(
         '<marker id="dot" viewBox="0 0 6 6" refX="3" refY="3" '
         'markerWidth="4" markerHeight="4">'
@@ -1856,48 +1867,14 @@ def _render_svg_from_template(template: dict[str, Any]) -> str:
     _a("  .pwr  { stroke: #333; stroke-width: 2.5; fill: none; stroke-linecap: round; }")
     _a("  .ic   { stroke: #000; stroke-width: 2; fill: #fffde7; }")
     _a("  .comp { stroke: #000; stroke-width: 1.8; fill: none; }")
-    _a("  .gnd-rail { stroke: #2e7d32; stroke-width: 2.5; stroke-dasharray: none; }")
-    _a("  .vin-rail { stroke: #c62828; stroke-width: 2.5; }")
     _a("  .pin  { stroke: #555; stroke-width: 1.4; }")
     _a("  .junction { fill: #333; }")
+    _a("  .gnd-sym  { stroke: #2e7d32; fill: none; }")
     _a("  .label-ref  { font-size: 10px; fill: #000; font-weight: bold; }")
     _a("  .label-val  { font-size: 9px; fill: #555; }")
     _a("  .label-pin  { font-size: 9px; fill: #444; }")
     _a("  .label-pwr  { font-size: 14px; font-weight: bold; }")
     _a("</style>")
-
-    # ---- GND 轨道 ----
-    _a(
-        f'<line x1="{gnd["x_start"]}" y1="{gnd["y"]}" '
-        f'x2="{gnd["x_end"]}" y2="{gnd["y"]}" class="gnd-rail"/>'
-    )
-    # GND 符号（每隔一段画一个）
-    for gx in range(gnd["x_start"], gnd["x_end"] + 1, 200):
-        _svg_gnd_symbol(lines, gx, gnd_y)
-
-    # ---- 标签 ----
-    for lb in template.get("labels", []):
-        _a(
-            f'<text x="{lb["x"]}" y="{lb["y"] - 12}" '
-            f'fill="{lb.get("color", "#000")}" class="label-pwr">'
-            f'{lb["text"]}</text>'
-        )
-
-    # ---- VIN 轨道（从最左元件到 IC 左侧）----
-    if template.get("ic_modules"):
-        ic = template["ic_modules"][0]
-        vin_rail_x_end = ic["ic_rect"]["x"] + 10
-        # 找最左边的 pin x 坐标
-        min_x = vin_rail_x_end
-        for c in template["components"]:
-            for pin in c.get("pins", {}).values():
-                px = int(pin["x"])
-                if px < min_x:
-                    min_x = px
-        _a(
-            f'<line x1="{min_x - 30}" y1="{rail_y}" '
-            f'x2="{vin_rail_x_end}" y2="{rail_y}" class="vin-rail"/>'
-        )
 
     # ---- IC 模块 ----
     for ic in template.get("ic_modules", []):
@@ -1910,6 +1887,22 @@ def _render_svg_from_template(template: dict[str, Any]) -> str:
     # ---- 走线 ----
     for wire in template.get("wires", []):
         _svg_wire(lines, wire)
+
+    # ---- GND 符号 (每个接地点单独画) ----
+    for gs in template.get("gnd_symbols", []):
+        _svg_gnd_symbol(lines, int(gs["x"]), int(gs["y"]))
+
+    # ---- Power flags (VIN/VOUT 电源标号) ----
+    for pf in template.get("power_flags", []):
+        px, py = int(pf["x"]), int(pf["y"])
+        color = pf.get("color", "#c62828")
+        text = pf.get("text", "")
+        # 画一条短横线 + 三角形 power flag 符号
+        _a(f'<line x1="{px - 8}" y1="{py}" x2="{px + 8}" y2="{py}" stroke="{color}" stroke-width="2"/>')
+        _a(
+            f'<text x="{px}" y="{py - 8}" text-anchor="middle" '
+            f'fill="{color}" class="label-pwr">{text}</text>'
+        )
 
     # ---- Junction dots (T 型交叉点) ----
     # 统计每个坐标点被多少条走线端点引用
