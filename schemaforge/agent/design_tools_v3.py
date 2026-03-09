@@ -1209,10 +1209,10 @@ def _build_svg_template(ir: Any) -> dict[str, Any]:
     - C_bst: BOOT → SW 节点（竖直，在 IC 右上方）
     - R1/R2: VOUT → FB 分压（竖直，在 IC 右下方）
     """
-    canvas_w, canvas_h = 1200, 800
-    rail_y = 150          # VIN 水平轨道 Y
-    gnd_y = 650           # GND 水平轨道 Y
-    sw_rail_y = 300       # SW / inductor / VOUT 水平轨道 Y
+    canvas_w, canvas_h = 1400, 900
+    rail_y = 120          # VIN 水平轨道 Y
+    gnd_y = 750           # GND 水平轨道 Y
+    sw_rail_y = 320       # SW / inductor / VOUT 水平轨道 Y
 
     components: list[dict[str, Any]] = []
     wires: list[dict[str, Any]] = []
@@ -1269,13 +1269,13 @@ def _build_svg_template(ir: Any) -> dict[str, Any]:
         fb_pin = pin_positions["FB"]
 
         # ============================================================
-        # 关键 X 坐标
+        # 关键 X 坐标（间距充足，避免元件重叠）
         # ============================================================
         cin_x = ic_left - 100          # 输入电容
-        sw_node_x = ic_right + 40      # SW 节点（电感/二极管/BST 交汇点）
-        l_right_x = sw_node_x + 120    # 电感右端
-        out_x = l_right_x + 60         # VOUT 节点
-        cout_x = out_x + 70            # 输出电容
+        sw_node_x = ic_right + 50      # SW 节点（电感/二极管交汇点）
+        l_right_x = sw_node_x + 140    # 电感右端（加宽避免 C3 重叠）
+        out_x = l_right_x + 80         # VOUT 节点
+        cout_x = out_x + 80            # 输出电容
         fb_x = out_x                   # FB 分压电阻 X（与 VOUT 同列）
 
         # ============================================================
@@ -1341,8 +1341,8 @@ def _build_svg_template(ir: Any) -> dict[str, Any]:
         # ============================================================
         # 4. 续流二极管 D: SW 节点 → GND（竖直）
         # ============================================================
-        d_body_top = sw_rail_y + 30
-        d_body_bottom = sw_rail_y + 80
+        d_body_top = sw_rail_y + 40    # 留出足够间距，避免与 L1 弧线重叠
+        d_body_bottom = sw_rail_y + 90
         components.append({
             "role": "diode", "ref": "D1", "type": "diode",
             "orientation": "vertical",
@@ -1373,16 +1373,16 @@ def _build_svg_template(ir: Any) -> dict[str, Any]:
         # ============================================================
         # 6. 自举电容 C_bst: BOOT 引脚 → SW 节点
         # ============================================================
-        # C_bst 放在 IC 右上方，与 D1/L1 错开 X 坐标
-        bst_x = sw_node_x + 60  # 在 SW 节点右边 60px，避免与 D1/L1 重叠
-        bst_top_y = int(boot_pin["y"]) - 30  # 上端比 BOOT 引脚略高
-        bst_bottom_y = bst_top_y + 60
+        # C_bst 放在电感右端上方，远离 D1/L1 弧线
+        bst_x = l_right_x  # 和电感右端对齐，避开电感弧线区域
+        bst_body_top = sw_rail_y - 90  # 在电感弧线上方，留足间距
+        bst_body_bottom = bst_body_top + 50
         components.append({
             "role": "boot_cap", "ref": "C3", "type": "capacitor",
             "orientation": "vertical",
-            "x": bst_x, "y_top": bst_top_y, "y_bottom": bst_bottom_y,
+            "x": bst_x, "y_top": bst_body_top, "y_bottom": bst_body_bottom,
             "value": _find_ext_value(ext_comps, "boot_cap", "100nF"),
-            "connect_top": {"x": bst_x, "y": bst_top_y},
+            "connect_top": {"x": bst_x, "y": bst_body_top},
             "connect_bottom": {"x": bst_x, "y": sw_rail_y},
         })
         # BOOT 引脚 → 水平到 bst_x → 竖直到 C_bst top
@@ -1393,7 +1393,7 @@ def _build_svg_template(ir: Any) -> dict[str, Any]:
         })
         wires.append({
             "from": {"x": bst_x, "y": boot_pin["y"]},
-            "to": {"x": bst_x, "y": bst_top_y},
+            "to": {"x": bst_x, "y": bst_body_top},
             "label": "BOOT→C3 top",
         })
         # C_bst bottom 在 sw_rail_y 高度，与电感轨道交汇
