@@ -1194,7 +1194,13 @@ def build_atomic_design_tools(session: SystemDesignSession) -> ToolRegistry:
 
 
 def _build_svg_template(ir: Any) -> dict[str, Any]:
-    """根据 IR 生成严格的 SVG 坐标模板。
+    """根据 IR 生成严格的 SVG 坐标模板（Pin + Body 分离架构）。
+
+    每个元件输出:
+    - pins: {"1": {"x": ..., "y": ...}, "2": {"x": ..., "y": ...}}
+      走线只能连接到 pin 末端坐标
+    - body_bbox: {"x1": ..., "y1": ..., "x2": ..., "y2": ...}
+      元件 body 占用的矩形，走线不应穿过
 
     布局策略（信号从左到右流动）：
     - IC 左侧引脚: VIN（上）、EN（下）— 输入侧
@@ -1214,6 +1220,23 @@ def _build_svg_template(ir: Any) -> dict[str, Any]:
     gnd_y = 750           # GND 水平轨道 Y
     sw_rail_y = 320       # SW / inductor / VOUT 水平轨道 Y
 
+    # ---- 标准元件尺寸（body 高/宽 + pin 引线长度）----
+    # 竖直电容: body 10px gap, pin引线各 20px
+    CAP_BODY_H = 10       # 两极板间距
+    CAP_LEAD = 20         # 引线长度 (body 到 pin 末端)
+    CAP_HALF = CAP_BODY_H // 2 + CAP_LEAD  # center 到 pin 末端的距离 = 25
+    # 竖直电阻: body 高 40px, pin引线各 15px
+    RES_BODY_H = 40
+    RES_LEAD = 15
+    RES_HALF = RES_BODY_H // 2 + RES_LEAD  # 35
+    # 竖直二极管: body 高 35px, pin引线各 15px
+    DIO_BODY_H = 35
+    DIO_LEAD = 15
+    DIO_HALF = DIO_BODY_H // 2 + DIO_LEAD  # ~33
+    # 水平电感: body 宽 130px, pin引线各 10px
+    IND_BODY_W = 130
+    IND_LEAD = 10
+
     components: list[dict[str, Any]] = []
     wires: list[dict[str, Any]] = []
     ic_data: list[dict[str, Any]] = []
@@ -1224,6 +1247,62 @@ def _build_svg_template(ir: Any) -> dict[str, Any]:
         (mid, m) for mid, m in modules
         if getattr(m, "resolved_category", "") in ("buck", "ldo", "boost")
     ]
+
+    # ---- 辅助函数: 生成竖直2端元件的 pins + body_bbox ----
+    def _vert_component(
+        ctype: str, role: str, ref: str, value: str,
+        x: int, center_y: int,
+        body_h: int, lead: int,
+        half_w: int = 12,
+    ) -> dict[str, Any]:
+        """生成竖直2端元件 (电容/电阻/二极管) 的标准数据。
+
+        pin1 (top) = center_y - body_h/2 - lead
+        pin2 (bottom) = center_y + body_h/2 + lead
+        body_bbox 仅包含 body 区域 (不含引线)
+        """
+        body_top = center_y - body_h // 2
+        body_bottom = center_y + body_h // 2
+        pin1_y = body_top - lead    # 上端 pin (走线连接点)
+        pin2_y = body_bottom + lead  # 下端 pin (走线连接点)
+        return {
+            "role": role, "ref": ref, "type": ctype,
+            "orientation": "vertical",
+            "x": x,
+            "pins": {
+                "1": {"x": x, "y": pin1_y},   # top pin endpoint
+                "2": {"x": x, "y": pin2_y},   # bottom pin endpoint
+            },
+            "body_bbox": {
+                "x1": x - half_w, "y1": body_top,
+                "x2": x + half_w, "y2": body_bottom,
+            },
+            "value": value,
+        }
+
+    # ---- 辅助函数: 生成水平2端元件 (电感) 的 pins + body_bbox ----
+    def _horiz_inductor(
+        ref: str, value: str,
+        y: int, center_x: int,
+        body_w: int = IND_BODY_W, lead: int = IND_LEAD,
+    ) -> dict[str, Any]:
+        body_left = center_x - body_w // 2
+        body_right = center_x + body_w // 2
+        pin1_x = body_left - lead    # 左端 pin
+        pin2_x = body_right + lead   # 右端 pin
+        return {
+            "role": "inductor", "ref": ref, "type": "inductor",
+            "orientation": "horizontal",
+            "pins": {
+                "1": {"x": pin1_x, "y": y},   # left pin endpoint
+                "2": {"x": pin2_x, "y": y},   # right pin endpoint
+            },
+            "body_bbox": {
+                "x1": body_left, "y1": y - 20,
+                "x2": body_right, "y2": y + 5,
+            },
+            "value": value,
+        }
 
     for idx, (mid, inst) in enumerate(power_modules):
         device = getattr(inst, "device", None)
@@ -1240,17 +1319,19 @@ def _build_svg_template(ir: Any) -> dict[str, Any]:
         ic_right = ic_cx + ic_w // 2   # 420
         ic_bottom = ic_cy + ic_h // 2  # 430
 
-        # --- 引脚位置 ---
-        # 左侧（输入侧）: VIN 在上, EN 在下
+        # --- IC 引脚末端位置 (pin stub 外端 = 走线连接点) ---
+        IC_PIN_STUB = 25  # IC 引脚短线长度
         pin_positions: dict[str, dict[str, Any]] = {
-            "VIN":  {"x": ic_left,      "y": ic_top + 45,   "side": "left"},
-            "EN":   {"x": ic_left,      "y": ic_top + 135,  "side": "left"},
+            # 左侧（输入侧）: VIN 在上, EN 在下
+            # pin endpoint 在 IC 矩形左边 - stub 长度
+            "VIN":  {"x": ic_left - IC_PIN_STUB,  "y": ic_top + 45,   "side": "left"},
+            "EN":   {"x": ic_left - IC_PIN_STUB,  "y": ic_top + 135,  "side": "left"},
             # 右侧（输出侧）: BOOT 在上, SW 在下
-            "BOOT": {"x": ic_right,     "y": ic_top + 45,   "side": "right"},
-            "SW":   {"x": ic_right,     "y": ic_top + 135,  "side": "right"},
+            "BOOT": {"x": ic_right + IC_PIN_STUB, "y": ic_top + 45,   "side": "right"},
+            "SW":   {"x": ic_right + IC_PIN_STUB, "y": ic_top + 135,  "side": "right"},
             # 底部: GND 左, FB 右
-            "GND":  {"x": ic_cx - 30,   "y": ic_bottom,     "side": "bottom"},
-            "FB":   {"x": ic_cx + 30,   "y": ic_bottom,     "side": "bottom"},
+            "GND":  {"x": ic_cx - 30,             "y": ic_bottom + IC_PIN_STUB, "side": "bottom"},
+            "FB":   {"x": ic_cx + 30,             "y": ic_bottom + IC_PIN_STUB, "side": "bottom"},
         }
 
         ic_data.append({
@@ -1271,9 +1352,9 @@ def _build_svg_template(ir: Any) -> dict[str, Any]:
         # ============================================================
         # 关键 X 坐标（间距充足，避免元件重叠）
         # ============================================================
-        cin_x = ic_left - 100          # 输入电容
-        sw_node_x = ic_right + 50      # SW 节点（电感/二极管交汇点）
-        l_right_x = sw_node_x + 140    # 电感右端（加宽避免 C3 重叠）
+        cin_x = ic_left - 120          # 输入电容 (往左移避开 IC pin stub)
+        sw_node_x = ic_right + 80      # SW 节点（电感/二极管交汇点，在 SW pin 右边）
+        l_right_x = sw_node_x + 160    # 电感右端（加宽避免 C3 重叠）
         out_x = l_right_x + 80         # VOUT 节点
         cout_x = out_x + 80            # 输出电容
         fb_x = out_x                   # FB 分压电阻 X（与 VOUT 同列）
@@ -1281,59 +1362,88 @@ def _build_svg_template(ir: Any) -> dict[str, Any]:
         # ============================================================
         # 1. 输入电容 C_in: VIN rail → GND
         # ============================================================
-        components.append({
-            "role": "input_cap", "ref": "C1", "type": "capacitor",
-            "orientation": "vertical",
-            "x": cin_x, "y_top": rail_y, "y_bottom": rail_y + 60,
-            "value": _find_ext_value(ext_comps, "input_cap", "10uF"),
-            "connect_top": {"x": cin_x, "y": rail_y},
-            "connect_bottom": {"x": cin_x, "y": gnd_y},
-        })
-        # VIN rail 水平线: C_in top → VIN 引脚
+        # 电容 center 在 rail_y 下方，pin1 刚好在 rail_y
+        cin_center_y = rail_y + CAP_HALF  # pin1_y = rail_y
+        comp_cin = _vert_component(
+            "capacitor", "input_cap", "C1",
+            _find_ext_value(ext_comps, "input_cap", "10uF"),
+            cin_x, cin_center_y, CAP_BODY_H, CAP_LEAD,
+        )
+        components.append(comp_cin)
+        cin_pin1 = comp_cin["pins"]["1"]  # top pin (y=rail_y)
+        cin_pin2 = comp_cin["pins"]["2"]  # bottom pin
+
+        # VIN rail 水平线: C_in pin1 → 到 IC 左侧区域
         wires.append({
-            "from": {"x": cin_x, "y": rail_y},
-            "to": {"x": ic_left, "y": rail_y},
+            "from": cin_pin1,
+            "to": {"x": vin_pin["x"], "y": rail_y},
             "label": "VIN rail", "weight": 3,
         })
         # VIN rail 下拐到 VIN 引脚
         wires.append({
-            "from": {"x": ic_left - 30, "y": rail_y},
-            "to": {"x": ic_left - 30, "y": vin_pin["y"]},
-            "label": "VIN drop",
-        })
-        wires.append({
-            "from": {"x": ic_left - 30, "y": vin_pin["y"]},
-            "to": {"x": vin_pin["x"], "y": vin_pin["y"]},
+            "from": {"x": vin_pin["x"], "y": rail_y},
+            "to": vin_pin,
             "label": "VIN→IC",
+        })
+        # C_in pin2 → GND rail
+        wires.append({
+            "from": cin_pin2,
+            "to": {"x": cin_x, "y": gnd_y},
+            "label": "C_in→GND",
         })
 
         # ============================================================
-        # 2. SW 引脚 → SW 节点（水平短线向右）
+        # 2. SW 引脚 → SW 节点 (sw_node_x, sw_rail_y)
         # ============================================================
+        # 路由策略: SW pin → 水平到 D1 body 左侧 → 竖直上到 sw_rail_y
+        # D1 body 左边界 = sw_node_x - 12, 路由在其左侧
+        sw_route_x = sw_node_x - 20  # D1 body_bbox x1 约 sw_node_x-12
         wires.append({
-            "from": {"x": sw_pin["x"], "y": sw_pin["y"]},
-            "to": {"x": sw_node_x, "y": sw_pin["y"]},
-            "label": "SW→node",
+            "from": sw_pin,
+            "to": {"x": sw_route_x, "y": sw_pin["y"]},
+            "label": "SW→left of D1",
         })
-        # SW 节点上拉到 sw_rail_y（方便电感水平走线）
         wires.append({
-            "from": {"x": sw_node_x, "y": sw_pin["y"]},
+            "from": {"x": sw_route_x, "y": sw_pin["y"]},
+            "to": {"x": sw_route_x, "y": sw_rail_y},
+            "label": "SW vertical up",
+        })
+        wires.append({
+            "from": {"x": sw_route_x, "y": sw_rail_y},
             "to": {"x": sw_node_x, "y": sw_rail_y},
-            "label": "SW node vertical",
+            "label": "SW→node",
         })
 
         # ============================================================
         # 3. 电感 L: SW 节点 → VOUT（水平，在 sw_rail_y 高度）
         # ============================================================
-        components.append({
-            "role": "inductor", "ref": "L1", "type": "inductor",
-            "orientation": "horizontal",
-            "x1": sw_node_x, "y": sw_rail_y, "x2": l_right_x,
-            "value": _find_ext_value(ext_comps, "inductor", "10uH"),
-        })
-        # 电感右端 → VOUT 节点
+        # 电感 center_x 使得 pin1 在 sw_node_x, pin2 在 l_right_x
+        l_center_x = (sw_node_x + IND_LEAD + l_right_x - IND_LEAD) // 2
+        # 精确计算: pin1_x = center_x - body_w/2 - lead = sw_node_x
+        #           pin2_x = center_x + body_w/2 + lead = l_right_x
+        #           => center_x = (sw_node_x + l_right_x) / 2, body_w = l_right_x - sw_node_x - 2*lead
+        l_span = l_right_x - sw_node_x
+        l_body_w = l_span - 2 * IND_LEAD
+        if l_body_w < 40:
+            l_body_w = 40  # 最小 body 宽度
+        l_center_x = (sw_node_x + l_right_x) // 2
+        comp_l = _horiz_inductor(
+            "L1", _find_ext_value(ext_comps, "inductor", "10uH"),
+            sw_rail_y, l_center_x, l_body_w, IND_LEAD,
+        )
+        components.append(comp_l)
+        l_pin1 = comp_l["pins"]["1"]  # left pin (x≈sw_node_x)
+        l_pin2 = comp_l["pins"]["2"]  # right pin (x≈l_right_x)
+
+        # SW 节点 → 电感 pin1 (应该完全吻合，但为安全画一条短线)
         wires.append({
-            "from": {"x": l_right_x, "y": sw_rail_y},
+            "from": {"x": sw_node_x, "y": sw_rail_y},
+            "to": l_pin1,
+            "label": "SW→L1 pin1",
+        })
+        # 电感 pin2 → VOUT 节点
+        wires.append({
+            "from": l_pin2,
             "to": {"x": out_x, "y": sw_rail_y},
             "label": "L→VOUT", "weight": 3,
         })
@@ -1341,92 +1451,129 @@ def _build_svg_template(ir: Any) -> dict[str, Any]:
         # ============================================================
         # 4. 续流二极管 D: SW 节点 → GND（竖直）
         # ============================================================
-        d_body_top = sw_rail_y + 40    # 留出足够间距，避免与 L1 弧线重叠
-        d_body_bottom = sw_rail_y + 90
-        components.append({
-            "role": "diode", "ref": "D1", "type": "diode",
-            "orientation": "vertical",
-            "x": sw_node_x, "y_top": d_body_top, "y_bottom": d_body_bottom,
-            "value": _find_ext_value(ext_comps, "diode", "SS34"),
-            "connect_top": {"x": sw_node_x, "y": sw_rail_y},
-            "connect_bottom": {"x": sw_node_x, "y": gnd_y},
+        # 二极管 center 在 SW 节点下方，pin1 对齐 sw_rail_y 下方留间距
+        d_center_y = sw_rail_y + DIO_HALF + 30  # 留 30px 间距避免与 L1 弧线重叠
+        comp_d = _vert_component(
+            "diode", "diode", "D1",
+            _find_ext_value(ext_comps, "diode", "SS34"),
+            sw_node_x, d_center_y, DIO_BODY_H, DIO_LEAD,
+        )
+        components.append(comp_d)
+        d_pin1 = comp_d["pins"]["1"]  # top pin (anode)
+        d_pin2 = comp_d["pins"]["2"]  # bottom pin (cathode)
+
+        # SW 节点 → D1 pin1
+        wires.append({
+            "from": {"x": sw_node_x, "y": sw_rail_y},
+            "to": d_pin1,
+            "label": "SW→D1 anode",
+        })
+        # D1 pin2 → GND rail
+        wires.append({
+            "from": d_pin2,
+            "to": {"x": sw_node_x, "y": gnd_y},
+            "label": "D1→GND",
         })
 
         # ============================================================
         # 5. 输出电容 C_out: VOUT → GND
         # ============================================================
-        components.append({
-            "role": "output_cap", "ref": "C2", "type": "capacitor",
-            "orientation": "vertical",
-            "x": cout_x, "y_top": sw_rail_y, "y_bottom": sw_rail_y + 60,
-            "value": _find_ext_value(ext_comps, "output_cap", "22uF"),
-            "connect_top": {"x": cout_x, "y": sw_rail_y},
-            "connect_bottom": {"x": cout_x, "y": gnd_y},
-        })
-        # VOUT 节点 → C_out top（水平短线）
+        cout_center_y = sw_rail_y + CAP_HALF  # pin1_y = sw_rail_y
+        comp_cout = _vert_component(
+            "capacitor", "output_cap", "C2",
+            _find_ext_value(ext_comps, "output_cap", "22uF"),
+            cout_x, cout_center_y, CAP_BODY_H, CAP_LEAD,
+        )
+        components.append(comp_cout)
+        cout_pin1 = comp_cout["pins"]["1"]  # top pin
+        cout_pin2 = comp_cout["pins"]["2"]  # bottom pin
+
+        # VOUT 节点 → C_out pin1
         wires.append({
             "from": {"x": out_x, "y": sw_rail_y},
-            "to": {"x": cout_x, "y": sw_rail_y},
+            "to": cout_pin1,
             "label": "VOUT→Cout",
+        })
+        # C_out pin2 → GND rail
+        wires.append({
+            "from": cout_pin2,
+            "to": {"x": cout_x, "y": gnd_y},
+            "label": "Cout→GND",
         })
 
         # ============================================================
         # 6. 自举电容 C_bst: BOOT 引脚 → SW 节点
         # ============================================================
-        # C_bst 放在电感右端上方，远离 D1/L1 弧线
+        # C_bst pin2 (bottom) 对齐 sw_rail_y, pin1 (top) 连到 BOOT
         bst_x = l_right_x  # 和电感右端对齐，避开电感弧线区域
-        bst_body_top = sw_rail_y - 90  # 在电感弧线上方，留足间距
-        bst_body_bottom = bst_body_top + 50
-        components.append({
-            "role": "boot_cap", "ref": "C3", "type": "capacitor",
-            "orientation": "vertical",
-            "x": bst_x, "y_top": bst_body_top, "y_bottom": bst_body_bottom,
-            "value": _find_ext_value(ext_comps, "boot_cap", "100nF"),
-            "connect_top": {"x": bst_x, "y": bst_body_top},
-            "connect_bottom": {"x": bst_x, "y": sw_rail_y},
-        })
-        # BOOT 引脚 → 水平到 bst_x → 竖直到 C_bst top
+        bst_center_y = sw_rail_y - CAP_HALF  # pin2_y = sw_rail_y
+        comp_bst = _vert_component(
+            "capacitor", "boot_cap", "C3",
+            _find_ext_value(ext_comps, "boot_cap", "100nF"),
+            bst_x, bst_center_y, CAP_BODY_H, CAP_LEAD,
+        )
+        components.append(comp_bst)
+        bst_pin1 = comp_bst["pins"]["1"]  # top pin
+        bst_pin2 = comp_bst["pins"]["2"]  # bottom pin (y=sw_rail_y)
+
+        # BOOT 引脚 → C_bst pin1
+        # 路由策略: 先竖直到 pin1 高度，再水平到 bst_x (避免穿过 C3 body)
+        bst_pin1_y = int(bst_pin1["y"])
         wires.append({
-            "from": {"x": boot_pin["x"], "y": boot_pin["y"]},
-            "to": {"x": bst_x, "y": boot_pin["y"]},
-            "label": "BOOT→horiz",
+            "from": boot_pin,
+            "to": {"x": boot_pin["x"], "y": bst_pin1_y},
+            "label": "BOOT→up",
         })
         wires.append({
-            "from": {"x": bst_x, "y": boot_pin["y"]},
-            "to": {"x": bst_x, "y": bst_body_top},
-            "label": "BOOT→C3 top",
+            "from": {"x": boot_pin["x"], "y": bst_pin1_y},
+            "to": bst_pin1,
+            "label": "BOOT→C3 pin1",
         })
-        # C_bst bottom 在 sw_rail_y 高度，与电感轨道交汇
+        # C_bst pin2 在 sw_rail_y 高度，与电感轨道交汇（不需要额外走线）
 
         # ============================================================
         # 7. FB 分压电阻: VOUT → R1 → FB_mid → R2 → GND
         # ============================================================
-        fb_mid_y = ic_bottom + 60      # R1/R2 分界点（FB 节点）
-        r1_top_y = fb_mid_y - 60
-        r1_bottom_y = fb_mid_y
-        r2_top_y = fb_mid_y
-        r2_bottom_y = fb_mid_y + 60
-        components.append({
-            "role": "fb_upper", "ref": "R1", "type": "resistor",
-            "orientation": "vertical",
-            "x": fb_x, "y_top": r1_top_y, "y_bottom": r1_bottom_y,
-            "value": _find_ext_value(ext_comps, "fb_upper", "30k"),
-            "connect_top": {"x": fb_x, "y": r1_top_y},
-            "connect_bottom": {"x": fb_x, "y": fb_mid_y},
-        })
-        components.append({
-            "role": "fb_lower", "ref": "R2", "type": "resistor",
-            "orientation": "vertical",
-            "x": fb_x, "y_top": r2_top_y, "y_bottom": r2_bottom_y,
-            "value": _find_ext_value(ext_comps, "fb_lower", "10k"),
-            "connect_top": {"x": fb_x, "y": fb_mid_y},
-            "connect_bottom": {"x": fb_x, "y": gnd_y},
-        })
-        # VOUT rail → R1 top（从 VOUT 节点竖直下来再水平过去）
+        # R1 pin1 连 VOUT 下降线，R1 pin2 = R2 pin1 = FB 中点
+        fb_mid_y = ic_bottom + 100     # R1/R2 分界点（FB 节点）
+        r1_center_y = fb_mid_y - RES_HALF  # R1 pin2 = fb_mid_y
+        r2_center_y = fb_mid_y + RES_HALF  # R2 pin1 = fb_mid_y
+
+        comp_r1 = _vert_component(
+            "resistor", "fb_upper", "R1",
+            _find_ext_value(ext_comps, "fb_upper", "30k"),
+            fb_x, r1_center_y, RES_BODY_H, RES_LEAD, half_w=7,
+        )
+        components.append(comp_r1)
+        r1_pin1 = comp_r1["pins"]["1"]  # top pin
+        r1_pin2 = comp_r1["pins"]["2"]  # bottom pin (y=fb_mid_y)
+
+        comp_r2 = _vert_component(
+            "resistor", "fb_lower", "R2",
+            _find_ext_value(ext_comps, "fb_lower", "10k"),
+            fb_x, r2_center_y, RES_BODY_H, RES_LEAD, half_w=7,
+        )
+        components.append(comp_r2)
+        r2_pin1 = comp_r2["pins"]["1"]  # top pin (y=fb_mid_y)
+        r2_pin2 = comp_r2["pins"]["2"]  # bottom pin
+
+        # VOUT rail → R1 pin1
         wires.append({
             "from": {"x": out_x, "y": sw_rail_y},
-            "to": {"x": out_x, "y": r1_top_y},
-            "label": "VOUT→R1 (vertical)",
+            "to": r1_pin1,
+            "label": "VOUT→R1 pin1",
+        })
+        # R1 pin2 → R2 pin1 (应完全吻合，画短线确保连接)
+        wires.append({
+            "from": r1_pin2,
+            "to": r2_pin1,
+            "label": "R1→R2 (FB mid)",
+        })
+        # R2 pin2 → GND rail
+        wires.append({
+            "from": r2_pin2,
+            "to": {"x": fb_x, "y": gnd_y},
+            "label": "R2→GND",
         })
         # FB 中点 → FB 引脚（水平线 + 竖直线）
         wires.append({
@@ -1436,7 +1583,7 @@ def _build_svg_template(ir: Any) -> dict[str, Any]:
         })
         wires.append({
             "from": {"x": fb_pin["x"], "y": fb_mid_y},
-            "to": {"x": fb_pin["x"], "y": fb_pin["y"]},
+            "to": fb_pin,
             "label": "FB→IC",
         })
 
@@ -1444,7 +1591,7 @@ def _build_svg_template(ir: Any) -> dict[str, Any]:
         # 8. GND 引脚 → GND 轨
         # ============================================================
         wires.append({
-            "from": {"x": gnd_pin["x"], "y": gnd_pin["y"]},
+            "from": gnd_pin,
             "to": {"x": gnd_pin["x"], "y": gnd_y},
             "label": "IC GND",
         })
@@ -1452,15 +1599,9 @@ def _build_svg_template(ir: Any) -> dict[str, Any]:
         # ============================================================
         # 9. EN 上拉到 VIN rail
         # ============================================================
-        en_pullup_x = ic_left - 50
         wires.append({
-            "from": {"x": en_pin["x"], "y": en_pin["y"]},
-            "to": {"x": en_pullup_x, "y": en_pin["y"]},
-            "label": "EN→pullup",
-        })
-        wires.append({
-            "from": {"x": en_pullup_x, "y": en_pin["y"]},
-            "to": {"x": en_pullup_x, "y": rail_y},
+            "from": en_pin,
+            "to": {"x": en_pin["x"], "y": rail_y},
             "label": "EN pullup to VIN rail",
         })
 
@@ -1493,16 +1634,6 @@ def _build_svg_template(ir: Any) -> dict[str, Any]:
         "components": components,
         "wires": wires,
         "labels": labels,
-        "instructions": (
-            "严格按照上面的坐标画 SVG。"
-            "每个元件用标准符号画在指定位置，连线走指定路径（横平竖直）。"
-            "所有竖直元件（电容/电阻/二极管）的上端 connect_top、下端 connect_bottom 必须对齐。"
-            f"GND 轨道是一条水平线 y={gnd_y}，所有接地元件底端连到这条线。"
-            "IC 用矩形框+引脚短线表示，引脚名标在短线末端。"
-            "电感用水平锯齿/弧线符号表示。"
-            "二极管用三角形+横线表示，阳极在上（connect_top），阴极在下。"
-            "所有走线必须横平竖直，不允许斜线。"
-        ),
     }
 
 
@@ -1591,12 +1722,13 @@ def _render_svg_from_template(template: dict[str, Any]) -> str:
     if template.get("ic_modules"):
         ic = template["ic_modules"][0]
         vin_rail_x_end = ic["ic_rect"]["x"] + 10
-        # 找最左边的 x
+        # 找最左边的 pin x 坐标
         min_x = vin_rail_x_end
         for c in template["components"]:
-            cx = c.get("x", c.get("x1", 9999))
-            if cx < min_x:
-                min_x = cx
+            for pin in c.get("pins", {}).values():
+                px = int(pin["x"])
+                if px < min_x:
+                    min_x = px
         _a(
             f'<line x1="{min_x - 30}" y1="{rail_y}" '
             f'x2="{vin_rail_x_end}" y2="{rail_y}" class="vin-rail"/>'
@@ -1626,7 +1758,10 @@ def _svg_gnd_symbol(lines: list[str], x: int, y: int) -> None:
 
 
 def _svg_ic_module(lines: list[str], ic: dict[str, Any]) -> None:
-    """绘制 IC 矩形 + 引脚 + 标注。"""
+    """绘制 IC 矩形 + 引脚短线（从矩形边到 pin endpoint）+ 标注。
+
+    Pin endpoint 已经包含 stub 长度，所以引脚短线从 IC 矩形边缘画到 pin endpoint。
+    """
     r = ic["ic_rect"]
     rx, ry, rw, rh = r["x"], r["y"], r["w"], r["h"]
 
@@ -1641,26 +1776,35 @@ def _svg_ic_module(lines: list[str], ic: dict[str, Any]) -> None:
     if label and label != ic["ref"]:
         lines.append(f'<text x="{cx}" y="{cy + 10}" text-anchor="middle" class="label-val" font-size="10">{label}</text>')
 
-    # 引脚
-    pin_len = 25  # 引脚短线长度
+    # 引脚短线: 从 IC 矩形边缘 → pin endpoint
     for pname, pp in ic.get("pins", {}).items():
         px, py, side = int(pp["x"]), int(pp["y"]), pp["side"]
         if side == "left":
-            lines.append(f'<line x1="{px - pin_len}" y1="{py}" x2="{px}" y2="{py}" class="pin"/>')
-            lines.append(f'<text x="{px + 6}" y="{py + 4}" class="label-pin">{pname}</text>')
+            # pin endpoint 在矩形左边外侧, 短线从 rx 画到 px
+            lines.append(f'<line x1="{rx}" y1="{py}" x2="{px}" y2="{py}" class="pin"/>')
+            lines.append(f'<text x="{rx + 6}" y="{py + 4}" class="label-pin">{pname}</text>')
         elif side == "right":
-            lines.append(f'<line x1="{px}" y1="{py}" x2="{px + pin_len}" y2="{py}" class="pin"/>')
-            lines.append(f'<text x="{px - 6}" y="{py + 4}" text-anchor="end" class="label-pin">{pname}</text>')
+            # pin endpoint 在矩形右边外侧
+            lines.append(f'<line x1="{rx + rw}" y1="{py}" x2="{px}" y2="{py}" class="pin"/>')
+            lines.append(f'<text x="{rx + rw - 6}" y="{py + 4}" text-anchor="end" class="label-pin">{pname}</text>')
         elif side == "bottom":
-            lines.append(f'<line x1="{px}" y1="{py}" x2="{px}" y2="{py + pin_len}" class="pin"/>')
-            lines.append(f'<text x="{px}" y="{py - 6}" text-anchor="middle" class="label-pin">{pname}</text>')
+            # pin endpoint 在矩形底部外侧
+            lines.append(f'<line x1="{px}" y1="{ry + rh}" x2="{px}" y2="{py}" class="pin"/>')
+            lines.append(f'<text x="{px}" y="{ry + rh - 6}" text-anchor="middle" class="label-pin">{pname}</text>')
         elif side == "top":
-            lines.append(f'<line x1="{px}" y1="{py - pin_len}" x2="{px}" y2="{py}" class="pin"/>')
-            lines.append(f'<text x="{px}" y="{py + 14}" text-anchor="middle" class="label-pin">{pname}</text>')
+            # pin endpoint 在矩形顶部外侧
+            lines.append(f'<line x1="{px}" y1="{ry}" x2="{px}" y2="{py}" class="pin"/>')
+            lines.append(f'<text x="{px}" y="{ry + 14}" text-anchor="middle" class="label-pin">{pname}</text>')
 
 
 def _svg_component(lines: list[str], comp: dict[str, Any]) -> None:
-    """根据元件类型绘制标准原理图符号。"""
+    """根据元件类型绘制标准原理图符号（Pin + Body 分离架构）。
+
+    每个元件从 comp["pins"] 和 comp["body_bbox"] 读取坐标:
+    - 画 body (内部符号) 在 body_bbox 区域内
+    - 画 lead (引线) 从 body 边缘到 pin endpoint
+    - 走线只连接到 pin endpoint，不进入 body_bbox
+    """
     ctype = comp["type"]
     ref = comp.get("ref", "")
     val = comp.get("value", "")
@@ -1676,93 +1820,132 @@ def _svg_component(lines: list[str], comp: dict[str, Any]) -> None:
 
 
 def _svg_capacitor(lines: list[str], c: dict[str, Any], ref: str, val: str) -> None:
-    """竖直电容符号：两条平行横线 + 上下引线。"""
+    """竖直电容符号：两条平行横线 + 上下引线（Pin+Body 架构）。
+
+    body_bbox: 两极板区域
+    pin1 (top): 上端走线连接点
+    pin2 (bottom): 下端走线连接点
+    引线: pin1 → body top, body bottom → pin2
+    """
+    pins = c["pins"]
+    bbox = c["body_bbox"]
     x = int(c["x"])
-    ct_y = int(c["connect_top"]["y"])
-    cb_y = int(c["connect_bottom"]["y"])
-    yt = int(c["y_top"])
-    yb = int(c["y_bottom"])
-    mid = (yt + yb) // 2
-    gap = 5  # 两极板间距的一半
+    pin1_y = int(pins["1"]["y"])   # top pin endpoint
+    pin2_y = int(pins["2"]["y"])   # bottom pin endpoint
+    body_top = int(bbox["y1"])
+    body_bottom = int(bbox["y2"])
+    mid = (body_top + body_bottom) // 2
+    gap = (body_bottom - body_top) // 2  # 两极板间距的一半
     pw = 12  # 极板半宽
 
-    # 上引线
-    lines.append(f'<line x1="{x}" y1="{ct_y}" x2="{x}" y2="{mid - gap}" class="comp"/>')
+    # 上引线: pin1 → body top (上极板)
+    lines.append(f'<line x1="{x}" y1="{pin1_y}" x2="{x}" y2="{mid - gap}" class="comp"/>')
     # 上极板
     lines.append(f'<line x1="{x - pw}" y1="{mid - gap}" x2="{x + pw}" y2="{mid - gap}" stroke="#000" stroke-width="2"/>')
     # 下极板
     lines.append(f'<line x1="{x - pw}" y1="{mid + gap}" x2="{x + pw}" y2="{mid + gap}" stroke="#000" stroke-width="2"/>')
-    # 下引线
-    lines.append(f'<line x1="{x}" y1="{mid + gap}" x2="{x}" y2="{cb_y}" class="comp"/>')
+    # 下引线: body bottom (下极板) → pin2
+    lines.append(f'<line x1="{x}" y1="{mid + gap}" x2="{x}" y2="{pin2_y}" class="comp"/>')
     # 标注
     lines.append(f'<text x="{x + pw + 4}" y="{mid - 2}" class="label-ref">{ref}</text>')
     lines.append(f'<text x="{x + pw + 4}" y="{mid + 11}" class="label-val">{val}</text>')
 
 
 def _svg_inductor(lines: list[str], c: dict[str, Any], ref: str, val: str) -> None:
-    """水平电感符号：4 个半圆弧（标准原理图风格）。"""
-    x1 = int(c["x1"])
-    x2 = int(c["x2"])
-    y = int(c["y"])
-    seg = (x2 - x1) / 4  # 每段弧的宽度
-    # 用 4 个半圆弧
-    d_parts = [f"M{x1},{y}"]
+    """水平电感符号：4 个半圆弧 + 左右引线（Pin+Body 架构）。
+
+    body_bbox: 弧线区域
+    pin1 (left): 左端走线连接点
+    pin2 (right): 右端走线连接点
+    引线: pin1 → body left, body right → pin2
+    """
+    pins = c["pins"]
+    bbox = c["body_bbox"]
+    pin1_x = int(pins["1"]["x"])
+    pin2_x = int(pins["2"]["x"])
+    y = int(pins["1"]["y"])
+    body_left = int(bbox["x1"])
+    body_right = int(bbox["x2"])
+
+    # 左引线: pin1 → body left
+    if pin1_x < body_left:
+        lines.append(f'<line x1="{pin1_x}" y1="{y}" x2="{body_left}" y2="{y}" class="comp"/>')
+    # 4 个半圆弧 (body)
+    body_w = body_right - body_left
+    seg = body_w / 4
+    d_parts = [f"M{body_left},{y}"]
     for i in range(4):
-        sx = x1 + i * seg
-        ex = sx + seg
-        mx = (sx + ex) / 2
+        ex = body_left + (i + 1) * seg
         d_parts.append(f"A{seg / 2},{seg / 2} 0 0 1 {ex},{y}")
     d_str = " ".join(d_parts)
     lines.append(f'<path d="{d_str}" class="comp"/>')
+    # 右引线: body right → pin2
+    if pin2_x > body_right:
+        lines.append(f'<line x1="{body_right}" y1="{y}" x2="{pin2_x}" y2="{y}" class="comp"/>')
     # 标注
-    mx = (x1 + x2) // 2
+    mx = (body_left + body_right) // 2
     lines.append(f'<text x="{mx}" y="{y - 14}" text-anchor="middle" class="label-ref">{ref}</text>')
     lines.append(f'<text x="{mx}" y="{y - 4}" text-anchor="middle" class="label-val">{val}</text>')
 
 
 def _svg_resistor(lines: list[str], c: dict[str, Any], ref: str, val: str) -> None:
-    """竖直电阻符号：矩形框 + 上下引线。"""
-    x = int(c["x"])
-    ct_y = int(c["connect_top"]["y"])
-    cb_y = int(c["connect_bottom"]["y"])
-    yt = int(c["y_top"])
-    yb = int(c["y_bottom"])
-    hw = 7  # 矩形半宽
+    """竖直电阻符号：矩形框 + 上下引线（Pin+Body 架构）。
 
-    # 上引线
-    lines.append(f'<line x1="{x}" y1="{ct_y}" x2="{x}" y2="{yt}" class="comp"/>')
+    body_bbox: 矩形体区域
+    pin1 (top): 上端走线连接点
+    pin2 (bottom): 下端走线连接点
+    """
+    pins = c["pins"]
+    bbox = c["body_bbox"]
+    x = int(c["x"])
+    pin1_y = int(pins["1"]["y"])
+    pin2_y = int(pins["2"]["y"])
+    body_top = int(bbox["y1"])
+    body_bottom = int(bbox["y2"])
+    hw = (int(bbox["x2"]) - int(bbox["x1"])) // 2
+
+    # 上引线: pin1 → body top
+    lines.append(f'<line x1="{x}" y1="{pin1_y}" x2="{x}" y2="{body_top}" class="comp"/>')
     # 矩形体
-    lines.append(f'<rect x="{x - hw}" y="{yt}" width="{hw * 2}" height="{yb - yt}" class="comp"/>')
-    # 下引线
-    lines.append(f'<line x1="{x}" y1="{yb}" x2="{x}" y2="{cb_y}" class="comp"/>')
+    lines.append(f'<rect x="{x - hw}" y="{body_top}" width="{hw * 2}" height="{body_bottom - body_top}" class="comp"/>')
+    # 下引线: body bottom → pin2
+    lines.append(f'<line x1="{x}" y1="{body_bottom}" x2="{x}" y2="{pin2_y}" class="comp"/>')
     # 标注
-    lines.append(f'<text x="{x + hw + 4}" y="{(yt + yb) // 2 - 2}" class="label-ref">{ref}</text>')
-    lines.append(f'<text x="{x + hw + 4}" y="{(yt + yb) // 2 + 11}" class="label-val">{val}</text>')
+    mid_y = (body_top + body_bottom) // 2
+    lines.append(f'<text x="{x + hw + 4}" y="{mid_y - 2}" class="label-ref">{ref}</text>')
+    lines.append(f'<text x="{x + hw + 4}" y="{mid_y + 11}" class="label-val">{val}</text>')
 
 
 def _svg_diode(lines: list[str], c: dict[str, Any], ref: str, val: str) -> None:
-    """竖直二极管符号：三角形 + 横线（阳极在上，阴极在下）。"""
-    x = int(c["x"])
-    ct_y = int(c["connect_top"]["y"])
-    cb_y = int(c["connect_bottom"]["y"])
-    yt = int(c["y_top"])
-    yb = int(c["y_bottom"])
-    hw = 12  # 三角形半宽
+    """竖直二极管符号：三角形 + 横线 + 上下引线（Pin+Body 架构）。
 
-    # 上引线（阳极）
-    lines.append(f'<line x1="{x}" y1="{ct_y}" x2="{x}" y2="{yt}" class="comp"/>')
+    阳极在上 (pin1), 阴极在下 (pin2)。
+    body_bbox: 三角形 + 阴极横线区域
+    """
+    pins = c["pins"]
+    bbox = c["body_bbox"]
+    x = int(c["x"])
+    pin1_y = int(pins["1"]["y"])
+    pin2_y = int(pins["2"]["y"])
+    body_top = int(bbox["y1"])
+    body_bottom = int(bbox["y2"])
+    hw = (int(bbox["x2"]) - int(bbox["x1"])) // 2
+
+    # 上引线（阳极）: pin1 → body top
+    lines.append(f'<line x1="{x}" y1="{pin1_y}" x2="{x}" y2="{body_top}" class="comp"/>')
     # 三角形（尖朝下）
     lines.append(
-        f'<polygon points="{x - hw},{yt} {x + hw},{yt} {x},{yb}" '
+        f'<polygon points="{x - hw},{body_top} {x + hw},{body_top} {x},{body_bottom}" '
         f'fill="none" stroke="#000" stroke-width="1.8"/>'
     )
     # 阴极横线
-    lines.append(f'<line x1="{x - hw}" y1="{yb}" x2="{x + hw}" y2="{yb}" stroke="#000" stroke-width="2"/>')
-    # 下引线（阴极）
-    lines.append(f'<line x1="{x}" y1="{yb}" x2="{x}" y2="{cb_y}" class="comp"/>')
+    lines.append(f'<line x1="{x - hw}" y1="{body_bottom}" x2="{x + hw}" y2="{body_bottom}" stroke="#000" stroke-width="2"/>')
+    # 下引线（阴极）: body bottom → pin2
+    lines.append(f'<line x1="{x}" y1="{body_bottom}" x2="{x}" y2="{pin2_y}" class="comp"/>')
     # 标注
-    lines.append(f'<text x="{x + hw + 4}" y="{(yt + yb) // 2 - 2}" class="label-ref">{ref}</text>')
-    lines.append(f'<text x="{x + hw + 4}" y="{(yt + yb) // 2 + 11}" class="label-val">{val}</text>')
+    mid_y = (body_top + body_bottom) // 2
+    lines.append(f'<text x="{x + hw + 4}" y="{mid_y - 2}" class="label-ref">{ref}</text>')
+    lines.append(f'<text x="{x + hw + 4}" y="{mid_y + 11}" class="label-val">{val}</text>')
 
 
 def _svg_wire(lines: list[str], wire: dict[str, Any]) -> None:
