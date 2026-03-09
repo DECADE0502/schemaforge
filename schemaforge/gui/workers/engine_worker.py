@@ -7,8 +7,6 @@
 - ``SchemaForgeImageReviseWorker``:  系统主链图片 revise
 - ``IngestAssetWorker``:             旧兼容路径器件补录（PDF/图片资料导入）
 - ``ConfirmImportWorker``:           旧兼容路径导入确认
-- ``SchemaForgeOrchestratedWorker``: 旧兼容 AI 多轮编排模式
-
 用法::
 
     worker = SchemaForgeWorker("用 TPS54202 搭一个 20V转5V的DCDC电路")
@@ -264,46 +262,4 @@ class ConfirmImportWorker(QThread):
             self.error.emit(f"{exc}\n\n{tb}")
 
 
-# ============================================================
-# SchemaForgeOrchestratedWorker — AI 多轮编排（高级模式）
-# ============================================================
 
-
-class SchemaForgeOrchestratedWorker(QThread):
-    """在后台线程中运行 SchemaForgeSession.run_orchestrated()。
-
-    使用 Orchestrator AI 多轮循环：AI 解析需求 → 调用工具 → 判断下一步。
-    返回 AgentStep 而非 SchemaForgeTurnResult。
-
-    Signals:
-        finished(object): 处理完成，携带 AgentStep。
-        error(str): 处理异常，携带错误描述。
-        progress(str, int): 进度回调 (消息, 百分比)。
-        session_ready(object): 会话对象创建后发出，供外部持久化保存。
-    """
-
-    finished = Signal(object)
-    error = Signal(str)
-    progress = Signal(str, int)
-    session_ready = Signal(object)
-
-    def __init__(
-        self,
-        session: object,
-        user_input: str,
-        parent: object | None = None,
-    ) -> None:
-        super().__init__(parent)  # type: ignore[arg-type]
-        self._session = session
-        self.user_input = user_input
-
-    def run(self) -> None:
-        """执行 AI 编排流程。"""
-        try:
-            self.progress.emit("AI 正在分析需求…", 20)
-            result = self._session.run_orchestrated(self.user_input)  # type: ignore[union-attr]
-            self.progress.emit("AI 编排完成", 100)
-            self.finished.emit(result)
-        except Exception as exc:
-            tb = traceback.format_exc()
-            self.error.emit(f"{exc}\n\n{tb}")

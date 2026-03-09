@@ -3,7 +3,7 @@
 验证 design_page.py / engine_worker.py 的多轮对话布线：
 - SchemaForgeWorker 会话持久化（session_ready 信号）
 - SchemaForgeReviseWorker 多轮修改路径
-- SchemaForgeOrchestratedWorker AI 编排路径
+- SchemaForgeOrchestratedWorker 已删除（死代码清理）
 - _on_chat_send 路由逻辑（首次走 start，后续走 revise）
 - _display_bundle 数据提取
 - AgentStep 分发（_on_orchestrated_finished removed as dead code）
@@ -147,12 +147,9 @@ class TestEngineWorkerStructure:
                 ]
         return []
 
-    def test_has_orchestrated_worker(self) -> None:
-        assert "SchemaForgeOrchestratedWorker" in self._get_class_names()
-
-    def test_orchestrated_worker_has_run(self) -> None:
-        methods = self._get_class_methods("SchemaForgeOrchestratedWorker")
-        assert "run" in methods
+    def test_no_dead_orchestrated_worker(self) -> None:
+        """SchemaForgeOrchestratedWorker 已删除（死代码清理）。"""
+        assert "SchemaForgeOrchestratedWorker" not in self._get_class_names()
 
     def test_schemaforge_worker_has_session_ready_signal(self) -> None:
         assert "session_ready = Signal(object)" in self.src
@@ -170,9 +167,6 @@ class TestEngineWorkerStructure:
     def test_gui_worker_passes_visual_review_to_system_session(self) -> None:
         assert "enable_visual_review=self._enable_visual_review" in self.src
         assert "visual_review_enabled == self._enable_visual_review" in self.src
-
-    def test_orchestrated_worker_calls_run_orchestrated(self) -> None:
-        assert "run_orchestrated" in self.src
 
     def test_revise_worker_exists(self) -> None:
         assert "SchemaForgeReviseWorker" in self._get_class_names()
@@ -194,7 +188,6 @@ class TestEngineWorkerStructure:
             "SchemaForgeImageReviseWorker",
             "IngestAssetWorker",
             "ConfirmImportWorker",
-            "SchemaForgeOrchestratedWorker",
         ]:
             assert cls_name in self._get_class_names(), f"{cls_name} 缺失"
 
@@ -258,23 +251,6 @@ class TestSchemaForgeImageReviseWorkerLogic:
         )
         assert worker._session is mock_session
         assert worker.base64_png == "aGVsbG8="
-
-
-class TestSchemaForgeOrchestratedWorkerLogic:
-    """SchemaForgeOrchestratedWorker 逻辑测试。"""
-
-    def test_orchestrated_worker_stores_session(self) -> None:
-        from schemaforge.gui.workers.engine_worker import (
-            SchemaForgeOrchestratedWorker,
-        )
-
-        mock_session = MagicMock()
-        worker = SchemaForgeOrchestratedWorker(
-            session=mock_session,
-            user_input="设计一个5V转3.3V的LDO电路",
-        )
-        assert worker._session is mock_session
-        assert worker.user_input == "设计一个5V转3.3V的LDO电路"
 
 
 # ============================================================
