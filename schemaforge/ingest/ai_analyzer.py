@@ -116,6 +116,12 @@ _TEXT_ANALYSIS_PROMPT = """\
   - 如果 datasheet 没有应用电路章节，设为空对象 {}
   - formulas 中的 expression 需要用变量名（v_in, v_out, i_out, fsw 等），不要用数值
   - components 中的 role 必须使用标准名: input_cap, output_cap, inductor, boot_cap, fb_upper, fb_lower
+
+符号绘制规则 (Pin + Body 分离架构):
+- 每个引脚必须明确标注功能方向: 电源输入(power)、信号输入(input)、信号输出(output)、接地(power+GND)
+- 引脚 type 不要全部标为 passive，要根据 datasheet 中的功能描述精确分类
+- 特别注意区分: VIN/VCC/VBAT 是 power, GND/AGND/PGND 是 power, SW/BST/BOOT 是 output, FB/COMP 是 input, EN/SS 是 input
+- 这些 type 信息直接影响后续符号布局（power 放上方, GND 放下方, input 放左, output 放右）
 """
 
 _COMBINED_ANALYSIS_PROMPT = """\
@@ -152,6 +158,7 @@ _COMBINED_ANALYSIS_PROMPT = """\
 - 如果某个字段无法确定，设为空字符串/空数组，并加入 missing_fields
 - confidence 反映综合信息完整度（文本+图片互补时应更高）
 - 引脚的 type 只能是: input, output, power, passive, nc
+- 精确分类引脚 type（影响符号布局）: VIN/VCC → power, GND → power, SW/BST → output, FB/EN → input
 """
 
 _IMAGE_ANALYSIS_PROMPT = """\
@@ -175,6 +182,7 @@ _IMAGE_ANALYSIS_PROMPT = """\
 - 仔细识别每个引脚的名称和编号
 - 如果图片模糊无法确定，在 warnings 中说明
 - 引脚的 type 只能是: input, output, power, passive, nc
+- 精确分类引脚 type（影响符号布局）: VIN/VCC → power, GND → power, SW/BST → output, FB/EN → input
 """
 
 
