@@ -1,9 +1,9 @@
 """SchemaForge AI 编排器
 
-控制 AI 多轮对话循环：
-1. 构建消息 → 调用 AI → 解析 AgentStep
-2. 根据 action 执行工具 / 提问用户 / 展示草稿
-3. 循环直到 finalize 或 fail
+控制 AI 多轮对话循环（原生 function calling 版本）：
+1. 发送 messages + tools 定义给 LLM
+2. 如果 LLM 返回 tool_calls → 执行工具 → 把结果作为 tool message 追加 → 循环
+3. 如果 LLM 返回纯文本 → 解析为 AgentStep 返回
 
 核心原则：控制器掌握循环，AI 不能直接控制状态持久化。
 """
@@ -11,16 +11,18 @@
 from __future__ import annotations
 
 import json
-import uuid
 from typing import Any, Callable
 
 from schemaforge.agent.protocol import (
     AgentAction,
     AgentStep,
-    ToolCallRequest,
 )
 from schemaforge.agent.tool_registry import ToolRegistry
-from schemaforge.ai.client import call_llm, DEFAULT_MODEL
+from schemaforge.ai.client import (
+    DEFAULT_MODEL,
+    call_llm_with_tools,
+    tool_defs_to_openai_tools,
+)
 from schemaforge.common.events import (
     EventType,
     LogEvent,
@@ -29,77 +31,8 @@ from schemaforge.common.events import (
 from schemaforge.common.progress import ProgressTracker
 
 
-# AgentStep 解析的 JSON 格式说明（注入 system prompt）
-AGENT_STEP_SCHEMA_HINT = """\
-你必须严格按以下 JSON 格式输出，不要输出其他内容：
-{
-  "action": "call_tools" | "ask_user" | "present_draft" | "apply_patch" | "finalize" | "fail",
-  "message": "给用户看的中文说明",
-  "tool_calls": [{"tool_name": "...", "arguments": {...}, "call_id": "..."}],
-  "questions": [{"question_id": "...", "text": "...", "field_path": "...", "answer_type": "text|choice|confirm|number", "choices": [...], "required": true, "default": "", "evidence": "..."}],
-  "proposal": {},
-  "patch_ops": [{"op": "set|add|remove|replace", "path": "...", "value": ..., "reason": "..."}],
-  "checks": [{"rule_id": "...", "severity": "info|warning|error", "message": "...", "suggestion": "...", "evidence_refs": [...]}],
-  "next_state": ""
-}
-只输出 JSON，不要包含 markdown 代码块标记。
-"""
-
-
-def _parse_agent_step(raw_text: str) -> AgentStep:
-    """从 AI 原始输出解析 AgentStep
-
-    尝试策略：
-    1. 直接 JSON 解析
-    2. 去掉 markdown 代码块后解析
-    3. 提取第一个 { 到最后一个 } 之间的内容
-    4. 全部失败则返回 FAIL step
-    """
-    text = raw_text.strip()
-
-    # 策略1: 直接解析
-    try:
-        data = json.loads(text)
-        return AgentStep.model_validate(data)
-    except Exception:
-        pass
-
-    # 策略2: 去掉 markdown 代码块
-    if "```" in text:
-        lines = text.split("\n")
-        json_lines: list[str] = []
-        in_block = False
-        for line in lines:
-            if line.strip().startswith("```"):
-                if in_block:
-                    break
-                in_block = True
-                continue
-            if in_block:
-                json_lines.append(line)
-        if json_lines:
-            try:
-                data = json.loads("\n".join(json_lines))
-                return AgentStep.model_validate(data)
-            except Exception:
-                pass
-
-    # 策略3: 找 { ... }
-    start = text.find("{")
-    end = text.rfind("}")
-    if start != -1 and end > start:
-        try:
-            data = json.loads(text[start:end + 1])
-            return AgentStep.model_validate(data)
-        except Exception:
-            pass
-
-    # 全部失败
-    return AgentStep.fail(f"AI 输出解析失败，原始内容: {text[:200]}")
-
-
 class Orchestrator:
-    """AI 编排器
+    """AI 编排器（原生 function calling）
 
     用法::
 
@@ -113,12 +46,11 @@ class Orchestrator:
         step = orchestrator.run_turn("用户上传了 TPS54202.pdf")
 
         # step.action 决定后续：
-        #   CALL_TOOLS → 控制器已自动执行，继续 run_turn
         #   ASK_USER → GUI 显示问题，用户回答后 run_turn(answer)
         #   FINALIZE → 结束
     """
 
-    MAX_TOOL_ROUNDS = 10  # 单轮最大工具调用次数（防止死循环）
+    MAX_TOOL_ROUNDS = 10  # 单轮最大工具调用轮次（防止死循环）
 
     def __init__(
         self,
@@ -129,12 +61,19 @@ class Orchestrator:
         on_event: Callable[[WorkflowEvent], None] | None = None,
     ) -> None:
         self.registry = tool_registry
-        self.system_prompt = system_prompt + "\n\n" + AGENT_STEP_SCHEMA_HINT
+        self.system_prompt = system_prompt
         self.tracker = tracker
         self.model = model
         self._on_event = on_event
-        self.messages: list[dict[str, str]] = []
+        # 正式的 role-based 消息数组
+        self.messages: list[dict[str, Any]] = [
+            {"role": "system", "content": system_prompt}
+        ]
         self._tool_round_count = 0
+
+    # ----------------------------------------------------------
+    # 事件 & 日志
+    # ----------------------------------------------------------
 
     def _emit(self, event: WorkflowEvent) -> None:
         if self._on_event:
@@ -144,11 +83,17 @@ class Orchestrator:
         if self.tracker:
             self.tracker.log(message, level)
 
-    def run_turn(self, user_input: str) -> AgentStep:
-        """执行一轮 AI 对话
+    # ----------------------------------------------------------
+    # 核心循环
+    # ----------------------------------------------------------
 
-        如果 AI 返回 CALL_TOOLS，自动执行工具并继续对话，
-        直到 AI 返回非 CALL_TOOLS 的动作。
+    def run_turn(self, user_input: str) -> AgentStep:
+        """执行一轮 AI 对话。
+
+        使用原生 function calling：
+        1. 发送 messages + tools 定义给 LLM
+        2. 如果 LLM 返回 tool_calls → 执行工具 → 把结果作为 tool message 追加 → 循环
+        3. 如果 LLM 返回纯文本 → 解析为 AgentStep 返回
 
         Args:
             user_input: 用户消息或工具结果
@@ -159,96 +104,130 @@ class Orchestrator:
         self.messages.append({"role": "user", "content": user_input})
         self._tool_round_count = 0
 
+        # 把注册表中的工具转为 OpenAI function calling 格式
+        openai_tools = tool_defs_to_openai_tools(
+            self.registry.get_tool_descriptions()
+        )
+
         while True:
-            # 调用 AI
             self._log("正在调用 AI...")
             try:
-                raw_response = call_llm(
-                    system_prompt=self.system_prompt,
-                    user_message=self._build_user_context(),
+                response = call_llm_with_tools(
+                    messages=self.messages,
+                    tools=openai_tools if openai_tools else None,
                     model=self.model,
                 )
             except Exception as exc:
                 self._log(f"AI 调用失败: {exc}", "error")
                 return AgentStep.fail(f"AI 调用失败: {exc}")
 
-            self.messages.append({"role": "assistant", "content": raw_response})
+            choice = response.choices[0]
+            assistant_msg = choice.message
 
-            # 解析 AgentStep
-            step = _parse_agent_step(raw_response)
-            self._log(f"AI 动作: {step.action.value}")
+            # --------------------------------------------------
+            # 将 assistant 消息追加到历史（包含可能的 tool_calls）
+            # --------------------------------------------------
+            msg_dict: dict[str, Any] = {"role": "assistant"}
+            if assistant_msg.content:
+                msg_dict["content"] = assistant_msg.content
+            if assistant_msg.tool_calls:
+                msg_dict["tool_calls"] = [
+                    {
+                        "id": tc.id,
+                        "type": "function",
+                        "function": {
+                            "name": tc.function.name,
+                            "arguments": tc.function.arguments,
+                        },
+                    }
+                    for tc in assistant_msg.tool_calls
+                ]
+            self.messages.append(msg_dict)
 
-            if step.action == AgentAction.CALL_TOOLS:
-                # 自动执行工具调用
+            # --------------------------------------------------
+            # Case 1: AI 发起 tool_calls → 执行并循环
+            # --------------------------------------------------
+            if assistant_msg.tool_calls:
                 self._tool_round_count += 1
                 if self._tool_round_count > self.MAX_TOOL_ROUNDS:
                     self._log("工具调用轮次超限，强制终止", "warning")
                     return AgentStep.fail("工具调用轮次超过上限")
 
-                tool_results = self._execute_tool_calls(step.tool_calls)
-                # 将工具结果追加到消息
-                result_text = json.dumps(tool_results, ensure_ascii=False, indent=2)
-                self.messages.append({
-                    "role": "user",
-                    "content": f"工具执行结果:\n{result_text}",
-                })
-                continue  # 继续下一轮 AI 调用
+                for tc in assistant_msg.tool_calls:
+                    tool_name = tc.function.name
+                    try:
+                        arguments = json.loads(tc.function.arguments)
+                    except json.JSONDecodeError:
+                        arguments = {}
 
-            # 非 CALL_TOOLS 动作，返回给调用者处理
-            return step
+                    self._log(f"调用工具: {tool_name}")
+                    self._emit(
+                        LogEvent(
+                            event_type=EventType.AI_TOOL_CALL,
+                            message=f"调用 {tool_name}({arguments})",
+                            source="orchestrator",
+                        )
+                    )
 
-    def _build_user_context(self) -> str:
-        """构建发给 AI 的完整上下文"""
-        # 只取最近的消息（控制上下文长度）
-        recent = self.messages[-20:]
-        parts: list[str] = []
-        for msg in recent:
-            role = msg["role"]
-            content = msg["content"]
-            if role == "user":
-                parts.append(f"[用户] {content}")
-            elif role == "assistant":
-                parts.append(f"[AI] {content}")
-        return "\n\n".join(parts)
+                    result = self.registry.execute(tool_name, arguments)
 
-    def _execute_tool_calls(
-        self,
-        tool_calls: list[ToolCallRequest],
-    ) -> list[dict[str, Any]]:
-        """执行一批工具调用"""
-        results: list[dict[str, Any]] = []
-        for call in tool_calls:
-            self._log(f"调用工具: {call.tool_name}")
-            self._emit(LogEvent(
-                event_type=EventType.AI_TOOL_CALL,
-                message=f"调用 {call.tool_name}({call.arguments})",
-                source="orchestrator",
-            ))
+                    self._emit(
+                        LogEvent(
+                            event_type=EventType.AI_TOOL_RESULT,
+                            message=(
+                                f"{tool_name} → "
+                                f"{'成功' if result.success else '失败'}"
+                            ),
+                            source="orchestrator",
+                        )
+                    )
 
-            result = self.registry.execute(call.tool_name, call.arguments)
+                    # 追加 tool result 消息
+                    self.messages.append(
+                        {
+                            "role": "tool",
+                            "tool_call_id": tc.id,
+                            "content": json.dumps(
+                                result.to_dict(), ensure_ascii=False
+                            ),
+                        }
+                    )
 
-            self._emit(LogEvent(
-                event_type=EventType.AI_TOOL_RESULT,
-                message=f"{call.tool_name} → {'成功' if result.success else '失败'}",
-                source="orchestrator",
-            ))
+                continue  # 带着 tool results 继续下一轮 AI 调用
 
-            results.append({
-                "call_id": call.call_id or uuid.uuid4().hex[:8],
-                "tool_name": call.tool_name,
-                **result.to_dict(),
-            })
+            # --------------------------------------------------
+            # Case 2: AI 纯文本回复（无 tool_calls）
+            # --------------------------------------------------
+            content = assistant_msg.content or ""
+            self._log(f"AI 回复: {content[:100]}")
 
-        return results
+            # 尝试解析为结构化 AgentStep JSON
+            try:
+                data = json.loads(content)
+                return AgentStep.model_validate(data)
+            except Exception:
+                # 纯文本回复 — 包装为 FINALIZE
+                return AgentStep(
+                    action=AgentAction.FINALIZE,
+                    message=content,
+                )
+
+    # ----------------------------------------------------------
+    # 上下文注入 & 重置
+    # ----------------------------------------------------------
 
     def inject_context(self, role: str, content: str) -> None:
-        """注入上下文消息（不触发 AI 调用）
+        """注入上下文消息（不触发 AI 调用）。
 
         用于在对话开始前注入背景信息、工具描述等。
+        role 通常为 "system" 或 "user"。
         """
         self.messages.append({"role": role, "content": content})
 
     def reset(self) -> None:
-        """重置对话历史"""
-        self.messages.clear()
+        """重置对话历史。
+
+        保留 system prompt 作为首条消息。
+        """
+        self.messages = [{"role": "system", "content": self.system_prompt}]
         self._tool_round_count = 0

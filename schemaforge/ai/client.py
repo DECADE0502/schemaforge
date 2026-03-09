@@ -180,3 +180,71 @@ def _extract_json(text: str) -> dict[str, Any] | None:
             pass
 
     return None
+
+
+# ---------------------------------------------------------------------------
+# Native function calling support
+# ---------------------------------------------------------------------------
+
+def call_llm_with_tools(
+    messages: list[dict[str, Any]],
+    tools: list[dict[str, Any]] | None = None,
+    model: str = DEFAULT_MODEL,
+    temperature: float = 0.3,
+    max_tokens: int = 4096,
+    api_key: str | None = None,
+    base_url: str | None = None,
+) -> Any:
+    """调用 LLM，支持原生 function calling。
+
+    与 call_llm 不同：
+    - 接受完整 messages 数组（支持多轮 + tool results）
+    - 接受 tools 定义（OpenAI function calling schema）
+    - 返回完整 ChatCompletion 对象（调用方检查 tool_calls）
+
+    Args:
+        messages: 完整消息数组 [{"role": "system", "content": ...}, ...]
+        tools: OpenAI function calling tools 定义列表
+        model: 模型名称
+        temperature: 温度
+        max_tokens: 最大 token
+        api_key: API密钥
+        base_url: API基地址
+
+    Returns:
+        openai.types.chat.ChatCompletion
+    """
+    client = get_client(api_key, base_url)
+
+    kwargs: dict[str, Any] = {
+        "model": model,
+        "messages": messages,
+        "temperature": temperature,
+        "max_tokens": max_tokens,
+    }
+    if tools is not None:
+        kwargs["tools"] = tools
+
+    response = client.chat.completions.create(**kwargs)
+    return response
+
+
+def tool_defs_to_openai_tools(
+    tool_descriptions: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """把 ToolRegistry.get_tool_descriptions() 的输出转为 OpenAI tools 格式。
+
+    Input:  [{"name": "foo", "description": "...", "parameters": {...}}]
+    Output: [{"type": "function", "function": {"name": "foo", "description": "...", "parameters": {...}}}]
+    """
+    openai_tools: list[dict[str, Any]] = []
+    for desc in tool_descriptions:
+        openai_tools.append({
+            "type": "function",
+            "function": {
+                "name": desc["name"],
+                "description": desc.get("description", ""),
+                "parameters": desc.get("parameters", {}),
+            },
+        })
+    return openai_tools

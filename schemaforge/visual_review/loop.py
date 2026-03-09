@@ -25,7 +25,7 @@ from __future__ import annotations
 import logging
 
 from schemaforge.system.models import SystemBundle, SystemDesignIR
-from schemaforge.system.rendering import render_system_svg
+from schemaforge.system.rendering import render_system_svg_with_metadata
 from schemaforge.visual_review.critic import review_rendered_schematic
 from schemaforge.visual_review.models import (
     StopReason,
@@ -146,14 +146,17 @@ def run_visual_review_loop(
 
         # Step 8: re-render with updated layout
         try:
-            new_svg = render_system_svg(ir)
+            new_svg, new_metadata = render_system_svg_with_metadata(
+                ir,
+                layout_spec=layout_state,
+            )
             current_bundle = SystemBundle(
                 design_ir=ir,
                 svg_path=new_svg,
                 bom_text=current_bundle.bom_text,      # VC12: BOM unchanged
                 bom_csv=current_bundle.bom_csv,
                 spice_text=current_bundle.spice_text,   # VC12: SPICE unchanged
-                render_metadata=current_bundle.render_metadata,
+                render_metadata=new_metadata,
             )
         except Exception as exc:
             logger.warning("Re-render failed: %s", exc)

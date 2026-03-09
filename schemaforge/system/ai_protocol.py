@@ -12,8 +12,8 @@ AI 只做意图理解，所有工程决策通过本地确定性接口完成。
 from __future__ import annotations
 
 import logging
-import os
 import re
+from collections import Counter
 from typing import Any
 
 from pydantic import BaseModel, Field, ValidationError
@@ -325,6 +325,22 @@ _KEYWORD_ABBRS = {
     "VCC", "VIN", "SDA", "SCL",
 }
 
+_PART_CATEGORY_HINTS: dict[str, str] = {
+    "AMS1117": "ldo",
+    "LD1117": "ldo",
+    "LM1117": "ldo",
+    "STM32": "mcu",
+    "ESP32": "mcu",
+    "ATMEGA": "mcu",
+    "CH32": "mcu",
+    "TPS54202": "buck",
+    "TPS5430": "buck",
+    "TPS61023": "boost",
+    "W25Q": "other",
+}
+
+_GPIO_PIN_RE = re.compile(r"(?<![A-Za-z0-9])(P[A-Z]\d+)(?![A-Za-z0-9])", re.IGNORECASE)
+
 _CATEGORY_KEYWORDS: dict[str, list[str]] = {
     "buck": ["buck", "降压", "开关电源", "dcdc", "dc-dc", "step-down"],
     "ldo": ["ldo", "稳压", "线性稳压", "low dropout"],
@@ -347,10 +363,82 @@ def _detect_category(text: str) -> str:
     return ""
 
 
-def _extract_part_numbers(text: str) -> list[str]:
-    """从文本中提取所有可能的器件型号。"""
-    matches = _PART_NUMBER_RE.findall(text)
-    return [m for m in matches if m.upper() not in _KEYWORD_ABBRS]
+def _infer_category_from_part_number(part_number: str) -> str:
+    upper = part_number.strip().upper()
+    for prefix, category in _PART_CATEGORY_HINTS.items():
+        if upper.startswith(prefix):
+            return category
+    return ""
+
+
+def _iter_part_matches(text: str) -> list[tuple[str, int, int]]:
+    matches: list[tuple[str, int, int]] = []
+    for match in _PART_NUMBER_RE.finditer(text):
+        value = match.group(1).strip()
+        upper = value.upper()
+        if upper in _KEYWORD_ABBRS:
+            continue
+        if _GPIO_PIN_RE.fullmatch(value) is not None:
+            continue
+        matches.append((value, match.start(1), match.end(1)))
+    return matches
+
+
+def _module_position_for_keyword(text: str, keywords: list[str]) -> int | None:
+    lower = text.lower()
+    positions = [lower.find(keyword) for keyword in keywords if lower.find(keyword) >= 0]
+    if not positions:
+        return None
+    return min(positions)
+
+
+def _detect_local_category(text: str, start: int, end: int, part_number: str) -> str:
+    inferred_category = _infer_category_from_part_number(part_number)
+    if inferred_category:
+        return inferred_category
+    window_start = max(0, start - 18)
+    window_end = min(len(text), end + 18)
+    local_category = _detect_category(text[window_start:window_end])
+    if local_category:
+        return local_category
+    return ""
+
+
+def _extract_gpio_pin(text: str) -> str:
+    match = _GPIO_PIN_RE.search(text)
+    if match is None:
+        return ""
+    return match.group(1).upper()
+
+
+def _assign_power_targets(
+    modules: list[ModuleIntent],
+    ordered_voltages: list[str],
+    global_v_in: str,
+) -> None:
+    power_categories = {"buck", "ldo", "boost", "flyback", "sepic", "opamp"}
+    power_modules = [module for module in modules if module.category_hint in power_categories]
+    if not power_modules:
+        return
+
+    for index, module in enumerate(power_modules):
+        elec = dict(module.electrical_targets)
+        if "v_in" not in elec:
+            if index < len(ordered_voltages):
+                elec["v_in"] = ordered_voltages[index]
+            elif global_v_in:
+                elec["v_in"] = global_v_in
+        if "v_out" not in elec and index + 1 < len(ordered_voltages):
+            elec["v_out"] = ordered_voltages[index + 1]
+        module.electrical_targets = elec
+
+
+def _role_for_module(part_number: str, category: str) -> str:
+    if part_number:
+        return f"器件 {part_number}"
+    if category:
+        return f"{category} 模块"
+    return "通用模块"
 
 
 def _extract_voltage_chain(text: str) -> list[tuple[str, str]]:
@@ -396,7 +484,7 @@ def regex_fallback_parse(raw_text: str) -> SystemDesignRequest:
     Returns:
         SystemDesignRequest（尽力填充）
     """
-    part_numbers = _extract_part_numbers(raw_text)
+    part_matches = _iter_part_matches(raw_text)
     voltage_chains = _extract_voltage_chain(raw_text)
     all_voltages = _ALL_VOLTAGE_RE.findall(raw_text)
     category = _detect_category(raw_text)
@@ -405,32 +493,75 @@ def regex_fallback_parse(raw_text: str) -> SystemDesignRequest:
     connections: list[ConnectionIntent] = []
     ambiguities: list[str] = []
 
-    # 从所有电压值构建有序电压列表（降序，用于推断电源链）
-    voltage_list = sorted(set(all_voltages), key=float, reverse=True)
+    ordered_voltages: list[str] = []
+    for voltage in all_voltages:
+        if voltage not in ordered_voltages:
+            ordered_voltages.append(voltage)
 
-    # 为每个检测到的器件型号创建模块
-    for i, pn in enumerate(part_numbers):
-        cat = _detect_category(raw_text) if i == 0 else ""
-        elec: dict[str, str] = {}
-        if i < len(voltage_chains):
-            elec["v_in"] = voltage_chains[i][0]
-            elec["v_out"] = voltage_chains[i][1]
-        elif len(voltage_list) > i + 1:
-            # 从电压列表推断：第 i 个模块的输入是第 i 大电压
-            elec["v_in"] = voltage_list[i]
-            elec["v_out"] = voltage_list[i + 1]
-        elif voltage_chains and i > 0:
-            # 尝试从前一个电压链的输出推断
-            elec["v_in"] = voltage_chains[-1][1]
+    module_specs: list[dict[str, Any]] = []
+    for part_number, start, end in part_matches:
+        module_specs.append(
+            {
+                "position": start,
+                "part_number_hint": part_number,
+                "category_hint": _detect_local_category(raw_text, start, end, part_number),
+            }
+        )
 
-        modules.append(ModuleIntent(
-            intent_id=f"module{i + 1}",
-            role=f"器件 {pn}",
-            part_number_hint=pn,
-            category_hint=cat,
-            electrical_targets=elec,
-            priority=i,
-        ))
+    has_led_module = any(spec.get("category_hint") == "led" for spec in module_specs)
+    if not has_led_module and any(keyword in raw_text.lower() for keyword in _CATEGORY_KEYWORDS["led"]):
+        led_position = _module_position_for_keyword(raw_text, _CATEGORY_KEYWORDS["led"])
+        module_specs.append(
+            {
+                "position": led_position if led_position is not None else len(raw_text) + 1,
+                "part_number_hint": "",
+                "category_hint": "led",
+            }
+        )
+
+    has_mcu_module = any(spec.get("category_hint") == "mcu" for spec in module_specs)
+    if not has_mcu_module and any(keyword in raw_text.lower() for keyword in _CATEGORY_KEYWORDS["mcu"]):
+        mcu_position = _module_position_for_keyword(raw_text, _CATEGORY_KEYWORDS["mcu"])
+        module_specs.append(
+            {
+                "position": mcu_position if mcu_position is not None else len(raw_text),
+                "part_number_hint": "",
+                "category_hint": "mcu",
+            }
+        )
+
+    module_specs.sort(key=lambda item: (int(item.get("position", 0)), str(item.get("part_number_hint", ""))))
+
+    counters: Counter[str] = Counter()
+    for index, spec in enumerate(module_specs):
+        category_hint = str(spec.get("category_hint", ""))
+        part_number_hint = str(spec.get("part_number_hint", ""))
+        if category_hint:
+            counters[category_hint] += 1
+            intent_id = f"{category_hint}{counters[category_hint]}"
+        else:
+            intent_id = f"module{index + 1}"
+
+        modules.append(
+            ModuleIntent(
+                intent_id=intent_id,
+                role=_role_for_module(part_number_hint, category_hint),
+                part_number_hint=part_number_hint,
+                category_hint=category_hint,
+                electrical_targets={},
+                priority=index,
+            )
+        )
+
+    global_v_in = _extract_global_v_in(raw_text)
+    _assign_power_targets(modules, ordered_voltages, global_v_in)
+
+    gpio_pin = _extract_gpio_pin(raw_text)
+    if gpio_pin:
+        for module in modules:
+            if module.category_hint == "mcu":
+                module.control_targets["gpio_pin"] = gpio_pin
+                break
 
     # 如果没有检测到型号但有类别关键字，创建通用模块
     if not modules and category:
@@ -438,9 +569,9 @@ def regex_fallback_parse(raw_text: str) -> SystemDesignRequest:
         if voltage_chains:
             elec["v_in"] = voltage_chains[0][0]
             elec["v_out"] = voltage_chains[0][1]
-        elif len(voltage_list) >= 2:
-            elec["v_in"] = voltage_list[0]
-            elec["v_out"] = voltage_list[1]
+        elif len(ordered_voltages) >= 2:
+            elec["v_in"] = ordered_voltages[0]
+            elec["v_out"] = ordered_voltages[1]
         modules.append(ModuleIntent(
             intent_id=f"{category}1",
             role=f"{category} 模块",
@@ -449,23 +580,58 @@ def regex_fallback_parse(raw_text: str) -> SystemDesignRequest:
             priority=0,
         ))
 
-    # 建立相邻模块之间的连接
-    for i in range(len(modules) - 1):
-        connections.append(ConnectionIntent(
-            connection_id=f"c{i + 1}",
-            src_module_intent=modules[i].intent_id,
-            src_port_hint="VOUT",
-            dst_module_intent=modules[i + 1].intent_id,
-            dst_port_hint="VIN",
-            signal_type=SignalType.POWER_SUPPLY,
-            connection_semantics=ConnectionSemantic.SUPPLY_CHAIN,
-        ))
+    power_categories = {"buck", "ldo", "boost", "flyback", "sepic", "opamp"}
+    power_modules = [module for module in modules if module.category_hint in power_categories]
+    for i in range(len(power_modules) - 1):
+        dst_port_hint = "VIN"
+        if power_modules[i + 1].category_hint == "mcu":
+            dst_port_hint = "VDD"
+        connections.append(
+            ConnectionIntent(
+                connection_id=f"c{i + 1}",
+                src_module_intent=power_modules[i].intent_id,
+                src_port_hint="VOUT",
+                dst_module_intent=power_modules[i + 1].intent_id,
+                dst_port_hint=dst_port_hint,
+                signal_type=SignalType.POWER_SUPPLY,
+                connection_semantics=ConnectionSemantic.SUPPLY_CHAIN,
+            )
+        )
+
+    last_power = power_modules[-1] if power_modules else None
+    mcu_modules = [module for module in modules if module.category_hint == "mcu"]
+    if last_power is not None:
+        for mcu in mcu_modules:
+            if any(conn.dst_module_intent == mcu.intent_id for conn in connections):
+                continue
+            connections.append(
+                ConnectionIntent(
+                    connection_id=f"c{len(connections) + 1}",
+                    src_module_intent=last_power.intent_id,
+                    src_port_hint="VOUT",
+                    dst_module_intent=mcu.intent_id,
+                    dst_port_hint="VDD",
+                    signal_type=SignalType.POWER_SUPPLY,
+                    connection_semantics=ConnectionSemantic.SUPPLY_CHAIN,
+                )
+            )
+
+    led_modules = [module for module in modules if module.category_hint == "led"]
+    if gpio_pin and mcu_modules and led_modules:
+        connections.append(
+            ConnectionIntent(
+                connection_id=f"c{len(connections) + 1}",
+                src_module_intent=mcu_modules[0].intent_id,
+                src_port_hint=gpio_pin,
+                dst_module_intent=led_modules[0].intent_id,
+                dst_port_hint="ANODE",
+                signal_type=SignalType.GPIO,
+                connection_semantics=ConnectionSemantic.GPIO_DRIVE,
+            )
+        )
 
     if not modules:
         ambiguities.append("无法从文本中提取任何模块信息")
-
-    # 全局输入电压
-    global_v_in = _extract_global_v_in(raw_text)
 
     return SystemDesignRequest(
         raw_text=raw_text,
@@ -482,12 +648,6 @@ def regex_fallback_parse(raw_text: str) -> SystemDesignRequest:
 # ============================================================
 
 
-def _should_skip_ai_parse() -> bool:
-    """检查是否跳过 AI 解析（测试环境自动跳过）。"""
-    raw = os.environ.get("SCHEMAFORGE_SKIP_AI_PARSE", "")
-    return raw.strip().lower() not in {"", "0", "false", "no", "off"}
-
-
 def parse_system_intent(raw_text: str) -> SystemDesignRequest:
     """完整的系统级意图解析流程。
 
@@ -498,18 +658,15 @@ def parse_system_intent(raw_text: str) -> SystemDesignRequest:
     4. 检测歧义并合并
     5. AI 失败时回退到正则解析
 
+    调用方（SystemDesignSession）通过 skip_ai_parse 参数决定是否
+    调用本函数；本函数本身始终尝试 AI 解析。
+
     Args:
         raw_text: 用户自然语言描述
 
     Returns:
         SystemDesignRequest
     """
-    if _should_skip_ai_parse():
-        logger.info("AI 解析已跳过（SCHEMAFORGE_SKIP_AI_PARSE），使用正则 fallback")
-        result = regex_fallback_parse(raw_text)
-        result.ambiguities.extend(detect_ambiguities(result))
-        return result
-
     try:
         from schemaforge.ai.client import call_llm_json
 

@@ -345,11 +345,11 @@ class TestSynthesizeLed:
         assert result.parameters["v_supply"] == "5"
 
     def test_led_external_components(self) -> None:
-        """LED 外围元件只有 led_resistor。"""
+        """LED 外围元件只有 led_limit。"""
         inst = _make_instance("led1", "led", {"led_color": "green", "v_supply": "3.3"})
         result = synthesize_led_indicator(inst)
         assert len(result.external_components) == 1
-        assert result.external_components[0]["role"] == "led_resistor"
+        assert result.external_components[0]["role"] == "led_limit"
 
     def test_led_custom_current(self) -> None:
         """自定义 LED 电流。"""

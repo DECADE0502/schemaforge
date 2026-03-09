@@ -16,6 +16,7 @@ from __future__ import annotations
 import os
 import shutil
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -229,13 +230,14 @@ class TestPartialDesign:
         result = session.start_from_request(request)
 
         assert result.status == "partial"
-        assert "unknown1" in result.missing_modules
-        assert "buck1" not in result.missing_modules
+        # missing_modules now contains part numbers, not module_ids
+        assert "FAKE_DEVICE_XYZ" in result.missing_modules
+        assert "TPS5430" not in result.missing_modules
         # Bundle should still be produced with whatever succeeded
         assert result.bundle is not None
 
-    def test_all_missing_returns_error(self, tmp_store: Path) -> None:
-        """All modules missing -> error status."""
+    def test_all_missing_returns_needs_asset(self, tmp_store: Path) -> None:
+        """All modules missing -> needs_asset status."""
         request = SystemDesignRequest(
             raw_text="nothing found",
             modules=[
@@ -257,7 +259,7 @@ class TestPartialDesign:
         session = SystemDesignSession(store_dir=tmp_store, skip_ai_parse=True)
         result = session.start_from_request(request)
 
-        assert result.status == "error"
+        assert result.status == "needs_asset"
         assert len(result.missing_modules) == 2
 
 
@@ -469,6 +471,125 @@ class TestSessionState:
         assert "spice_text" in d
 
 
+class TestOptionalVisualReview:
+    def test_visual_review_runs_only_when_enabled(
+        self,
+        tmp_store: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        reviewed = {"called": False}
+
+        def _mock_review_loop(ir, bundle, config=None):
+            reviewed["called"] = True
+            return (
+                bundle.__class__(
+                    design_ir=bundle.design_ir,
+                    svg_path="reviewed.svg",
+                    bom_text=bundle.bom_text,
+                    bom_csv=bundle.bom_csv,
+                    spice_text=bundle.spice_text,
+                    review_report=["reviewed"],
+                    render_metadata=bundle.render_metadata,
+                ),
+                SimpleNamespace(),
+            )
+
+        monkeypatch.setattr(
+            "schemaforge.visual_review.loop.run_visual_review_loop",
+            _mock_review_loop,
+        )
+
+        session = SystemDesignSession(
+            store_dir=tmp_store,
+            skip_ai_parse=True,
+            enable_visual_review=True,
+        )
+        result = session.start_from_request(_buck_only_request())
+
+        assert reviewed["called"] is True
+        assert result.bundle is not None
+        assert result.bundle.svg_path == "reviewed.svg"
+        assert result.bundle.review_report == ["reviewed"]
+
+    def test_visual_review_session_path_preserves_bom_and_spice(
+        self,
+        tmp_store: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        def _mock_review_loop(ir, bundle, config=None):
+            return (
+                bundle.__class__(
+                    design_ir=bundle.design_ir,
+                    svg_path="reviewed.svg",
+                    bom_text=bundle.bom_text,
+                    bom_csv=bundle.bom_csv,
+                    spice_text=bundle.spice_text,
+                    review_report=["reviewed"],
+                    render_metadata=bundle.render_metadata,
+                ),
+                SimpleNamespace(),
+            )
+
+        monkeypatch.setattr(
+            "schemaforge.visual_review.loop.run_visual_review_loop",
+            _mock_review_loop,
+        )
+
+        session = SystemDesignSession(
+            store_dir=tmp_store,
+            skip_ai_parse=True,
+            enable_visual_review=True,
+        )
+        result = session.start_from_request(_buck_ldo_request())
+
+        assert result.bundle is not None
+        assert result.bundle.svg_path == "reviewed.svg"
+        assert "TPS5430" in result.bundle.bom_text
+        assert result.bundle.spice_text
+
+
+class TestImageRevision:
+    def test_revise_from_image_uses_same_session_revise_pipeline(
+        self,
+        tmp_store: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        session = SystemDesignSession(store_dir=tmp_store, skip_ai_parse=True)
+        session.start_from_request(_buck_only_request())
+
+        called: dict[str, str] = {}
+
+        def _mock_infer(_base64_png: str, _context: str) -> tuple[str, list[str]]:
+            return "把输出电压改成3.3V", ["from image"]
+
+        def _mock_revise(text: str):
+            called["text"] = text
+            return session.start_from_request(_buck_only_request())
+
+        monkeypatch.setattr(
+            "schemaforge.system.session._infer_revision_text_from_image",
+            _mock_infer,
+        )
+        monkeypatch.setattr(session, "revise", _mock_revise)
+
+        result = session.revise_from_image("aGVsbG8=")
+
+        assert called["text"] == "把输出电压改成3.3V"
+        assert result.bundle is not None
+        assert "图片修订完成" in result.message
+
+    def test_revise_from_image_requires_existing_design(self, tmp_store: Path) -> None:
+        session = SystemDesignSession(store_dir=tmp_store, skip_ai_parse=True)
+        result = session.revise_from_image("aGVsbG8=")
+        assert result.status == "error"
+
+    def test_revise_from_image_rejects_invalid_base64(self, tmp_store: Path) -> None:
+        session = SystemDesignSession(store_dir=tmp_store, skip_ai_parse=True)
+        session.start_from_request(_buck_only_request())
+        result = session.revise_from_image("%%%not-base64%%%")
+        assert result.status == "error"
+
+
 # ============================================================
 # start() with text input (skip_ai_parse=True uses regex fallback)
 # ============================================================
@@ -484,3 +605,244 @@ class TestStartWithText:
         assert result.status == "generated"
         assert result.bundle is not None
         assert "TPS5430" in result.bundle.bom_text
+
+    def test_start_text_system_gold_path(self, tmp_store: Path) -> None:
+        session = SystemDesignSession(store_dir=tmp_store, skip_ai_parse=True)
+        result = session.start(
+            "20V 输入，用 TPS54202 降压到 5V，再用 AMS1117 降到 3.3V，"
+            "给 STM32F103C8T6 供电，并且用 MCU 的 PA1 控制一颗 LED"
+        )
+
+        assert result.status == "generated"
+        assert result.bundle is not None
+
+        ir = result.bundle.design_ir
+        assert set(ir.module_instances) == {"buck1", "ldo1", "mcu1", "led1"}
+
+        resolved_links = {
+            (c.rule_id, c.src_port.module_id, c.dst_port.module_id)
+            for c in ir.connections
+        }
+        assert ("RULE_POWER_SUPPLY", "buck1", "ldo1") in resolved_links
+        assert ("RULE_POWER_SUPPLY", "ldo1", "mcu1") in resolved_links
+        assert ("RULE_GPIO_LED", "mcu1", "led1") in resolved_links
+
+        assert "NET_5V" in ir.nets
+        assert "NET_3.3V" in ir.nets
+        assert "NET_PA1_led1" in ir.nets
+        assert ir.unresolved_items == []
+
+        assert all(
+            name in result.bundle.bom_text
+            for name in ["TPS54202", "AMS1117", "STM32F103C8T6", "LED"]
+        )
+        assert "NET_5V" in result.bundle.spice_text
+        assert "NET_3.3V" in result.bundle.spice_text
+
+    def test_start_explicit_missing_part_returns_needs_asset_not_substitute(
+        self, tmp_store: Path,
+    ) -> None:
+        session = SystemDesignSession(store_dir=tmp_store, skip_ai_parse=True)
+        result = session.start("TPS5450，20V降3.3VDCDC电路")
+
+        assert result.status == "needs_asset"
+        assert result.bundle is not None
+        assert result.missing_modules == ["TPS5450"]
+        ir = result.bundle.design_ir
+        assert "buck1" in ir.module_instances
+        buck = ir.module_instances["buck1"]
+        assert buck.status == ModuleStatus.NEEDS_ASSET
+        assert buck.missing_part_number == "TPS5450"
+        assert buck.device is None
+        assert "TPS54202" not in result.bundle.bom_text
+
+    def test_revise_gold_path_replaces_existing_part(self, tmp_store: Path) -> None:
+        session = SystemDesignSession(store_dir=tmp_store, skip_ai_parse=True)
+        session.start(
+            "20V 输入，用 TPS54202 降压到 5V，再用 AMS1117 降到 3.3V，"
+            "给 STM32F103C8T6 供电，并且用 MCU 的 PA1 控制一颗 LED"
+        )
+
+        result = session.revise("把 TPS54202 换成 TPS5430")
+
+        assert result.status == "generated"
+        assert result.bundle is not None
+        assert set(session.ir.module_instances) == {"buck1", "ldo1", "mcu1", "led1"}
+        assert session.ir.module_instances["buck1"].device.part_number == "TPS5430"
+        assert "TPS5430" in result.bundle.bom_text
+
+    def test_revise_gold_path_updates_led_color(self, tmp_store: Path) -> None:
+        session = SystemDesignSession(store_dir=tmp_store, skip_ai_parse=True)
+        session.start(
+            "20V 输入，用 TPS54202 降压到 5V，再用 AMS1117 降到 3.3V，"
+            "给 STM32F103C8T6 供电，并且用 MCU 的 PA1 控制一颗 LED"
+        )
+
+        result = session.revise("把 LED 改成蓝色")
+
+        assert result.status == "generated"
+        assert session.ir.module_instances["led1"].parameters["led_color"] == "blue"
+
+    def test_revise_gold_path_updates_unique_vout(self, tmp_store: Path) -> None:
+        session = SystemDesignSession(store_dir=tmp_store, skip_ai_parse=True)
+        session.start(
+            "20V 输入，用 TPS54202 降压到 5V，再用 AMS1117 降到 3.3V，"
+            "给 STM32F103C8T6 供电，并且用 MCU 的 PA1 控制一颗 LED"
+        )
+
+        result = session.revise("把 5V 改成 4.2V")
+
+        assert result.status == "generated"
+        assert session.ir.module_instances["buck1"].parameters["v_out"] == "4.2"
+
+    def test_revise_gold_path_removes_unique_led_module(self, tmp_store: Path) -> None:
+        session = SystemDesignSession(store_dir=tmp_store, skip_ai_parse=True)
+        session.start(
+            "20V 输入，用 TPS54202 降压到 5V，再用 AMS1117 降到 3.3V，"
+            "给 STM32F103C8T6 供电，并且用 MCU 的 PA1 控制一颗 LED"
+        )
+
+        result = session.revise("删除 LED")
+
+        assert result.status == "generated"
+        assert result.bundle is not None
+        assert set(session.ir.module_instances) == {"buck1", "ldo1", "mcu1"}
+        assert all(
+            conn.dst_port.module_id != "led1" and conn.src_port.module_id != "led1"
+            for conn in session.ir.connections
+        )
+        assert "NET_PA1_led1" not in session.ir.nets
+        assert "LED_INDICATOR" not in result.bundle.bom_text
+
+    def test_revise_gold_path_adds_second_power_led_and_merges_net(
+        self, tmp_store: Path,
+    ) -> None:
+        session = SystemDesignSession(store_dir=tmp_store, skip_ai_parse=True)
+        session.start(
+            "20V 输入，用 TPS54202 降压到 5V，再用 AMS1117 降到 3.3V，"
+            "给 STM32F103C8T6 供电，并且用 MCU 的 PA1 控制一颗 LED"
+        )
+
+        result = session.revise("再加一个蓝色 LED")
+
+        assert result.status == "generated"
+        assert result.bundle is not None
+        assert set(session.ir.module_instances) == {"buck1", "ldo1", "mcu1", "led1", "led2"}
+        assert session.ir.module_instances["led2"].parameters["led_color"] == "blue"
+
+        resolved_links = {
+            (c.rule_id, c.src_port.module_id, c.dst_port.module_id)
+            for c in session.ir.connections
+        }
+        assert ("RULE_POWER_SUPPLY", "ldo1", "led2") in resolved_links
+
+        net_3v3 = session.ir.nets["NET_3.3V"]
+        members = {(member.module_id, member.pin_name) for member in net_3v3.members}
+        assert any(module_id == "mcu1" for module_id, _pin_name in members)
+        assert any(module_id == "led2" for module_id, _pin_name in members)
+
+    def test_revise_gold_path_can_remove_explicit_led2(self, tmp_store: Path) -> None:
+        session = SystemDesignSession(store_dir=tmp_store, skip_ai_parse=True)
+        session.start(
+            "20V 输入，用 TPS54202 降压到 5V，再用 AMS1117 降到 3.3V，"
+            "给 STM32F103C8T6 供电，并且用 MCU 的 PA1 控制一颗 LED"
+        )
+        session.revise("再加一个蓝色 LED")
+
+        result = session.revise("删除 led2")
+
+        assert result.status == "generated"
+        assert result.bundle is not None
+        assert set(session.ir.module_instances) == {"buck1", "ldo1", "mcu1", "led1"}
+        assert "led2" not in result.bundle.bom_text
+
+    def test_revise_gold_path_adds_second_gpio_led(self, tmp_store: Path) -> None:
+        session = SystemDesignSession(store_dir=tmp_store, skip_ai_parse=True)
+        session.start(
+            "20V 输入，用 TPS54202 降压到 5V，再用 AMS1117 降到 3.3V，"
+            "给 STM32F103C8T6 供电，并且用 MCU 的 PA1 控制一颗 LED"
+        )
+
+        result = session.revise("再加一个由 PA2 控制的蓝色 LED")
+
+        assert result.status == "generated"
+        assert result.bundle is not None
+        assert set(session.ir.module_instances) == {"buck1", "ldo1", "mcu1", "led1", "led2"}
+        assert session.ir.module_instances["led2"].parameters["led_color"] == "blue"
+        assert session.ir.module_instances["led2"].parameters["gpio_pin"] == "PA2"
+
+        resolved_links = {
+            (c.rule_id, c.src_port.module_id, c.src_port.pin_name, c.dst_port.module_id)
+            for c in session.ir.connections
+        }
+        assert ("RULE_GPIO_LED", "mcu1", "PA2", "led2") in resolved_links
+        assert "NET_PA2_led2" in session.ir.nets
+
+    def test_revise_gold_path_retargets_existing_led_gpio(self, tmp_store: Path) -> None:
+        session = SystemDesignSession(store_dir=tmp_store, skip_ai_parse=True)
+        session.start(
+            "20V 输入，用 TPS54202 降压到 5V，再用 AMS1117 降到 3.3V，"
+            "给 STM32F103C8T6 供电，并且用 MCU 的 PA1 控制一颗 LED"
+        )
+
+        result = session.revise("把 LED 改到 PA2")
+
+        assert result.status == "generated"
+        assert result.bundle is not None
+        assert session.ir.module_instances["led1"].parameters["gpio_pin"] == "PA2"
+        assert "NET_PA1_led1" not in session.ir.nets
+        assert "NET_PA2_led1" in session.ir.nets
+        resolved_links = {
+            (c.rule_id, c.src_port.module_id, c.src_port.pin_name, c.dst_port.module_id)
+            for c in session.ir.connections
+        }
+        assert ("RULE_GPIO_LED", "mcu1", "PA2", "led1") in resolved_links
+
+    def test_revise_gold_path_adds_downstream_ldo_module(self, tmp_store: Path) -> None:
+        session = SystemDesignSession(store_dir=tmp_store, skip_ai_parse=True)
+        session.start(
+            "20V 输入，用 TPS54202 降压到 5V，再用 AMS1117 降到 3.3V，"
+            "给 STM32F103C8T6 供电，并且用 MCU 的 PA1 控制一颗 LED"
+        )
+
+        result = session.revise("再加一个 AMS1117-3.3 把 5V 降到 3.3V")
+
+        assert result.status == "generated"
+        assert result.bundle is not None
+        assert "ldo2" in session.ir.module_instances
+        assert session.ir.module_instances["ldo2"].device.part_number == "AMS1117-3.3"
+        assert session.ir.module_instances["ldo2"].parameters["v_in"] == "5"
+        assert session.ir.module_instances["ldo2"].parameters["v_out"] == "3.3"
+
+        resolved_links = {
+            (c.rule_id, c.src_port.module_id, c.dst_port.module_id)
+            for c in session.ir.connections
+        }
+        assert ("RULE_POWER_SUPPLY", "buck1", "ldo2") in resolved_links
+
+    def test_revise_targets_explicit_led2_color(self, tmp_store: Path) -> None:
+        session = SystemDesignSession(store_dir=tmp_store, skip_ai_parse=True)
+        session.start(
+            "20V 输入，用 TPS54202 降压到 5V，再用 AMS1117 降到 3.3V，"
+            "给 STM32F103C8T6 供电，并且用 MCU 的 PA1 控制一颗 LED"
+        )
+        session.revise("再加一个蓝色 LED")
+
+        result = session.revise("把 led2 改成白色")
+
+        assert result.status == "generated"
+        assert session.ir.module_instances["led1"].parameters["led_color"] == "green"
+        assert session.ir.module_instances["led2"].parameters["led_color"] == "white"
+
+    def test_revise_targets_explicit_ldo2_vout(self, tmp_store: Path) -> None:
+        session = SystemDesignSession(store_dir=tmp_store, skip_ai_parse=True)
+        session.start(
+            "20V 输入，用 TPS54202 降压到 5V，再用 AMS1117 降到 3.3V，"
+            "给 STM32F103C8T6 供电，并且用 MCU 的 PA1 控制一颗 LED"
+        )
+        session.revise("再加一个 AMS1117-3.3 把 5V 降到 3.3V")
+
+        result = session.revise("把 ldo2 改成 1.8V")
+
+        assert result.status == "generated"
+        assert session.ir.module_instances["ldo2"].parameters["v_out"] == "1.8"

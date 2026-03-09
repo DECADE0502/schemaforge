@@ -10,6 +10,7 @@ import os
 import shutil
 import xml.etree.ElementTree as ET
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 import schemdraw
@@ -37,6 +38,7 @@ from schemaforge.system.rendering import (
     layout_control_side,
     layout_power_chain,
     render_system_svg,
+    render_system_svg_with_metadata,
 )
 
 
@@ -257,6 +259,74 @@ class TestDrawControlModule:
 
         assert "ANODE" in anchors
         assert "GND" in anchors
+
+
+class TestRenderMetadata:
+    def test_render_system_svg_with_metadata_emits_real_geometry(self) -> None:
+        buck = _make_buck_instance()
+        ldo = _make_ldo_instance()
+        mcu = _make_mcu_instance()
+        led = _make_led_instance()
+
+        connections = [
+            _make_power_connection("buck1", "ldo1", "NET_5V"),
+            ResolvedConnection(
+                resolved_connection_id="conn_ldo1_mcu1",
+                src_port=_make_port("ldo1", "power_out", "VOUT", NetType.POWER),
+                dst_port=_make_port("mcu1", "power_in", "VDD", NetType.POWER),
+                net_name="NET_3V3",
+                rule_id="RULE_POWER_SUPPLY",
+            ),
+            ResolvedConnection(
+                resolved_connection_id="gpio_led",
+                src_port=_make_port("mcu1", "gpio", "PA1"),
+                dst_port=_make_port("led1", "other", "ANODE"),
+                net_name="NET_PA1_led1",
+                rule_id="RULE_GPIO_LED",
+            ),
+        ]
+        ir = _make_ir(
+            modules={
+                "buck1": buck,
+                "ldo1": ldo,
+                "mcu1": mcu,
+                "led1": led,
+            },
+            connections=connections,
+        )
+
+        svg_path, metadata = render_system_svg_with_metadata(ir)
+
+        assert os.path.exists(svg_path)
+        assert set(metadata.module_bboxes) == {"buck1", "ldo1", "mcu1", "led1"}
+        assert "mcu1" in metadata.anchor_points
+        assert len(metadata.wire_paths) >= 3
+        assert metadata.canvas_size[0] > 0
+        assert metadata.canvas_size[1] > 0
+
+    def test_layout_spec_moves_module_in_metadata(self) -> None:
+        buck = _make_buck_instance()
+        ldo = _make_ldo_instance()
+        ir = _make_ir(
+            modules={"buck1": buck, "ldo1": ldo},
+            connections=[
+                _make_power_connection("buck1", "ldo1", "NET_5V"),
+            ],
+        )
+        layout_spec = SimpleNamespace(
+            module_positions={"ldo1": (30.0, 2.0)},
+            canvas_width=60.0,
+            canvas_height=20.0,
+            module_spacing_scale=1.0,
+        )
+
+        _svg_path, metadata = render_system_svg_with_metadata(
+            ir,
+            layout_spec=layout_spec,
+        )
+
+        assert metadata.module_bboxes["ldo1"][0] == pytest.approx(31.0, abs=2.0)
+        assert metadata.canvas_size[0] >= 60.0
 
 
 # ============================================================

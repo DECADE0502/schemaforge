@@ -487,26 +487,20 @@ class TestSpecialPinRules:
         assert bst_conns[0].src_port.pin_name == "BST"
         assert bst_conns[0].dst_port.pin_name == "SW"
 
-        # 检查自动元件
-        bst_comps = [
-            c for c in buck.external_components
-            if c.get("role") == "boot_cap"
-        ]
-        assert len(bst_comps) == 1
+        # boot_cap 元件由 synthesis 产出，connection_rules 不再重复追加
+        # 这里只验证连接关系产出正确
 
-    def test_fb_divider_component(self) -> None:
-        """Buck 模块 FB 引脚自动生成分压器元件记录。"""
+    def test_fb_divider_evidence(self) -> None:
+        """Buck 模块 FB 引脚记录分压器证据（元件由 synthesis 产出）。"""
         buck = _make_buck_instance()
 
         instances = {"buck1": buck}
         resolve_all_connections(instances, [])
 
-        fb_comps = [
-            c for c in buck.external_components
-            if c.get("role") == "fb_divider"
-        ]
-        assert len(fb_comps) == 1
-        assert fb_comps[0]["type"] == "resistor_divider"
+        # fb_upper/fb_lower 由 synthesis 产出，connection_rules 只记录证据
+        assert any(
+            "FB 分压" in e for e in buck.evidence
+        ), f"Expected FB divider evidence, got: {buck.evidence}"
 
 
 # ============================================================

@@ -11,6 +11,18 @@
 | 旧会话 | `workflows/design_session.py` | 冻结 |
 | 单器件工作台 | `workflows/schemaforge_session.py` | 兼容层（单器件继续可用） |
 
+`SchemaForgeSession` 当前冻结的公开 API 仅限：
+
+- `bundle`
+- `start()`
+- `revise()`
+- `ingest_asset()`
+- `confirm_import()`
+- `get_orchestrator()`
+- `run_orchestrated()`
+
+新增公开方法视为越过冻结边界；仓库内已有回归测试锁定这组 API 面。
+
 ## 新系统层（活跃开发）
 
 | 模块 | 路径 | 状态 |

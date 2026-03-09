@@ -251,6 +251,11 @@ def _find_port_by_role(
         for pin_name, port in instance.resolved_ports.items():
             if pin_name.upper() == pin_upper:
                 return port
+        for pin_name, port in instance.resolved_ports.items():
+            base_name = pin_name.upper().split("-")[0]
+            base_name = base_name.split("_")[0]
+            if base_name == pin_upper:
+                return port
 
     # 按角色查找
     for port in instance.resolved_ports.values():
@@ -535,6 +540,7 @@ def _resolve_special_pins(
         })
 
     # BST → SW via bootstrap capacitor
+    # 注意: boot_cap 元件由 synthesis 产出，这里只产出连接关系，不重复追加元件
     if bst_port is not None and sw_port is not None:
         conn = ResolvedConnection(
             resolved_connection_id=f"{instance.module_id}_boot_cap",
@@ -545,24 +551,15 @@ def _resolve_special_pins(
             evidence="BST 与 SW 之间连接自举电容",
         )
         connections.append(conn)
-        auto_components.append({
-            "type": "capacitor",
-            "role": "boot_cap",
-            "ref": f"C_{instance.module_id}_BST",
-            "value": "100n",
-            "unit": "farad",
-            "formula": "100nF bootstrap capacitor between BST and SW",
-        })
+        # boot_cap 元件已由 synthesize_buck_module() 产出，不再重复追加
 
     # FB → feedback divider
+    # 注意: fb_upper/fb_lower 由 synthesis 产出，这里不再追加 fb_divider
+    # 仅记录证据
     if fb_port is not None:
-        auto_components.append({
-            "type": "resistor_divider",
-            "role": "fb_divider",
-            "ref": f"R_{instance.module_id}_FB",
-            "formula": "V_out = V_ref * (1 + R1/R2)",
-            "v_out": instance.parameters.get("v_out", ""),
-        })
+        instance.evidence.append(
+            "FB 分压网络由 synthesis 计算 (fb_upper + fb_lower)"
+        )
 
     return connections, auto_components
 

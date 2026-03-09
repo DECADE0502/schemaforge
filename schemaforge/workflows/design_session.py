@@ -1,4 +1,4 @@
-"""设计会话工作流
+"""[LEGACY] 旧版设计会话，仅用于测试兼容。生产代码使用 SystemDesignSession。
 
 串联 Phase 4 全部模块的端到端流程：
 自然语言需求 → 规划 → 检索 → 适配 → 合理性检查 → 渲染 → 导出
@@ -22,7 +22,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, ClassVar
 
 from schemaforge.common.progress import ProgressTracker
 from schemaforge.design.planner import DesignPlan, DesignPlanner, ModuleRequirement
@@ -85,30 +85,8 @@ class ModuleResult:
         }
 
 
-@dataclass
-class MissingModule:
-    """缺失的器件模块 — 用于 GUI 展示待办卡片
-
-    当设计会话在检索阶段发现某些模块在器件库中没有匹配时，
-    将缺失信息打包为 MissingModule 返回给 GUI，供用户补录。
-    """
-
-    role: str = ""              # 模块角色 (e.g. "main_regulator")
-    category: str = ""          # 期望分类 (e.g. "buck")
-    description: str = ""       # 功能描述
-    part_number: str = ""       # 指定料号（如有）
-    parameters: dict[str, str] = field(default_factory=dict)
-    search_error: str = ""      # 检索失败原因
-
-    def to_dict(self) -> dict[str, Any]:
-        return {
-            "role": self.role,
-            "category": self.category,
-            "description": self.description,
-            "part_number": self.part_number,
-            "parameters": self.parameters,
-            "search_error": self.search_error,
-        }
+# MissingModule 已迁移至 schemaforge.common.models，此处保留向后兼容重导出
+from schemaforge.common.models import MissingModule as MissingModule  # noqa: E402, F401
 
 
 @dataclass
@@ -169,6 +147,8 @@ class DesignSession:
     4. compiling: 拓扑适配
     5. rendering: SVG 渲染 + BOM/SPICE 导出
     """
+
+    LEGACY_COMPAT_ONLY: ClassVar[bool] = True
 
     def __init__(
         self,

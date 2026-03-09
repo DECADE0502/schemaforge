@@ -180,7 +180,7 @@ def _make_low_score_report(n_issues: int = 2) -> VisualReviewReport:
 _MOCK_RENDER_IMAGES = "schemaforge.visual_review.loop.render_review_images"
 _MOCK_MANIFEST = "schemaforge.visual_review.loop.build_review_manifest"
 _MOCK_CRITIC = "schemaforge.visual_review.loop.review_rendered_schematic"
-_MOCK_RENDER_SVG = "schemaforge.visual_review.loop.render_system_svg"
+_MOCK_RENDER_SVG = "schemaforge.visual_review.loop.render_system_svg_with_metadata"
 
 
 def _patch_loop_deps(
@@ -206,7 +206,7 @@ def _patch_loop_deps(
         )
     else:
         patches.append(
-            patch(_MOCK_RENDER_SVG, return_value="updated.svg"),
+            patch(_MOCK_RENDER_SVG, return_value=("updated.svg", _make_metadata())),
         )
 
     return patches

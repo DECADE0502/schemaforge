@@ -433,7 +433,7 @@ def synthesize_led_indicator(
 
     instance.external_components = [
         {
-            "role": "led_resistor",
+            "role": "led_limit",
             "ref_prefix": "R",
             "value": _format_resistor(r_value),
             "formula": f"R = (Vdrive - Vf) / Iled = ({v_drive} - {v_forward}) / {i_led}",

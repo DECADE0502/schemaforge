@@ -1,4 +1,9 @@
-"""SchemaForge 统一设计工作台。"""
+"""SchemaForge 统一设计工作台。
+
+兼容说明：
+- 本模块保留给旧单器件/旧 AI 编排路径兼容使用。
+- 当前推荐的系统级主链为 `schemaforge.system.session.SystemDesignSession`。
+"""
 
 from __future__ import annotations
 
@@ -90,7 +95,27 @@ class SchemaForgeTurnResult:
 
 
 class SchemaForgeSession:
-    """统一设计会话。"""
+    """旧单器件/旧编排路径的兼容会话。
+
+    该类不再承担系统级主链演进；当前主链是
+    `schemaforge.system.session.SystemDesignSession`。
+
+    兼容层只允许维护修复，不再新增公开能力；公开 API 面由
+    `FROZEN_PUBLIC_API` 固定，并由回归测试锁住。
+    """
+
+    LEGACY_COMPAT_ONLY = True
+    FROZEN_PUBLIC_API = frozenset(
+        {
+            "bundle",
+            "confirm_import",
+            "get_orchestrator",
+            "ingest_asset",
+            "revise",
+            "run_orchestrated",
+            "start",
+        }
+    )
 
     def __init__(
         self,

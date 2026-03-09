@@ -1,17 +1,18 @@
-"""Step 5: GUI/CLI/Agent all use same backend pipeline.
+"""Compatibility-heavy backend regression tests.
 
-Tests verifying that:
-1. CLI main.py --new-chain correctly creates DesignSession and dispatches
-2. CLI main.py without --new-chain uses classic SchemaForgeEngine
-3. gui.py DesignSessionWorker exists and has correct interface
-4. gui.py MainWindow chain toggle logic works
-5. Both entry points converge on the same DesignSession backend
+This file still covers historical `DesignSession` / `SchemaForgeEngine` flows,
+plus a small amount of source-level CLI/GUI wiring verification.
 
-Per Rule 6: "所有入口共用同一条后端规则"
+Current system-session mainline regressions live primarily in:
 
-NOTE: main.py wraps sys.stdout at import time on Windows, which conflicts with
-pytest's capture mechanism. Tests that need to verify main.py/gui.py structure
-use source-level checks instead of importing those modules.
+- `tests/test_system_session.py`
+- `tests/test_gui_wiring.py`
+- `tests/test_legacy_freeze.py`
+- `tests/test_session_pipeline_integration.py`
+
+NOTE: `main.py` wraps sys.stdout at import time on Windows, which conflicts
+with pytest's capture mechanism. Tests that only need to inspect CLI/GUI wiring
+prefer source-level checks instead of importing those modules.
 """
 
 from __future__ import annotations
@@ -210,42 +211,44 @@ USER_QUERY = "5V转3.3V稳压电路，带绿色LED指示灯"
 
 
 class TestCLIMainPyStructure:
-    """Verify main.py source has correct SchemaForgeSession integration."""
+    """Verify main.py keeps a system default path plus legacy compatibility."""
 
     def test_main_py_has_store_arg(self):
         source = _main_source()
         assert '"--store"' in source
 
-    def test_main_py_imports_schemaforge_session(self):
+    def test_main_py_imports_system_session_only(self):
         source = _main_source()
-        assert "SchemaForgeSession" in source
+        assert "SystemDesignSession" in source
+        # SchemaForgeSession removed from main.py — unified to SystemDesignSession
+        assert "SchemaForgeSession" not in source
 
-    def test_main_py_has_unified_display(self):
+    def test_main_py_has_agent_display(self):
         source = _main_source()
-        assert "def process_and_display_unified(" in source
+        assert "def process_via_agent(" in source
 
-    def test_main_py_has_interactive_unified(self):
+    def test_main_py_has_interactive(self):
         source = _main_source()
-        assert "def run_interactive_unified(" in source
+        assert "def run_interactive(" in source
 
-    def test_main_py_has_orchestrated_arg(self):
+    def test_main_py_has_orchestrator(self):
         source = _main_source()
-        assert '"--orchestrated"' in source
+        assert "def _build_orchestrator(" in source
+        assert "Orchestrator" in source
 
     def test_argparse_store_flag(self):
         parser = argparse.ArgumentParser()
-        parser.add_argument("--orchestrated", action="store_true")
         parser.add_argument("--store", type=str, default="")
         args = parser.parse_args(["--store", "/some/path"])
         assert args.store == "/some/path"
 
-    def test_argparse_default_no_orchestrated(self):
+    def test_argparse_defaults(self):
         parser = argparse.ArgumentParser()
-        parser.add_argument("--orchestrated", action="store_true")
         parser.add_argument("--store", type=str, default="")
+        parser.add_argument("--visual-review", action="store_true")
         args = parser.parse_args([])
-        assert args.orchestrated is False
         assert args.store == ""
+        assert args.visual_review is False
 
 
 # ============================================================
@@ -379,12 +382,14 @@ class TestGUIChainToggleLogic:
 
 
 class TestUnifiedBackendConvergence:
-    """Both CLI and GUI converge on the same SchemaForgeSession class."""
+    """CLI/GUI default paths stay on the system session; legacy remains opt-in."""
 
     def test_both_entry_points_import_same_class(self):
         main_source = _main_source()
-        assert "SchemaForgeSession" in main_source
-        # GUI imports SchemaForgeWorker which uses SchemaForgeSession
+        assert "SystemDesignSession" in main_source
+        # main.py fully unified — no more SchemaForgeSession import
+        assert "SchemaForgeSession" not in main_source
+        # GUI imports SchemaForgeWorker, whose default worker path uses SystemDesignSession.
         design_source = _gui_design_source()
         if design_source:
             assert "SchemaForgeWorker" in design_source

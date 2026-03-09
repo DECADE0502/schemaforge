@@ -1,7 +1,7 @@
 """原理图设计页面
 
 DesignPage — 核心设计标签页，集成输入面板、SVG 预览、AI 对话、结果展示。
-始终使用 SchemaForgeSession 真实 AI 链路。
+默认使用 `SystemDesignSession` 系统主链；旧 `SchemaForgeSession` 仅在兼容编排模式下保留。
 """
 
 from __future__ import annotations
@@ -12,6 +12,7 @@ from typing import Any
 
 from PySide6.QtCore import Qt, Slot
 from PySide6.QtWidgets import (
+    QCheckBox,
     QComboBox,
     QFileDialog,
     QFrame,
@@ -31,15 +32,14 @@ from PySide6.QtWidgets import (
 from schemaforge.gui.widgets.chat_panel import ChatPanel
 from schemaforge.gui.widgets.grid_canvas import GridCanvas
 from schemaforge.gui.widgets.progress_header import ProgressHeader
-from schemaforge.gui.widgets.svg_viewer import SvgZoomView
 from schemaforge.gui.workers.engine_worker import (
     ConfirmImportWorker,
     IngestAssetWorker,
-    SchemaForgeOrchestratedWorker,
+    SchemaForgeImageReviseWorker,
     SchemaForgeReviseWorker,
     SchemaForgeWorker,
 )
-from schemaforge.workflows.design_session import MissingModule
+from schemaforge.common.models import MissingModule
 
 logger = logging.getLogger(__name__)
 
@@ -71,7 +71,14 @@ class DesignPage(QWidget):
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
-        self._worker: SchemaForgeWorker | SchemaForgeReviseWorker | SchemaForgeOrchestratedWorker | None = None
+        self._worker: (
+            SchemaForgeWorker
+            | SchemaForgeReviseWorker
+            | SchemaForgeImageReviseWorker
+            | IngestAssetWorker
+            | ConfirmImportWorker
+            | None
+        ) = None
         self._last_result: Any = None  # EngineResult | DesignSessionResult
 
         # --- 缺失器件待办状态 ---
@@ -82,8 +89,8 @@ class DesignPage(QWidget):
         self._missing_buttons: dict[int, QPushButton] = {}
         self._original_input: str = ""
 
-        # --- 统一工作台会话（多轮复用） ---
-        self._sf_session: object | None = None  # SchemaForgeSession 实例
+        # --- 默认系统级会话（多轮复用；兼容编排模式下可切到旧会话） ---
+        self._sf_session: object | None = None
         self._has_design: bool = False  # 是否已有设计结果（用于判断 chat 走 revise 还是 start）
 
         self._init_ui()
@@ -156,6 +163,13 @@ class DesignPage(QWidget):
         btn_row.addWidget(self._btn_generate)
         layout.addLayout(btn_row)
 
+        self._visual_review_checkbox = QCheckBox("生成后启用 visual review")
+        self._visual_review_checkbox.setChecked(False)
+        self._visual_review_checkbox.setToolTip(
+            "启用后会在系统渲染完成后运行布局视觉审稿；默认关闭以保证主链稳定。"
+        )
+        layout.addWidget(self._visual_review_checkbox)
+
         # 状态标签
         self._status_label = QLabel("就绪")
         self._status_label.setWordWrap(True)
@@ -200,9 +214,6 @@ class DesignPage(QWidget):
         # Grid canvas (index 0) — replaces static SVG viewer
         self._grid_canvas = GridCanvas()
         self._preview_stack.addWidget(self._grid_canvas)
-
-        # Keep SVG viewer as fallback (index will shift due to stacked widget)
-        self._svg_viewer = SvgZoomView()
 
         # 缺失器件面板占位 (index 1) — 延迟构建
         self._missing_placeholder = QWidget()
@@ -313,6 +324,16 @@ class DesignPage(QWidget):
     def _on_image_pasted(self, base64_png: str) -> None:
         """对话面板粘贴图片时的视觉反馈处理。"""
         self._tab_log.append("[图片] 用户粘贴了图片（base64 PNG）")
+        if self._sf_session is None or not self._has_design:
+            self._status_label.setText("⚠ 请先生成一版设计，再用图片进行修改反馈")
+            self._chat_panel.add_message(
+                "assistant",
+                "请先生成一版设计，再粘贴图片进行修改反馈。当前图片不会启动新建设计。",
+            )
+            return
+
+        self._tab_log.append("[图片] 正在处理图片反馈…")
+        self._start_revise_image(base64_png)
 
     def _start_revise(self, message: str) -> None:
         """启动多轮修改流程（对话面板 → SchemaForgeReviseWorker）。"""
@@ -328,6 +349,28 @@ class DesignPage(QWidget):
         worker = SchemaForgeReviseWorker(
             session=self._sf_session,
             user_input=message,
+        )
+        worker.progress.connect(self._on_worker_progress)
+        worker.finished.connect(self._on_sf_revise_finished)
+        worker.error.connect(self._on_worker_error)
+
+        self._worker = worker
+        worker.start()
+
+    def _start_revise_image(self, base64_png: str) -> None:
+        """启动图片修改流程（对话面板图片 -> SchemaForgeImageReviseWorker）。"""
+        if self._worker is not None:
+            self._status_label.setText("⚠ 正在运行中，请等待完成")
+            return
+
+        self._status_label.setText("正在分析图片修改意图…")
+        self._btn_generate.setEnabled(False)
+        self._progress_header.reset()
+        self._tab_log.append("[图片修改] 正在从图片提取修订意图…")
+
+        worker = SchemaForgeImageReviseWorker(
+            session=self._sf_session,
+            base64_png=base64_png,
         )
         worker.progress.connect(self._on_worker_progress)
         worker.finished.connect(self._on_sf_revise_finished)
@@ -357,6 +400,8 @@ class DesignPage(QWidget):
         self._btn_generate.setEnabled(False)
         self._progress_header.reset()
         self._tab_log.append(f"[启动] 输入: {user_input[:80]}…")
+        if self._visual_review_checkbox.isChecked():
+            self._tab_log.append("[启动] visual review 已启用")
 
         # 保存输入信息，供缺失器件重试时复用
         self._original_input = user_input
@@ -364,6 +409,7 @@ class DesignPage(QWidget):
         worker = SchemaForgeWorker(
             user_input=user_input,
             session=self._sf_session,
+            enable_visual_review=self._visual_review_checkbox.isChecked(),
         )
         worker.session_ready.connect(self._on_session_ready)
         worker.progress.connect(self._on_worker_progress)
@@ -379,109 +425,6 @@ class DesignPage(QWidget):
         self._progress_header.update_progress(message, percentage)
         self._status_label.setText(message)
         self._tab_log.append(f"[{percentage}%] {message}")
-
-    @Slot(object)
-    def _on_worker_finished(self, result: Any) -> None:
-        """工作线程完成回调。"""
-        self._worker = None
-        self._btn_generate.setEnabled(True)
-        self._last_result = result
-        self._progress_header.update_progress("完成", 100)
-
-        # --- 缺失器件检测（优先于 success/error 判断）---
-        has_missing = getattr(result, "has_missing", False)
-        if has_missing:
-            missing_modules: list[MissingModule] = getattr(
-                result, "missing_modules", []
-            )
-            count = len(missing_modules)
-            self._status_label.setText(f"⚠ 发现 {count} 个器件缺失，请补录")
-            self._progress_header.update_progress("等待补录缺失器件", 50)
-            self._tab_log.append(f"[缺失] 发现 {count} 个缺失器件，等待用户补录")
-            self._chat_panel.add_message(
-                "assistant",
-                f"发现 {count} 个器件在库中缺失，请在中间面板逐一补录后继续设计。",
-            )
-            self._show_missing_panel(missing_modules)
-            return
-
-        # 判断结果类型并填充
-        success = getattr(result, "success", False)
-        svg_paths: list[str] = getattr(result, "svg_paths", [])
-        bom_text: str = getattr(result, "bom_text", "")
-        spice_text: str = getattr(result, "spice_text", "")
-        error: str = getattr(result, "error", "")
-
-        if success:
-            self._status_label.setText("✅ 生成完成")
-
-            # 加载第一个 SVG
-            if svg_paths:
-                loaded = self._grid_canvas.load_file(svg_paths[0])
-                if loaded:
-                    self._grid_canvas.fit_to_view()
-                    self._tab_log.append(f"[SVG] 已加载: {svg_paths[0]}")
-                else:
-                    self._tab_log.append(f"[SVG] 加载失败: {svg_paths[0]}")
-
-            # 填充结果标签页
-            self._tab_bom.setPlainText(bom_text or "（无 BOM 数据）")
-            self._tab_spice.setPlainText(spice_text or "（无 SPICE 数据）")
-
-            # ERC 检查
-            erc_errors = getattr(result, "erc_errors", [])
-            if erc_errors:
-                erc_lines = [
-                    f"[{e.severity}] {e.message}" if hasattr(e, "severity") else str(e)
-                    for e in erc_errors
-                ]
-                self._tab_erc.setPlainText("\n".join(erc_lines))
-            else:
-                self._tab_erc.setPlainText("✅ ERC 检查通过，无错误")
-
-            # 设计概要
-            summary_parts: list[str] = []
-            design_name = getattr(result, "design_name", "")
-            description = getattr(result, "description", "")
-            notes = getattr(result, "notes", "")
-            if design_name:
-                summary_parts.append(f"设计名称: {design_name}")
-            if description:
-                summary_parts.append(f"描述: {description}")
-            if notes:
-                summary_parts.append(f"备注: {notes}")
-            summary_parts.append(f"SVG 数量: {len(svg_paths)}")
-
-            # DesignSessionResult 额外信息
-            modules = getattr(result, "modules", [])
-            if modules:
-                summary_parts.append(f"模块数量: {len(modules)}")
-                for i, m in enumerate(modules):
-                    req = getattr(m, "requirement", None)
-                    role = getattr(req, "role", "?") if req else "?"
-                    dev = getattr(m, "device", None)
-                    pn = dev.part_number if dev else "无"
-                    summary_parts.append(f"  模块{i + 1}: {role} → {pn}")
-
-            design_review = getattr(result, "design_review", None)
-            if design_review is not None:
-                passed = getattr(design_review, "overall_passed", None)
-                summary_parts.append(
-                    f"设计审查: {'✅ 通过' if passed else '❌ 未通过'}"
-                )
-
-            self._tab_summary.setPlainText("\n".join(summary_parts) or "（无概要）")
-
-            # Chat 反馈
-            self._chat_panel.add_message(
-                "assistant",
-                f"生成完成！共产出 {len(svg_paths)} 张原理图。",
-            )
-            self._tab_log.append("[完成] 生成成功")
-        else:
-            self._status_label.setText(f"❌ 生成失败: {error}")
-            self._tab_log.append(f"[失败] {error}")
-            self._chat_panel.add_message("assistant", f"生成失败: {error}")
 
     @Slot(object)
     def _on_sf_worker_finished(self, result: Any) -> None:
@@ -538,7 +481,7 @@ class DesignPage(QWidget):
             )
 
             # 构造兼容 MissingModule 的结构给现有面板使用
-            from schemaforge.workflows.design_session import MissingModule as MM
+            from schemaforge.common.models import MissingModule as MM
 
             fake_missing = [
                 MM(
@@ -618,7 +561,7 @@ class DesignPage(QWidget):
                 "assistant",
                 f"⚠ {message}\n\n请点击「去补录」按钮上传 datasheet 导入器件。",
             )
-            from schemaforge.workflows.design_session import MissingModule as MM
+            from schemaforge.common.models import MissingModule as MM
 
             fake_missing = [
                 MM(
@@ -637,59 +580,6 @@ class DesignPage(QWidget):
             self._status_label.setText(f"❌ 修改失败: {message}")
             self._tab_log.append(f"[修改失败] {message}")
             self._chat_panel.add_message("assistant", f"❌ {message}")
-
-    @Slot(object)
-    def _on_orchestrated_finished(self, agent_step: Any) -> None:
-        """AI 编排 SchemaForgeOrchestratedWorker 完成回调。
-
-        处理 AgentStep: ASK_USER / PRESENT_DRAFT / FINALIZE / FAIL
-        """
-        self._worker = None
-        self._btn_generate.setEnabled(True)
-        self._progress_header.update_progress("AI 编排完成", 100)
-
-        action = getattr(agent_step, "action", None)
-        message = getattr(agent_step, "message", "")
-        action_name = action.value if action is not None else "unknown"
-
-        if action_name == "ask_user":
-            # AI 有问题需要用户回答
-            questions = getattr(agent_step, "questions", [])
-            q_texts = [getattr(q, "text", str(q)) for q in questions]
-            q_display = "\n".join(f"  • {t}" for t in q_texts) if q_texts else ""
-            self._status_label.setText("🤔 AI 需要更多信息")
-            self._chat_panel.add_message(
-                "assistant",
-                f"{message}\n\n{q_display}" if q_display else message,
-            )
-            self._tab_log.append(f"[AI 提问] {message}")
-
-        elif action_name in ("present_draft", "finalize"):
-            # AI 完成设计
-            self._status_label.setText("✅ AI 编排完成")
-            # 尝试从会话中获取最新 bundle
-            if self._sf_session is not None:
-                bundle = getattr(self._sf_session, "bundle", None)
-                if bundle is not None:
-                    self._display_bundle(bundle)
-                    self._has_design = True
-            self._chat_panel.add_message("assistant", f"✅ {message}")
-            self._chat_panel.add_message(
-                "system",
-                "💬 你可以继续在对话框中输入修改指令",
-            )
-            self._tab_log.append(f"[AI 完成] {message}")
-
-        elif action_name == "fail":
-            self._status_label.setText(f"❌ AI 编排失败: {message}")
-            self._chat_panel.add_message("assistant", f"❌ {message}")
-            self._tab_log.append(f"[AI 失败] {message}")
-
-        else:
-            # call_tools 等中间态（理论上不应该到 GUI）
-            self._status_label.setText(f"AI: {action_name}")
-            self._chat_panel.add_message("assistant", message or f"AI 动作: {action_name}")
-            self._tab_log.append(f"[AI {action_name}] {message}")
 
     def _display_bundle(self, bundle: Any, warnings: list[str] | None = None) -> None:
         """提取 DesignBundle 的内容并展示到各标签页。"""

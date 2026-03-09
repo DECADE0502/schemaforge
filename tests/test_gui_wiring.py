@@ -6,7 +6,7 @@
 - SchemaForgeOrchestratedWorker AI 编排路径
 - _on_chat_send 路由逻辑（首次走 start，后续走 revise）
 - _display_bundle 数据提取
-- _on_orchestrated_finished AgentStep 分发
+- AgentStep 分发（_on_orchestrated_finished removed as dead code）
 
 NOTE: 不依赖 PySide6 运行时，通过源码级检查和单元测试验证逻辑。
 """
@@ -36,6 +36,7 @@ _ENGINE_WORKER_PY = (
     / "workers"
     / "engine_worker.py"
 )
+_MAIN_PY = Path(__file__).parent.parent / "main.py"
 
 
 def _read_source(path: Path) -> str:
@@ -72,8 +73,9 @@ class TestDesignPageStructure:
     def test_imports_revise_worker(self) -> None:
         assert "SchemaForgeReviseWorker" in self.src
 
-    def test_imports_orchestrated_worker(self) -> None:
-        assert "SchemaForgeOrchestratedWorker" in self.src
+    def test_no_dead_orchestrated_worker_import(self) -> None:
+        """SchemaForgeOrchestratedWorker import removed (dead code cleanup)."""
+        assert "SchemaForgeOrchestratedWorker" not in self.src
 
     def test_has_start_revise_method(self) -> None:
         assert "_start_revise" in self.class_methods
@@ -84,8 +86,11 @@ class TestDesignPageStructure:
     def test_has_on_sf_revise_finished(self) -> None:
         assert "_on_sf_revise_finished" in self.class_methods
 
-    def test_has_on_orchestrated_finished(self) -> None:
-        assert "_on_orchestrated_finished" in self.class_methods
+    def test_has_start_revise_image_method(self) -> None:
+        assert "_start_revise_image" in self.class_methods
+
+    def test_no_dead_on_orchestrated_finished(self) -> None:
+        assert "_on_orchestrated_finished" not in self.class_methods
 
     def test_has_display_bundle(self) -> None:
         assert "_display_bundle" in self.class_methods
@@ -102,6 +107,17 @@ class TestDesignPageStructure:
         assert "_sf_session is not None" in self.src
         assert "_has_design" in self.src
         assert "_start_revise" in self.src
+
+    def test_image_paste_routes_to_image_revise(self) -> None:
+        assert "_start_revise_image" in self.src
+        assert "图片修改意图" in self.src or "图片修改" in self.src
+
+    def test_visual_review_checkbox_exists(self) -> None:
+        assert "_visual_review_checkbox" in self.src
+        assert "visual review" in self.src
+
+    def test_generate_passes_visual_review_toggle(self) -> None:
+        assert "enable_visual_review=self._visual_review_checkbox.isChecked()" in self.src
 
     def test_revise_hint_shown_after_generation(self) -> None:
         """生成完成后应该提示用户可以通过对话修改。"""
@@ -145,8 +161,15 @@ class TestEngineWorkerStructure:
         """SchemaForgeWorker 必须接受 session 参数复用已有会话。"""
         assert "session: object | None = None" in self.src
 
+    def test_schemaforge_worker_accepts_visual_review_param(self) -> None:
+        assert "enable_visual_review: bool = False" in self.src
+
     def test_schemaforge_worker_emits_session_ready(self) -> None:
         assert "self.session_ready.emit(session)" in self.src
+
+    def test_gui_worker_passes_visual_review_to_system_session(self) -> None:
+        assert "enable_visual_review=self._enable_visual_review" in self.src
+        assert "visual_review_enabled == self._enable_visual_review" in self.src
 
     def test_orchestrated_worker_calls_run_orchestrated(self) -> None:
         assert "run_orchestrated" in self.src
@@ -154,11 +177,21 @@ class TestEngineWorkerStructure:
     def test_revise_worker_exists(self) -> None:
         assert "SchemaForgeReviseWorker" in self._get_class_names()
 
+    def test_image_revise_worker_exists(self) -> None:
+        assert "SchemaForgeImageReviseWorker" in self._get_class_names()
+
+    def test_image_revise_worker_calls_session_method(self) -> None:
+        assert "revise_from_image" in self.src
+
+    def test_gui_worker_uses_system_design_session(self) -> None:
+        assert "SystemDesignSession" in self.src
+
     def test_all_workers_have_finished_signal(self) -> None:
         """所有 worker 类都必须有 finished 信号。"""
         for cls_name in [
             "SchemaForgeWorker",
             "SchemaForgeReviseWorker",
+            "SchemaForgeImageReviseWorker",
             "IngestAssetWorker",
             "ConfirmImportWorker",
             "SchemaForgeOrchestratedWorker",
@@ -172,10 +205,10 @@ class TestEngineWorkerStructure:
 
 
 class TestSchemaForgeWorkerLogic:
-    """SchemaForgeWorker.run() 逻辑测试（mock SchemaForgeSession）。"""
+    """SchemaForgeWorker.run() 逻辑测试（默认系统主链）。"""
 
     def test_worker_creates_session_when_none(self) -> None:
-        """传入 session=None 时应创建新 SchemaForgeSession。"""
+        """传入 session=None 时应创建新的系统级会话。"""
         from schemaforge.gui.workers.engine_worker import SchemaForgeWorker
 
         worker = SchemaForgeWorker(
@@ -210,6 +243,21 @@ class TestSchemaForgeReviseWorkerLogic:
         )
         assert worker._session is mock_session
         assert worker.user_input == "把输出电压改成3.3V"
+
+
+class TestSchemaForgeImageReviseWorkerLogic:
+    """SchemaForgeImageReviseWorker 逻辑测试。"""
+
+    def test_image_revise_worker_stores_session(self) -> None:
+        from schemaforge.gui.workers.engine_worker import SchemaForgeImageReviseWorker
+
+        mock_session = MagicMock()
+        worker = SchemaForgeImageReviseWorker(
+            session=mock_session,
+            base64_png="aGVsbG8=",
+        )
+        assert worker._session is mock_session
+        assert worker.base64_png == "aGVsbG8="
 
 
 class TestSchemaForgeOrchestratedWorkerLogic:
@@ -270,6 +318,17 @@ class TestChatSendRouting:
         """空消息 → 不触发任何路径。"""
         message = "   "
         assert not message.strip()
+
+
+class TestDefaultBackendConvergence:
+    def test_cli_defaults_to_system_design_session(self) -> None:
+        source = _read_source(_MAIN_PY)
+        assert "SystemDesignSession" in source
+        assert "Orchestrator" in source
+
+    def test_gui_defaults_to_system_design_session(self) -> None:
+        source = _read_source(_ENGINE_WORKER_PY)
+        assert "SystemDesignSession" in source
 
 
 class TestDisplayBundleExtraction:

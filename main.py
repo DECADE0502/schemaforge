@@ -1,21 +1,17 @@
 #!/usr/bin/env python3
 """SchemaForge -- AI驱动的原理图生成器
 
-CLI入口，支持：
-- 交互模式：输入电路需求，生成原理图
-- 单次模式：命令行传入需求
+CLI入口，通过 AI agent (Orchestrator + function calling) 驱动设计：
+- 交互模式：多轮对话，AI 自动调用工具完成设计
+- 单次模式：命令行传入需求，AI 完成后退出
 """
 
 from __future__ import annotations
 
 import argparse
 import io
-import os
 import sys
 from pathlib import Path
-
-# 确保 CLI 模式下始终使用真实 AI
-os.environ.pop("SCHEMAFORGE_SKIP_AI_PARSE", None)
 
 # 修复Windows终端编码问题
 if sys.platform == "win32":
@@ -30,9 +26,25 @@ from rich.markdown import Markdown
 from rich.panel import Panel
 from rich.text import Text
 
-from schemaforge.workflows.schemaforge_session import SchemaForgeSession
+from schemaforge.agent.design_tools_v3 import AGENT_SYSTEM_PROMPT
+from schemaforge.system.session import SystemDesignSession, SystemDesignResult
 
 console = Console(force_terminal=True)
+
+
+def _build_orchestrator(session: SystemDesignSession) -> object:
+    """为 session 构建 AI Orchestrator + 原子工具集 (v3)。"""
+    from schemaforge.agent.orchestrator import Orchestrator
+    from schemaforge.agent.design_tools_v3 import build_atomic_design_tools
+    from schemaforge.agent.tools import default_registry
+
+    design_tools = build_atomic_design_tools(session)
+    merged = default_registry.merge(design_tools)
+    return Orchestrator(
+        tool_registry=merged,
+        system_prompt=AGENT_SYSTEM_PROMPT,
+        model="kimi-k2.5",
+    )
 
 
 def print_banner() -> None:
@@ -46,37 +58,34 @@ def print_banner() -> None:
     console.print(Panel(banner, border_style="cyan"))
 
 
-def process_and_display_unified(user_input: str, sf_session: SchemaForgeSession) -> None:
-    """统一工作台处理并显示结果"""
-    console.print(
-        f"\n[bold yellow]处理中 (统一工作台)...[/bold yellow] 输入: {user_input}\n"
-    )
-
-    result = sf_session.start(user_input)
-
-    if result.status == "needs_asset":
-        console.print(
-            f"[bold yellow][MISSING][/bold yellow] {result.message}"
-        )
-        console.print(
-            f"  缺失器件: [bold]{result.missing_part_number}[/bold]"
-        )
-        console.print("  请使用 GUI 模式上传 datasheet 补录器件。")
-        return
-
-    if result.status != "generated" or result.bundle is None:
+def _display_result(result: SystemDesignResult) -> None:
+    """显示设计结果到控制台。"""
+    if result.bundle is None:
         console.print(f"[bold red][ERROR][/bold red] {result.message}")
         return
 
     bundle = result.bundle
+    ir = bundle.design_ir
+    module_labels = []
+    for instance in ir.module_instances.values():
+        if instance.device is not None:
+            module_labels.append(instance.device.part_number)
+        else:
+            module_labels.append(instance.module_id)
+    title_prefix = "[bold green][PASS][/bold green]" if result.status == "generated" else "[bold yellow][PARTIAL][/bold yellow]"
     console.print(
         Panel(
-            f"[bold green][PASS] 设计完成[/bold green]\n"
-            f"[bold]{bundle.device.part_number}[/bold] — {bundle.device.description}",
-            title="设计概要 (统一工作台)",
-            border_style="green",
+            f"{title_prefix} {result.message}\n"
+            f"模块: [bold]{', '.join(module_labels)}[/bold]",
+            title="设计概要",
+            border_style="green" if result.status == "generated" else "yellow",
         )
     )
+
+    if result.missing_modules:
+        console.print(
+            f"[bold yellow]缺失器件模块:[/bold yellow] {', '.join(result.missing_modules)}"
+        )
 
     if bundle.svg_path:
         console.print(f"\n[bold cyan][SVG][/bold cyan] {bundle.svg_path}")
@@ -89,67 +98,56 @@ def process_and_display_unified(user_input: str, sf_session: SchemaForgeSession)
         console.print("\n[bold cyan][SPICE] 网表:[/bold cyan]")
         console.print(Panel(bundle.spice_text, title="SPICE", border_style="dim"))
 
-    if bundle.rationale:
-        console.print("\n[bold cyan][设计依据][/bold cyan]")
-        for r in bundle.rationale:
-            console.print(f"  • {r}")
+    if ir.warnings:
+        console.print("\n[bold yellow][Warnings][/bold yellow]")
+        for warning in ir.warnings:
+            console.print(f"  • {warning}")
 
     console.print()
 
 
-def process_and_display_orchestrated(user_input: str, sf_session: SchemaForgeSession) -> None:
-    """AI 编排模式处理并显示结果"""
+def process_via_agent(
+    user_input: str,
+    session: SystemDesignSession,
+    orch: object,
+) -> None:
+    """通过 AI agent 处理设计请求。"""
     console.print(
-        f"\n[bold yellow]AI 编排中...[/bold yellow] 输入: {user_input}\n"
+        f"\n[bold yellow]AI 正在分析需求并调用工具…[/bold yellow] 输入: {user_input}\n"
     )
 
-    step = sf_session.run_orchestrated(user_input)
+    step = orch.run_turn(user_input)  # type: ignore[union-attr]
 
-    action_name = step.action.value if step.action is not None else "unknown"
+    # AI 的回复文本
+    if step.message:
+        console.print(f"[bold]AI:[/bold] {step.message}\n")
 
-    if action_name == "finalize":
-        console.print(
-            Panel(
-                f"[bold green][PASS] AI 编排完成[/bold green]\n{step.message}",
-                title="AI 编排结果",
-                border_style="green",
-            )
+    # 从 session 获取设计结果并展示
+    if session.bundle:
+        result = SystemDesignResult(
+            status="generated",
+            message=step.message or "AI 设计完成",
+            bundle=session.bundle,
         )
-        bundle = sf_session.bundle
-        if bundle is not None:
-            if bundle.svg_path:
-                console.print(f"\n[bold cyan][SVG][/bold cyan] {bundle.svg_path}")
-            if bundle.bom_text:
-                console.print("\n[bold cyan][BOM] 清单:[/bold cyan]")
-                console.print(Markdown(bundle.bom_text))
-
-    elif action_name == "ask_user":
-        console.print(f"[bold yellow][AI 提问][/bold yellow] {step.message}")
-        questions = getattr(step, "questions", [])
-        for q in questions:
-            q_text = getattr(q, "text", str(q))
-            console.print(f"  ? {q_text}")
-
-    elif action_name == "fail":
-        console.print(f"[bold red][FAIL][/bold red] {step.message}")
-
     else:
-        console.print(f"[dim][AI {action_name}] {step.message}[/dim]")
+        result = SystemDesignResult(
+            status="partial" if step.message else "failed",
+            message=step.message or "AI 未能完成设计",
+            bundle=session.bundle,
+        )
+    _display_result(result)
 
-    console.print()
 
-
-def run_interactive_unified(sf_session: SchemaForgeSession) -> None:
-    """统一工作台交互模式，支持多轮修改。"""
+def run_interactive(session: SystemDesignSession, orch: object) -> None:
+    """AI agent 交互模式，支持多轮对话。"""
     console.print(
-        "[bold]进入统一工作台交互模式[/bold] "
-        "(输入 'quit' 退出, 首条消息发起设计, 后续消息修改设计)\n"
+        "[bold]进入 AI agent 交互模式[/bold] "
+        "(输入 'quit' 退出, AI 会自动调用工具完成设计)\n"
     )
 
-    has_design = False
     while True:
         try:
-            prompt = "[bold cyan]修改指令 > [/bold cyan]" if has_design else "[bold cyan]电路需求 > [/bold cyan]"
+            prompt = "[bold cyan]> [/bold cyan]"
             user_input = console.input(prompt).strip()
         except (KeyboardInterrupt, EOFError):
             console.print("\n[dim]再见![/dim]")
@@ -161,74 +159,40 @@ def run_interactive_unified(sf_session: SchemaForgeSession) -> None:
             console.print("[dim]再见![/dim]")
             break
 
-        if has_design:
-            # 多轮修改
-            console.print(f"\n[bold yellow]修改中...[/bold yellow] {user_input}\n")
-            result = sf_session.revise(user_input)
-            if result.status == "generated" and result.bundle is not None:
-                bundle = result.bundle
-                console.print(f"[bold green][PASS][/bold green] {result.message}")
-                if bundle.svg_path:
-                    console.print(f"  [cyan]SVG:[/cyan] {bundle.svg_path}")
-            else:
-                console.print(f"[bold red][ERROR][/bold red] {result.message}")
-            console.print()
-        else:
-            # 首次设计
-            process_and_display_unified(user_input, sf_session)
-            has_design = sf_session.bundle is not None
-
-
-def run_interactive_orchestrated(sf_session: SchemaForgeSession) -> None:
-    """AI 编排交互模式。"""
-    console.print(
-        "[bold]进入 AI 编排交互模式[/bold] "
-        "(输入 'quit' 退出, AI 自动执行工具循环)\n"
-    )
-
-    while True:
-        try:
-            user_input = console.input(
-                "[bold cyan]对话 > [/bold cyan]"
-            ).strip()
-        except (KeyboardInterrupt, EOFError):
-            console.print("\n[dim]再见![/dim]")
-            break
-
-        if not user_input:
-            continue
-        if user_input.lower() in ("quit", "exit", "q"):
-            console.print("[dim]再见![/dim]")
-            break
-
-        process_and_display_orchestrated(user_input, sf_session)
+        process_via_agent(user_input, session, orch)
 
 
 def main() -> None:
     """主入口"""
     parser = argparse.ArgumentParser(description="SchemaForge -- AI驱动的原理图生成器")
-    parser.add_argument("--orchestrated", action="store_true", help="使用AI编排模式")
+    parser.add_argument(
+        "--visual-review",
+        action="store_true",
+        help="在系统主链生成后追加 visual review 布局审稿（默认关闭）",
+    )
     parser.add_argument("-i", "--input", type=str, default="", help="直接传入电路需求(单次模式)")
     parser.add_argument("--store", type=str, default="", help="器件库路径(默认: schemaforge/store)")
     args = parser.parse_args()
 
     print_banner()
     store_dir = Path(args.store) if args.store else Path("schemaforge/store")
-    sf_session = SchemaForgeSession(store_dir=store_dir, skip_ai_parse=False)
 
-    chain_label = "AI 编排" if args.orchestrated else "统一工作台"
-    console.print(f"[dim]后端: {chain_label}[/dim]\n")
+    if args.visual_review:
+        console.print("[dim]visual review: 已启用[/dim]\n")
+
+    console.print("[dim]后端: AI agent (kimi-k2.5 function calling)[/dim]\n")
+
+    session = SystemDesignSession(
+        store_dir=store_dir,
+        skip_ai_parse=False,
+        enable_visual_review=args.visual_review,
+    )
+    orch = _build_orchestrator(session)
 
     if args.input:
-        if args.orchestrated:
-            process_and_display_orchestrated(args.input, sf_session)
-        else:
-            process_and_display_unified(args.input, sf_session)
+        process_via_agent(args.input, session, orch)
     else:
-        if args.orchestrated:
-            run_interactive_orchestrated(sf_session)
-        else:
-            run_interactive_unified(sf_session)
+        run_interactive(session, orch)
 
 
 if __name__ == "__main__":

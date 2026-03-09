@@ -28,11 +28,12 @@ python gui.py
 # CLI 模式
 python main.py                                    # 交互模式（支持多轮修改）
 python main.py -i "用 TPS5430 搭 12V转3.3V DCDC"  # 单次模式
-python main.py --orchestrated                      # AI 编排模式
+python main.py --visual-review -i "20V 输入，用 TPS54202 降压到 5V"  # 系统主链 + visual review
+python main.py --orchestrated                      # 兼容 AI 编排模式（旧路径）
 
 # 质量门
-python -m pytest -q                                     # 1186 passed
-python -m ruff check schemaforge gui.py tests main.py   # All checks passed
+python -m pytest -q
+python -m ruff check schemaforge gui.py tests main.py
 ```
 
 ## 工作流
@@ -58,7 +59,22 @@ python -m ruff check schemaforge gui.py tests main.py   # All checks passed
 
 ## 当前状态
 
-**1186 tests passed** | **ruff 全绿** | AI-Only 架构（无 Mock/Demo）
+本仓库当前更接近“系统级原理图原型”而非“最终完成品”。
+
+本轮已重新验证：`python -m pytest -q` = `1550 passed`，`python -m ruff check schemaforge gui.py tests main.py` 全绿。
+
+- CLI 与 GUI 默认后端已收口到 `SystemDesignSession`
+- `main.py --orchestrated` 仍是旧路径兼容模式，不是推荐主链
+- 文本金路径 `Buck -> LDO -> MCU -> GPIO 驱动 LED` 已在本轮实测打通
+- 系统级文字 revise 已能真实处理一组高价值修改：替换 buck 料号、改 LED 颜色、改唯一 `v_out`
+- 系统级最小增删模块 revise 已能真实工作：新增电源 LED、删除唯一 LED、删除显式 `led2`
+- 系统级 GPIO-LED revise 已能真实工作：新增 `PA2` 控制 LED、把 `led1` 改到新 GPIO
+- 系统级最小下游电源模块追加 revise 已能真实工作：可把新的 `AMS1117-3.3` 自动接到现有 `5V` 电源链
+- 系统级显式模块定向 revise 已能真实工作：可精确修改 `led2`、`ldo2` 等显式目标模块
+- `render_system_svg()` 现在会产出真实 `render_metadata`，并可消费布局状态
+- 视觉审稿在 `SystemDesignSession` 主流程中默认关闭，但 CLI/GUI 现在都可显式启用
+- GUI 图片粘贴已接入 revise 主链：图片会先经 vision 提取修订文本，再落到同一个 `SystemDesignSession.revise()` 管线
+- 本轮重新验证包含全量 `pytest -q`
 
 ### 支持的电路类别（12 种）
 
@@ -66,13 +82,15 @@ Buck, LDO, Boost, Flyback, SEPIC, Charge Pump, OpAmp, MCU, Sensor, Connector, MO
 
 ### 器件库
 
-7 个器件（含 1 个通过 PDF 导入自动生成）：
+当前仓库内可见 9 个器件文件：
 
 | 型号 | 类型 | 来源 |
 |------|------|------|
 | AMS1117-3.3 | LDO | 预置 |
 | TPS5430 | Buck | 预置 |
 | TPS54202 | Buck | **PDF 导入** |
+| TPS61023 | Boost | 预置 |
+| STM32F103C8T6 | MCU | PDF/结构化导入 |
 | LED_INDICATOR | LED | 预置 |
 | VOLTAGE_DIVIDER | 分压器 | 预置 |
 | RC_LOWPASS | RC 滤波器 | 预置 |
@@ -104,7 +122,14 @@ schemaforge/
 ├── schematic/       # 渲染器 (TopologyRenderer + 通用布局)
 ├── store/           # 器件数据 + 参考设计
 └── workflows/       # 工作流编排
-    └── schemaforge_session.py  # 统一工作台（唯一后端）
+    └── schemaforge_session.py  # 旧单器件工作流（兼容层）
+
+schemaforge/system/          # 当前系统级主链
+├── session.py              # SystemDesignSession（CLI/GUI 默认后端）
+├── resolver.py             # 器件/端口解析
+├── connection_rules.py     # 模块间连接规则
+├── synthesis.py            # 参数与外围综合
+└── rendering.py            # 系统级 SVG + render_metadata
 
 tests/                     # 43 个测试文件, 1186 个测试用例
 main.py                    # CLI 入口
@@ -116,8 +141,22 @@ gui.py                     # GUI 入口
 1. **AI 只做理解，不做执行** — AI 提取结构化字段，本地代码做所有计算/渲染/约束
 2. **器件库驱动** — 所有器件数据从库中读取，不硬编码；任意器件可通过 PDF 导入
 3. **确定性输出** — 相同输入 + 相同器件库 = 相同原理图（AI 不参与计算/渲染）
-4. **所有入口共用同一后端** — CLI / GUI / Agent 用同一套 SchemaForgeSession
+4. **默认入口共用同一后端** — CLI / GUI 默认走 `SystemDesignSession`
 5. **新增功能必须同时回答"如何审查"** — 不能只实现生成，还要验证、审查、解释
+
+## 已验证样例
+
+本轮已直接验证以下输入可以生成单张 SVG、全局 BOM 与共享网络 SPICE：
+
+```text
+20V 输入，用 TPS54202 降压到 5V，再用 AMS1117 降到 3.3V，给 STM32F103C8T6 供电，并且用 MCU 的 PA1 控制一颗 LED
+```
+
+对应真实结果包含：
+
+- `TPS54202 -> AMS1117-3.3 -> STM32F103C8T6` 电源链
+- `STM32F103C8T6.PA1 -> LED_INDICATOR.ANODE`
+- `NET_5V`、`NET_3.3V`、`NET_PA1_led1` 三类共享网络
 
 ## AI 配置
 

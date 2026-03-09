@@ -156,6 +156,39 @@ class TestResolvePartCandidates:
         assert len(result) == 1
         assert result[0].part_number == "AMS1117-3.3"
 
+    def test_explicit_part_does_not_fallback_to_category(
+        self, real_store: ComponentStore,
+    ) -> None:
+        """显式料号未命中时，不允许再回退到同类近似器件。"""
+        intent = ModuleIntent(
+            intent_id="buck1",
+            role="降压",
+            part_number_hint="TPS5450",
+            category_hint="buck",
+            electrical_targets={"v_in": "20", "v_out": "3.3"},
+        )
+
+        result = resolve_part_candidates(real_store, intent)
+
+        assert result == []
+
+    def test_explicit_family_variant_can_resolve_unique_match(
+        self, real_store: ComponentStore,
+    ) -> None:
+        """显式家族名只在唯一可证明变体时允许落到具体型号。"""
+        intent = ModuleIntent(
+            intent_id="ldo1",
+            role="稳压",
+            part_number_hint="AMS1117",
+            category_hint="ldo",
+            electrical_targets={"v_out": "3.3"},
+        )
+
+        result = resolve_part_candidates(real_store, intent)
+
+        assert len(result) == 1
+        assert result[0].part_number == "AMS1117-3.3"
+
     def test_category_search(self, real_store: ComponentStore) -> None:
         """按类别搜索 buck 器件。"""
         intent = ModuleIntent(
@@ -188,7 +221,7 @@ class TestGetDevicePorts:
     """T035: 器件引脚 → 语义端口映射。"""
 
     def test_tps5430_ports(self, real_store: ComponentStore) -> None:
-        """TPS5430 的引脚映射正确：VIN, EN, BST, SW, FB, GND。"""
+        """TPS5430 的引脚映射正确，且暴露 topology 衍生的 VOUT。"""
         device = resolve_exact_part(real_store, "TPS5430")
         assert device is not None
         ports = get_device_ports(device)
@@ -212,6 +245,9 @@ class TestGetDevicePorts:
 
         assert "EN" in ports
         assert ports["EN"].port_role == "enable"
+
+        assert "VOUT" in ports
+        assert ports["VOUT"].port_role == "power_out"
 
     def test_ams1117_ports(self, real_store: ComponentStore) -> None:
         """AMS1117-3.3 的引脚映射：VIN(power_in), VOUT(power_out), GND(ground)。"""
@@ -259,6 +295,16 @@ class TestGetDevicePorts:
         device = DeviceModel(part_number="NO_SYMBOL", symbol=None)
         assert get_device_ports(device) == {}
 
+    def test_led_virtual_ports_from_topology(self, real_store: ComponentStore) -> None:
+        device = resolve_exact_part(real_store, "LED_INDICATOR")
+        assert device is not None
+        ports = get_device_ports(device)
+
+        assert "ANODE" in ports
+        assert ports["ANODE"].port_role == "other"
+        assert "GND" in ports
+        assert ports["GND"].port_role == "ground"
+
 
 # ============================================================
 # T036: get_power_ports
@@ -269,12 +315,13 @@ class TestGetPowerPorts:
     """T036: 电源端口提取。"""
 
     def test_tps5430_power(self, real_store: ComponentStore) -> None:
-        """TPS5430 电源端口仅含 VIN 和 GND（VOUT 通过外围电感，非直接 pin）。"""
+        """TPS5430 电源端口含 VIN / VOUT / GND。"""
         device = resolve_exact_part(real_store, "TPS5430")
         assert device is not None
         power = get_power_ports(device)
 
         assert "VIN" in power
+        assert "VOUT" in power
         assert "GND" in power
         # SW 不属于 power_in/power_out/ground，不在 power_ports 里
         assert "SW" not in power

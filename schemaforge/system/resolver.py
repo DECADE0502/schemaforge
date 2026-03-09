@@ -85,6 +85,11 @@ _UART_PATTERN = re.compile(
     r"^(U[S]?ART\d*_)?(TX|RX|RTS|CTS)$", re.IGNORECASE,
 )
 
+_TOPOLOGY_PORT_NAME_ALIASES: dict[str, str] = {
+    "LED_ANODE": "ANODE",
+    "LED_CATHODE": "CATHODE",
+}
+
 
 # ============================================================
 # T032: 精确型号查找
@@ -152,6 +157,60 @@ def resolve_alias_part(
     return None
 
 
+def _normalize_spec_text(value: object) -> str:
+    text = str(value).strip().lower()
+    return text.removesuffix("v").removesuffix("a")
+
+
+def resolve_family_variant_part(
+    store: ComponentStore,
+    intent: ModuleIntent,
+) -> DeviceModel | None:
+    """按料号家族前缀解析唯一可证明的变体。
+
+    只允许：
+    - 库中存在同一 family 前缀的器件；且
+    - 候选唯一，或被 electrical_targets 唯一消歧。
+
+    不允许跨 family 或类别近似代换。
+    """
+    family = intent.part_number_hint.strip().upper()
+    if not family:
+        return None
+
+    candidates: list[DeviceModel] = []
+    for part_number in store.list_devices():
+        device = store.get_device(part_number)
+        if device is None:
+            continue
+        part_upper = device.part_number.strip().upper()
+        if part_upper.startswith(family + "-") or part_upper.startswith(family + "_"):
+            candidates.append(device)
+
+    if not candidates:
+        return None
+    if len(candidates) == 1:
+        return candidates[0]
+
+    filtered = candidates
+    for key, target_value in intent.electrical_targets.items():
+        normalized_target = _normalize_spec_text(target_value)
+        exact_matches = [
+            device
+            for device in filtered
+            if key in device.specs
+            and _normalize_spec_text(device.specs.get(key, "")) == normalized_target
+        ]
+        if len(exact_matches) == 1:
+            return exact_matches[0]
+        if exact_matches:
+            filtered = exact_matches
+
+    if len(filtered) == 1:
+        return filtered[0]
+    return None
+
+
 # ============================================================
 # T034: 候选器件搜索
 # ============================================================
@@ -185,6 +244,14 @@ def resolve_part_candidates(
         alias_hit = resolve_alias_part(store, intent.part_number_hint)
         if alias_hit is not None:
             return [alias_hit]
+
+        family_variant = resolve_family_variant_part(store, intent)
+        if family_variant is not None:
+            return [family_variant]
+
+        # 用户显式给了料号但库里没有精确/别名命中时，必须停止，
+        # 不能再按 category_hint 模糊回退到“相近器件”。
+        return []
 
     # 按类别搜索
     if not intent.category_hint:
@@ -292,21 +359,38 @@ def get_device_ports(device: DeviceModel) -> dict[str, PortRef]:
     Returns:
         {pin_name: PortRef} 字典
     """
-    if device.symbol is None:
-        return {}
-
     ports: dict[str, PortRef] = {}
 
-    for pin in device.symbol.pins:
-        port_role, net_class = _classify_pin(pin.name)
+    if device.symbol is not None:
+        for pin in device.symbol.pins:
+            port_role, net_class = _classify_pin(pin.name)
 
-        ports[pin.name] = PortRef(
-            module_id="",  # 实例化时填充
-            port_role=port_role,
-            pin_name=pin.name,
-            pin_number=pin.pin_number,
-            net_class=net_class,
-        )
+            ports[pin.name] = PortRef(
+                module_id="",  # 实例化时填充
+                port_role=port_role,
+                pin_name=pin.name,
+                pin_number=pin.pin_number,
+                net_class=net_class,
+            )
+
+    if device.topology is not None:
+        for index, connection in enumerate(device.topology.connections, start=1):
+            if connection.device_pin:
+                continue
+            raw_name = (connection.net_name or "").strip().upper()
+            if not raw_name:
+                continue
+            pin_name = _TOPOLOGY_PORT_NAME_ALIASES.get(raw_name, raw_name)
+            if pin_name in ports:
+                continue
+            port_role, net_class = _classify_pin(pin_name)
+            ports[pin_name] = PortRef(
+                module_id="",
+                port_role=port_role,
+                pin_name=pin_name,
+                pin_number=f"TOPO{index}",
+                net_class=net_class,
+            )
 
     return ports
 

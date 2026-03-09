@@ -712,7 +712,7 @@ class GridCanvas(QGraphicsView):
             "input_cap": "C", "output_cap": "C", "boot_cap": "C",
             "decoupling_cap": "C", "bulk_cap": "C",
             "inductor": "L",
-            "fb_upper": "R", "fb_lower": "R", "led_resistor": "R",
+            "fb_upper": "R", "fb_lower": "R", "led_limit": "R",
             "catch_diode": "D", "diode": "D",
         }
 

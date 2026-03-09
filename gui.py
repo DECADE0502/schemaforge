@@ -10,11 +10,7 @@ PySide6 桌面应用，VS Code 暗色主题。
 
 from __future__ import annotations
 
-import os
 import sys
-
-# 确保 GUI 模式下始终使用真实 AI（清除测试环境可能残留的跳过标记）
-os.environ.pop("SCHEMAFORGE_SKIP_AI_PARSE", None)
 
 from PySide6.QtWidgets import QApplication
 

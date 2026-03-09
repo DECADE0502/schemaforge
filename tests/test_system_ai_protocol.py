@@ -374,6 +374,27 @@ class TestRegexFallbackParse:
         assert "TPS54202" in part_numbers
         assert "AMS1117" in part_numbers
 
+    def test_builds_system_gold_path_from_long_sentence(self):
+        req = regex_fallback_parse(
+            "20V 输入，用 TPS54202 降压到 5V，再用 AMS1117 降到 3.3V，"
+            "给 STM32F103C8T6 供电，并且用 MCU 的 PA1 控制一颗 LED"
+        )
+
+        categories = [m.category_hint for m in req.modules]
+        assert categories == ["buck", "ldo", "mcu", "led"]
+
+        power_conns = [
+            c for c in req.connections if c.signal_type == SignalType.POWER_SUPPLY
+        ]
+        gpio_conns = [
+            c for c in req.connections if c.signal_type == SignalType.GPIO
+        ]
+
+        assert len(power_conns) == 2
+        assert len(gpio_conns) == 1
+        assert gpio_conns[0].src_port_hint == "PA1"
+        assert gpio_conns[0].dst_port_hint == "ANODE"
+
     def test_extracts_voltage_chain(self):
         req = regex_fallback_parse("20V到5V")
         assert req.global_v_in == "20"
@@ -408,10 +429,15 @@ class TestRegexFallbackParse:
 
 
 class TestParseSystemIntent:
-    def test_full_flow_with_skip_env(self, monkeypatch):
-        """SCHEMAFORGE_SKIP_AI_PARSE=1 时走正则 fallback。"""
-        monkeypatch.setenv("SCHEMAFORGE_SKIP_AI_PARSE", "1")
-        req = parse_system_intent("用TPS54202把20V降压到5V")
+    def test_full_flow_with_regex_fallback(self, monkeypatch):
+        """regex_fallback_parse 直接调用时应返回有效请求。
+
+        注：skip_ai_parse 逻辑已从 parse_system_intent 中移除，
+        由 SystemDesignSession 在调用前决定使用哪个解析器。
+        """
+        from schemaforge.system.ai_protocol import regex_fallback_parse
+
+        req = regex_fallback_parse("用TPS54202把20V降压到5V")
         assert isinstance(req, SystemDesignRequest)
         assert req.raw_text == "用TPS54202把20V降压到5V"
         assert len(req.modules) > 0
