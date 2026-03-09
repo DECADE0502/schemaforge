@@ -1212,7 +1212,7 @@ def _layout_ldo(
     - IC 底部: GND
     - 外围: C_in (VIN rail → GND), C_out (VOUT → GND)
     """
-    IC_PIN_STUB = 25
+    IC_PIN_STUB = 40
 
     # --- IC 矩形 ---
     ic_cx = 350 + idx * 500
@@ -1359,21 +1359,22 @@ def _build_svg_template(ir: Any) -> dict[str, Any]:
     sw_rail_y = 320       # SW / inductor / VOUT 水平轨道 Y
 
     # ---- 标准元件尺寸（body 高/宽 + pin 引线长度）----
-    # 竖直电容: body 10px gap, pin引线各 20px
+    # lead 要足够长，让走线连接点远离器件本体，拐弯空间充裕
+    # 竖直电容: body 10px gap, pin引线各 35px
     CAP_BODY_H = 10       # 两极板间距
-    CAP_LEAD = 20         # 引线长度 (body 到 pin 末端)
-    CAP_HALF = CAP_BODY_H // 2 + CAP_LEAD  # center 到 pin 末端的距离 = 25
-    # 竖直电阻: body 高 40px, pin引线各 15px
+    CAP_LEAD = 35         # 引线长度 (body 到 pin 末端)
+    CAP_HALF = CAP_BODY_H // 2 + CAP_LEAD  # center 到 pin 末端 = 40
+    # 竖直电阻: body 高 40px, pin引线各 30px
     RES_BODY_H = 40
-    RES_LEAD = 15
-    RES_HALF = RES_BODY_H // 2 + RES_LEAD  # 35
-    # 竖直二极管: body 高 35px, pin引线各 15px
+    RES_LEAD = 30
+    RES_HALF = RES_BODY_H // 2 + RES_LEAD  # 50
+    # 竖直二极管: body 高 35px, pin引线各 30px
     DIO_BODY_H = 35
-    DIO_LEAD = 15
-    DIO_HALF = DIO_BODY_H // 2 + DIO_LEAD  # ~33
-    # 水平电感: body 宽 130px, pin引线各 10px
+    DIO_LEAD = 30
+    DIO_HALF = DIO_BODY_H // 2 + DIO_LEAD  # ~48
+    # 水平电感: body 宽 130px, pin引线各 20px
     IND_BODY_W = 130
-    IND_LEAD = 10
+    IND_LEAD = 20
 
     components: list[dict[str, Any]] = []
     wires: list[dict[str, Any]] = []
@@ -1477,7 +1478,7 @@ def _build_svg_template(ir: Any) -> dict[str, Any]:
         ic_bottom = ic_cy + ic_h // 2  # 430
 
         # --- IC 引脚末端位置 (pin stub 外端 = 走线连接点) ---
-        IC_PIN_STUB = 25  # IC 引脚短线长度
+        IC_PIN_STUB = 40  # IC 引脚短线长度（足够长，走线连接点远离 IC 本体）
         pin_positions: dict[str, dict[str, Any]] = {
             # 左侧（输入侧）: VIN 在上, EN 在下
             # pin endpoint 在 IC 矩形左边 - stub 长度
