@@ -1207,53 +1207,64 @@ def build_atomic_design_tools(session: SystemDesignSession) -> ToolRegistry:
 def _build_svg_template(ir: Any) -> dict[str, Any]:
     """根据 IR 生成严格的 SVG 坐标模板。
 
-    核心思想：把画布分成网格区域，每个元件有固定的坐标和朝向，
-    AI 只需要按坐标画标准符号 + 走直线连接即可。
+    布局策略（信号从左到右流动）：
+    - IC 左侧引脚: VIN（上）、EN（下）— 输入侧
+    - IC 右侧引脚: BOOT（上）、SW（下）— 开关/输出侧
+    - IC 底部引脚: GND（左）、FB（右）
+
+    外围元件布局：
+    - C_in: IC 左边，VIN rail → GND
+    - L: SW 引脚右边 → VOUT 节点（水平）
+    - D: L 左端（SW 节点）→ GND（竖直）
+    - C_out: VOUT 节点 → GND
+    - C_bst: BOOT → SW 节点（竖直，在 IC 右上方）
+    - R1/R2: VOUT → FB 分压（竖直，在 IC 右下方）
     """
     canvas_w, canvas_h = 1200, 800
-    # 主电源轨道 Y 坐标
-    rail_y = 200
-    # GND 轨道 Y 坐标
-    gnd_y = 550
-    # 元件区域
+    rail_y = 150          # VIN 水平轨道 Y
+    gnd_y = 650           # GND 水平轨道 Y
+    sw_rail_y = 300       # SW / inductor / VOUT 水平轨道 Y
+
     components: list[dict[str, Any]] = []
     wires: list[dict[str, Any]] = []
-    pins: list[dict[str, Any]] = []
+    ic_data: list[dict[str, Any]] = []
+    cout_x = canvas_w - 200  # 默认值，power_modules 循环中会覆盖
 
-    # 收集所有模块
     modules = list(ir.module_instances.items())
     power_modules = [
         (mid, m) for mid, m in modules
         if getattr(m, "resolved_category", "") in ("buck", "ldo", "boost")
     ]
-    # ---- 布局电源模块 ----
+
     for idx, (mid, inst) in enumerate(power_modules):
         device = getattr(inst, "device", None)
         pn = getattr(device, "part_number", mid) if device else mid
         ext_comps = getattr(inst, "external_components", [])
 
-        # IC 中心 X 坐标：每个电源模块占 400px 宽度
-        ic_cx = 400 + idx * 400
-        ic_cy = rail_y + 100  # IC 中心
-        ic_w, ic_h = 160, 200
+        # --- IC 矩形 ---
+        # 每个电源模块占 500px 水平空间
+        ic_cx = 350 + idx * 500
+        ic_cy = 340                    # IC 中心 Y（在 rail_y 和 gnd_y 之间）
+        ic_w, ic_h = 140, 180
+        ic_left = ic_cx - ic_w // 2    # 280
+        ic_top = ic_cy - ic_h // 2     # 250
+        ic_right = ic_cx + ic_w // 2   # 420
+        ic_bottom = ic_cy + ic_h // 2  # 430
 
-        # IC 矩形
-        ic_left = ic_cx - ic_w // 2
-        ic_top = ic_cy - ic_h // 2
-        ic_right = ic_cx + ic_w // 2
+        # --- 引脚位置 ---
+        # 左侧（输入侧）: VIN 在上, EN 在下
+        pin_positions: dict[str, dict[str, Any]] = {
+            "VIN":  {"x": ic_left,      "y": ic_top + 45,   "side": "left"},
+            "EN":   {"x": ic_left,      "y": ic_top + 135,  "side": "left"},
+            # 右侧（输出侧）: BOOT 在上, SW 在下
+            "BOOT": {"x": ic_right,     "y": ic_top + 45,   "side": "right"},
+            "SW":   {"x": ic_right,     "y": ic_top + 135,  "side": "right"},
+            # 底部: GND 左, FB 右
+            "GND":  {"x": ic_cx - 30,   "y": ic_bottom,     "side": "bottom"},
+            "FB":   {"x": ic_cx + 30,   "y": ic_bottom,     "side": "bottom"},
+        }
 
-        # 定义引脚位置（左侧引脚从上到下，右侧引脚从上到下）
-        left_pins = ["VIN", "SW", "GND"]
-        right_pins = ["BOOT", "EN", "FB"]
-        pin_positions: dict[str, dict[str, int]] = {}
-        for i, p in enumerate(left_pins):
-            py = ic_top + 40 + i * 60
-            pin_positions[p] = {"x": ic_left, "y": py, "side": "left"}
-        for i, p in enumerate(right_pins):
-            py = ic_top + 40 + i * 60
-            pin_positions[p] = {"x": ic_right, "y": py, "side": "right"}
-
-        pins.append({
+        ic_data.append({
             "module_id": mid,
             "ic_rect": {"x": ic_left, "y": ic_top, "w": ic_w, "h": ic_h},
             "label": pn,
@@ -1261,199 +1272,235 @@ def _build_svg_template(ir: Any) -> dict[str, Any]:
             "pins": pin_positions,
         })
 
-        # ---- 外围元件坐标 ----
         vin_pin = pin_positions["VIN"]
         sw_pin = pin_positions["SW"]
         gnd_pin = pin_positions["GND"]
         boot_pin = pin_positions["BOOT"]
+        en_pin = pin_positions["EN"]
         fb_pin = pin_positions["FB"]
 
-        # 输入电容 C_in: VIN 引脚左边，竖直放置
-        cin_x = vin_pin["x"] - 80
+        # ============================================================
+        # 关键 X 坐标
+        # ============================================================
+        cin_x = ic_left - 100          # 输入电容
+        sw_node_x = ic_right + 40      # SW 节点（电感/二极管/BST 交汇点）
+        l_right_x = sw_node_x + 120    # 电感右端
+        out_x = l_right_x + 60         # VOUT 节点
+        cout_x = out_x + 70            # 输出电容
+        fb_x = out_x                   # FB 分压电阻 X（与 VOUT 同列）
+
+        # ============================================================
+        # 1. 输入电容 C_in: VIN rail → GND
+        # ============================================================
         components.append({
-            "role": "input_cap",
-            "ref": "C1",
-            "type": "capacitor",
+            "role": "input_cap", "ref": "C1", "type": "capacitor",
             "orientation": "vertical",
-            "x": cin_x, "y": vin_pin["y"],
-            "value": _find_ext_value(ext_comps, "input_cap", "10μF"),
-            "connect_top": {"x": cin_x, "y": vin_pin["y"]},
+            "x": cin_x, "y_top": rail_y, "y_bottom": rail_y + 60,
+            "value": _find_ext_value(ext_comps, "input_cap", "10uF"),
+            "connect_top": {"x": cin_x, "y": rail_y},
             "connect_bottom": {"x": cin_x, "y": gnd_y},
         })
-        # 水平线: C_in top → VIN 引脚
+        # VIN rail 水平线: C_in top → VIN 引脚
         wires.append({
-            "from": {"x": cin_x, "y": vin_pin["y"]},
+            "from": {"x": cin_x, "y": rail_y},
+            "to": {"x": ic_left, "y": rail_y},
+            "label": "VIN rail", "weight": 3,
+        })
+        # VIN rail 下拐到 VIN 引脚
+        wires.append({
+            "from": {"x": ic_left - 30, "y": rail_y},
+            "to": {"x": ic_left - 30, "y": vin_pin["y"]},
+            "label": "VIN drop",
+        })
+        wires.append({
+            "from": {"x": ic_left - 30, "y": vin_pin["y"]},
             "to": {"x": vin_pin["x"], "y": vin_pin["y"]},
-            "label": "VIN rail",
-            "weight": 3,
+            "label": "VIN→IC",
         })
 
-        # 电感 L: SW 引脚左边 → 输出节点
-        l_x1 = sw_pin["x"] - 120
-        l_x2 = sw_pin["x"] - 30
-        out_x = ic_right + 120  # 输出节点 X
-        components.append({
-            "role": "inductor",
-            "ref": "L1",
-            "type": "inductor",
-            "orientation": "horizontal",
-            "x1": l_x1, "y": sw_pin["y"],
-            "x2": l_x2,
-            "value": _find_ext_value(ext_comps, "inductor", "10μH"),
-        })
-        # SW 引脚 → 电感左端
+        # ============================================================
+        # 2. SW 引脚 → SW 节点（水平短线向右）
+        # ============================================================
         wires.append({
             "from": {"x": sw_pin["x"], "y": sw_pin["y"]},
-            "to": {"x": l_x1, "y": sw_pin["y"]},
-            "label": "SW→L",
+            "to": {"x": sw_node_x, "y": sw_pin["y"]},
+            "label": "SW→node",
         })
-        # 电感右端 → 输出节点
+        # SW 节点上拉到 sw_rail_y（方便电感水平走线）
         wires.append({
-            "from": {"x": l_x2, "y": sw_pin["y"]},
-            "to": {"x": out_x, "y": sw_pin["y"]},
-            "label": "L→VOUT",
-            "weight": 3,
+            "from": {"x": sw_node_x, "y": sw_pin["y"]},
+            "to": {"x": sw_node_x, "y": sw_rail_y},
+            "label": "SW node vertical",
         })
 
-        # 续流二极管 D: SW 节点 → GND，竖直方向
-        d_x = l_x1
-        d_top = sw_pin["y"] + 20
-        d_bottom = d_top + 60
+        # ============================================================
+        # 3. 电感 L: SW 节点 → VOUT（水平，在 sw_rail_y 高度）
+        # ============================================================
         components.append({
-            "role": "diode",
-            "ref": "D1",
-            "type": "diode",
+            "role": "inductor", "ref": "L1", "type": "inductor",
+            "orientation": "horizontal",
+            "x1": sw_node_x, "y": sw_rail_y, "x2": l_right_x,
+            "value": _find_ext_value(ext_comps, "inductor", "10uH"),
+        })
+        # 电感右端 → VOUT 节点
+        wires.append({
+            "from": {"x": l_right_x, "y": sw_rail_y},
+            "to": {"x": out_x, "y": sw_rail_y},
+            "label": "L→VOUT", "weight": 3,
+        })
+
+        # ============================================================
+        # 4. 续流二极管 D: SW 节点 → GND（竖直）
+        # ============================================================
+        d_body_top = sw_rail_y + 30
+        d_body_bottom = sw_rail_y + 80
+        components.append({
+            "role": "diode", "ref": "D1", "type": "diode",
             "orientation": "vertical",
-            "x": d_x, "y_top": d_top, "y_bottom": d_bottom,
+            "x": sw_node_x, "y_top": d_body_top, "y_bottom": d_body_bottom,
             "value": _find_ext_value(ext_comps, "diode", "SS34"),
-            "connect_top": {"x": d_x, "y": sw_pin["y"]},
-            "connect_bottom": {"x": d_x, "y": gnd_y},
+            "connect_top": {"x": sw_node_x, "y": sw_rail_y},
+            "connect_bottom": {"x": sw_node_x, "y": gnd_y},
         })
 
-        # 输出电容 C_out: 输出节点到 GND
-        cout_x = out_x
+        # ============================================================
+        # 5. 输出电容 C_out: VOUT → GND
+        # ============================================================
         components.append({
-            "role": "output_cap",
-            "ref": "C2",
-            "type": "capacitor",
+            "role": "output_cap", "ref": "C2", "type": "capacitor",
             "orientation": "vertical",
-            "x": cout_x, "y": sw_pin["y"] + 40,
-            "value": _find_ext_value(ext_comps, "output_cap", "22μF"),
-            "connect_top": {"x": cout_x, "y": sw_pin["y"]},
+            "x": cout_x, "y_top": sw_rail_y, "y_bottom": sw_rail_y + 60,
+            "value": _find_ext_value(ext_comps, "output_cap", "22uF"),
+            "connect_top": {"x": cout_x, "y": sw_rail_y},
             "connect_bottom": {"x": cout_x, "y": gnd_y},
         })
-
-        # 自举电容 C_bst: BOOT 引脚 → SW 引脚（竖直）
-        bst_x = boot_pin["x"] + 60
-        components.append({
-            "role": "boot_cap",
-            "ref": "C3",
-            "type": "capacitor",
-            "orientation": "vertical",
-            "x": bst_x, "y": boot_pin["y"],
-            "value": _find_ext_value(ext_comps, "boot_cap", "100nF"),
-            "connect_top": {"x": bst_x, "y": boot_pin["y"]},
-            "connect_bottom": {"x": bst_x, "y": sw_pin["y"]},
+        # VOUT 节点 → C_out top（水平短线）
+        wires.append({
+            "from": {"x": out_x, "y": sw_rail_y},
+            "to": {"x": cout_x, "y": sw_rail_y},
+            "label": "VOUT→Cout",
         })
+
+        # ============================================================
+        # 6. 自举电容 C_bst: BOOT 引脚 → SW 节点
+        # ============================================================
+        # C_bst 放在 IC 右上方，与 D1/L1 错开 X 坐标
+        bst_x = sw_node_x + 60  # 在 SW 节点右边 60px，避免与 D1/L1 重叠
+        bst_top_y = int(boot_pin["y"]) - 30  # 上端比 BOOT 引脚略高
+        bst_bottom_y = bst_top_y + 60
+        components.append({
+            "role": "boot_cap", "ref": "C3", "type": "capacitor",
+            "orientation": "vertical",
+            "x": bst_x, "y_top": bst_top_y, "y_bottom": bst_bottom_y,
+            "value": _find_ext_value(ext_comps, "boot_cap", "100nF"),
+            "connect_top": {"x": bst_x, "y": bst_top_y},
+            "connect_bottom": {"x": bst_x, "y": sw_rail_y},
+        })
+        # BOOT 引脚 → 水平到 bst_x → 竖直到 C_bst top
         wires.append({
             "from": {"x": boot_pin["x"], "y": boot_pin["y"]},
             "to": {"x": bst_x, "y": boot_pin["y"]},
-            "label": "BOOT→C3",
+            "label": "BOOT→horiz",
         })
-        # C3 下端 → SW 节点（水平走线回到 SW）
         wires.append({
-            "from": {"x": bst_x, "y": sw_pin["y"]},
-            "to": {"x": sw_pin["x"], "y": sw_pin["y"]},
-            "label": "C3→SW",
+            "from": {"x": bst_x, "y": boot_pin["y"]},
+            "to": {"x": bst_x, "y": bst_top_y},
+            "label": "BOOT→C3 top",
         })
+        # C_bst bottom 在 sw_rail_y 高度，与电感轨道交汇
 
-        # FB 分压电阻: VOUT → R1 → FB 节点 → R2 → GND
-        fb_x = fb_pin["x"] + 60
-        r1_top = fb_pin["y"] - 60
-        r1_bottom = fb_pin["y"]
-        r2_top = fb_pin["y"]
-        r2_bottom = fb_pin["y"] + 60
+        # ============================================================
+        # 7. FB 分压电阻: VOUT → R1 → FB_mid → R2 → GND
+        # ============================================================
+        fb_mid_y = ic_bottom + 60      # R1/R2 分界点（FB 节点）
+        r1_top_y = fb_mid_y - 60
+        r1_bottom_y = fb_mid_y
+        r2_top_y = fb_mid_y
+        r2_bottom_y = fb_mid_y + 60
         components.append({
-            "role": "fb_upper",
-            "ref": "R1",
-            "type": "resistor",
+            "role": "fb_upper", "ref": "R1", "type": "resistor",
             "orientation": "vertical",
-            "x": fb_x, "y_top": r1_top, "y_bottom": r1_bottom,
-            "value": _find_ext_value(ext_comps, "fb_upper", "30kΩ"),
-            "connect_top": {"x": fb_x, "y": r1_top},
-            "connect_bottom": {"x": fb_x, "y": fb_pin["y"]},
+            "x": fb_x, "y_top": r1_top_y, "y_bottom": r1_bottom_y,
+            "value": _find_ext_value(ext_comps, "fb_upper", "30k"),
+            "connect_top": {"x": fb_x, "y": r1_top_y},
+            "connect_bottom": {"x": fb_x, "y": fb_mid_y},
         })
         components.append({
-            "role": "fb_lower",
-            "ref": "R2",
-            "type": "resistor",
+            "role": "fb_lower", "ref": "R2", "type": "resistor",
             "orientation": "vertical",
-            "x": fb_x, "y_top": r2_top, "y_bottom": r2_bottom,
-            "value": _find_ext_value(ext_comps, "fb_lower", "10kΩ"),
-            "connect_top": {"x": fb_x, "y": fb_pin["y"]},
+            "x": fb_x, "y_top": r2_top_y, "y_bottom": r2_bottom_y,
+            "value": _find_ext_value(ext_comps, "fb_lower", "10k"),
+            "connect_top": {"x": fb_x, "y": fb_mid_y},
             "connect_bottom": {"x": fb_x, "y": gnd_y},
         })
-        # VOUT rail → R1 上端
+        # VOUT rail → R1 top（从 VOUT 节点竖直下来再水平过去）
         wires.append({
-            "from": {"x": out_x, "y": sw_pin["y"]},
-            "to": {"x": fb_x, "y": r1_top},
-            "label": "VOUT→R1",
-            "path": [
-                {"x": out_x, "y": sw_pin["y"]},
-                {"x": out_x, "y": r1_top},
-                {"x": fb_x, "y": r1_top},
-            ],
+            "from": {"x": out_x, "y": sw_rail_y},
+            "to": {"x": out_x, "y": r1_top_y},
+            "label": "VOUT→R1 (vertical)",
         })
-        # R1-R2 中点 → FB 引脚
+        # FB 中点 → FB 引脚（水平线 + 竖直线）
         wires.append({
-            "from": {"x": fb_x, "y": fb_pin["y"]},
+            "from": {"x": fb_x, "y": fb_mid_y},
+            "to": {"x": fb_pin["x"], "y": fb_mid_y},
+            "label": "FB mid→horiz",
+        })
+        wires.append({
+            "from": {"x": fb_pin["x"], "y": fb_mid_y},
             "to": {"x": fb_pin["x"], "y": fb_pin["y"]},
-            "label": "FB node",
+            "label": "FB→IC",
         })
-        # GND 引脚 → GND 轨
+
+        # ============================================================
+        # 8. GND 引脚 → GND 轨
+        # ============================================================
         wires.append({
             "from": {"x": gnd_pin["x"], "y": gnd_pin["y"]},
             "to": {"x": gnd_pin["x"], "y": gnd_y},
             "label": "IC GND",
         })
 
-        # EN 上拉到 VIN（简化：直接连线）
+        # ============================================================
+        # 9. EN 上拉到 VIN rail
+        # ============================================================
+        en_pullup_x = ic_left - 50
         wires.append({
-            "from": {"x": pin_positions['EN']['x'], "y": pin_positions['EN']['y']},
-            "to": {"x": pin_positions['EN']['x'] + 40, "y": pin_positions['EN']['y']},
-            "label": "EN",
+            "from": {"x": en_pin["x"], "y": en_pin["y"]},
+            "to": {"x": en_pullup_x, "y": en_pin["y"]},
+            "label": "EN→pullup",
         })
         wires.append({
-            "from": {"x": pin_positions['EN']['x'] + 40, "y": pin_positions['EN']['y']},
-            "to": {"x": pin_positions['EN']['x'] + 40, "y": vin_pin["y"]},
-            "label": "EN pullup to VIN",
+            "from": {"x": en_pullup_x, "y": en_pin["y"]},
+            "to": {"x": en_pullup_x, "y": rail_y},
+            "label": "EN pullup to VIN rail",
         })
 
-    # ---- VIN/VOUT 标签 ----
+    # ---- 标签 ----
     labels = [
         {"text": "VIN", "x": 60, "y": rail_y, "color": "red", "font_size": 16},
     ]
     if power_modules:
         _, first_inst = power_modules[0]
-        v_in = dict(getattr(first_inst, "parameters", {})).get("v_in", "")
-        v_out = dict(getattr(first_inst, "parameters", {})).get("v_out", "")
+        params = dict(getattr(first_inst, "parameters", {}))
+        v_in = params.get("v_in", "")
+        v_out = params.get("v_out", "")
         if v_in:
             labels[0]["text"] = f"VIN {v_in}V"
-        last_out_x = 400 + (len(power_modules) - 1) * 400 + 200
         labels.append({
             "text": f"VOUT {v_out}V" if v_out else "VOUT",
-            "x": last_out_x, "y": rail_y, "color": "blue", "font_size": 16,
+            "x": cout_x + 40,
+            "y": sw_rail_y, "color": "blue", "font_size": 16,
         })
 
-    # ---- GND 轨道 ----
-    gnd_rail = {"y": gnd_y, "x_start": 100, "x_end": canvas_w - 100}
+    gnd_rail = {"y": gnd_y, "x_start": 80, "x_end": canvas_w - 80}
 
     return {
         "canvas": {"width": canvas_w, "height": canvas_h},
         "rail_y": rail_y,
+        "sw_rail_y": sw_rail_y,
         "gnd_y": gnd_y,
         "gnd_rail": gnd_rail,
-        "ic_modules": pins,
+        "ic_modules": ic_data,
         "components": components,
         "wires": wires,
         "labels": labels,
@@ -1461,8 +1508,11 @@ def _build_svg_template(ir: Any) -> dict[str, Any]:
             "严格按照上面的坐标画 SVG。"
             "每个元件用标准符号画在指定位置，连线走指定路径（横平竖直）。"
             "所有竖直元件（电容/电阻/二极管）的上端 connect_top、下端 connect_bottom 必须对齐。"
-            "GND 轨道是一条水平线 y={gnd_y}，所有接地元件底端连到这条线。"
+            f"GND 轨道是一条水平线 y={gnd_y}，所有接地元件底端连到这条线。"
             "IC 用矩形框+引脚短线表示，引脚名标在短线末端。"
+            "电感用水平锯齿/弧线符号表示。"
+            "二极管用三角形+横线表示，阳极在上（connect_top），阴极在下。"
+            "所有走线必须横平竖直，不允许斜线。"
         ),
     }
 
