@@ -20,6 +20,7 @@ from PySide6.QtWidgets import (
     QLabel,
     QPushButton,
     QScrollArea,
+    QSpinBox,
     QSplitter,
     QStackedWidget,
     QTabWidget,
@@ -169,6 +170,39 @@ class DesignPage(QWidget):
             "启用后会在系统渲染完成后运行布局视觉审稿；默认关闭以保证主链稳定。"
         )
         layout.addWidget(self._visual_review_checkbox)
+
+        # 渲染模式开关
+        self._render_mode_checkbox = QCheckBox("AI SVG 绘图模式")
+        self._render_mode_checkbox.setChecked(False)
+        self._render_mode_checkbox.setToolTip(
+            "启用后由 AI 自己编写 SVG 原理图并视觉审查迭代；"
+            "关闭则使用本地 schemdraw 确定性渲染。"
+        )
+        layout.addWidget(self._render_mode_checkbox)
+
+        # AI SVG 视觉审查轮次
+        review_row = QHBoxLayout()
+        review_row.addWidget(QLabel("视觉审查轮次:"))
+        self._review_rounds_spin = QSpinBox()
+        self._review_rounds_spin.setRange(0, 5)
+        self._review_rounds_spin.setValue(1)
+        self._review_rounds_spin.setToolTip(
+            "AI SVG 模式下视觉审查-修改的最大迭代次数（0=不审查，直接出图）"
+        )
+        review_row.addWidget(self._review_rounds_spin)
+        review_row.addStretch()
+        layout.addLayout(review_row)
+
+        # 模型选择
+        model_row = QHBoxLayout()
+        model_row.addWidget(QLabel("AI 模型:"))
+        self._model_combo = QComboBox()
+        self._model_combo.addItem("kimi-k2.5", "kimi-k2.5")
+        self._model_combo.addItem("qwen3-coder-plus", "qwen3-coder-plus")
+        self._model_combo.setToolTip("选择 AI 模型（均走 coding.dashscope 端点）")
+        model_row.addWidget(self._model_combo)
+        model_row.addStretch()
+        layout.addLayout(model_row)
 
         # 状态标签
         self._status_label = QLabel("就绪")
@@ -402,6 +436,13 @@ class DesignPage(QWidget):
         self._tab_log.append(f"[启动] 输入: {user_input[:80]}…")
         if self._visual_review_checkbox.isChecked():
             self._tab_log.append("[启动] visual review 已启用")
+        ai_svg = self._render_mode_checkbox.isChecked()
+        review_rounds = self._review_rounds_spin.value()
+        model_name = self._model_combo.currentData() or "kimi-k2.5"
+        if ai_svg:
+            self._tab_log.append(
+                f"[启动] AI SVG 绘图模式 | 审查轮次={review_rounds} | 模型={model_name}"
+            )
 
         # 保存输入信息，供缺失器件重试时复用
         self._original_input = user_input
@@ -410,6 +451,9 @@ class DesignPage(QWidget):
             user_input=user_input,
             session=self._sf_session,
             enable_visual_review=self._visual_review_checkbox.isChecked(),
+            ai_svg_mode=ai_svg,
+            review_rounds=review_rounds,
+            model_name=model_name,
         )
         worker.session_ready.connect(self._on_session_ready)
         worker.progress.connect(self._on_worker_progress)

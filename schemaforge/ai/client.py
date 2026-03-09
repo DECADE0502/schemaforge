@@ -6,15 +6,32 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 from typing import Any
 
 from openai import OpenAI
 
+logger = logging.getLogger(__name__)
+
 # === 默认配置（写死kimi-k2.5） ===
 DEFAULT_API_KEY = "sk-sp-396701e02c95411783e01557524e4366"
 DEFAULT_BASE_URL = "https://coding.dashscope.aliyuncs.com/v1"
 DEFAULT_MODEL = "kimi-k2.5"
+
+
+# 模型 → base_url 路由
+# coding.dashscope 端点支持: kimi-k2.5, qwen3-coder-plus
+# 其他模型如需支持，需配置 DASHSCOPE_API_KEY 环境变量并走通用端点
+_MODEL_BASE_URL: dict[str, str] = {
+    "kimi-k2.5": "https://coding.dashscope.aliyuncs.com/v1",
+    "qwen3-coder-plus": "https://coding.dashscope.aliyuncs.com/v1",
+}
+
+
+def get_base_url_for_model(model: str) -> str:
+    """根据模型名返回对应的 API base_url。"""
+    return _MODEL_BASE_URL.get(model, DEFAULT_BASE_URL)
 
 
 def get_client(
@@ -214,7 +231,9 @@ def call_llm_with_tools(
     Returns:
         openai.types.chat.ChatCompletion
     """
-    client = get_client(api_key, base_url)
+    # 自动路由 base_url：调用方未指定时按模型名查路由表
+    effective_base_url = base_url or get_base_url_for_model(model)
+    client = get_client(api_key, effective_base_url)
 
     kwargs: dict[str, Any] = {
         "model": model,
@@ -225,8 +244,79 @@ def call_llm_with_tools(
     if tools is not None:
         kwargs["tools"] = tools
 
+    tool_count = len(tools) if tools else 0
+    logger.info(
+        "[LLM] 请求 model=%s, messages=%d, tools=%d, max_tokens=%d, base_url=%s",
+        model, len(messages), tool_count, max_tokens, effective_base_url,
+    )
     response = client.chat.completions.create(**kwargs)
+    # 记录响应摘要
+    choice = response.choices[0] if response.choices else None
+    if choice:
+        has_tc = bool(choice.message.tool_calls)
+        content_len = len(choice.message.content or "")
+        tc_count = len(choice.message.tool_calls) if has_tc else 0
+        logger.info(
+            "[LLM] 响应: finish_reason=%s, has_tool_calls=%s (count=%d), content_len=%d",
+            choice.finish_reason, has_tc, tc_count, content_len,
+        )
     return response
+
+
+# ---------------------------------------------------------------------------
+# Vision API support (带图片的 AI 调用)
+# ---------------------------------------------------------------------------
+
+
+def call_llm_vision(
+    system_prompt: str,
+    user_text: str,
+    image_base64: str,
+    model: str = DEFAULT_MODEL,
+    temperature: float = 0.3,
+    max_tokens: int = 4096,
+    api_key: str | None = None,
+    base_url: str | None = None,
+) -> str:
+    """调用 LLM vision API — 同时传入文本和 base64 图片。
+
+    Args:
+        system_prompt: 系统 prompt
+        user_text: 用户文本消息
+        image_base64: PNG 图片的 base64 编码（不含 data:image 前缀）
+        model: 模型名称
+        temperature: 温度
+        max_tokens: 最大 token
+        api_key: API密钥
+        base_url: API基地址
+
+    Returns:
+        LLM 文本回复
+    """
+    effective_base_url = base_url or get_base_url_for_model(model)
+    client = get_client(api_key, effective_base_url)
+
+    user_content: list[dict[str, Any]] = [
+        {"type": "text", "text": user_text},
+        {
+            "type": "image_url",
+            "image_url": {
+                "url": f"data:image/png;base64,{image_base64}",
+            },
+        },
+    ]
+
+    response = client.chat.completions.create(
+        model=model,
+        messages=[
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_content},
+        ],
+        temperature=temperature,
+        max_tokens=max_tokens,
+    )
+
+    return response.choices[0].message.content or ""
 
 
 def tool_defs_to_openai_tools(

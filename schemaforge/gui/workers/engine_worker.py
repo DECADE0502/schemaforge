@@ -55,12 +55,18 @@ class SchemaForgeWorker(QThread):
         user_input: str,
         session: object | None = None,
         enable_visual_review: bool = False,
+        ai_svg_mode: bool = False,
+        review_rounds: int = 1,
+        model_name: str = "kimi-k2.5",
         parent: object | None = None,
     ) -> None:
         super().__init__(parent)  # type: ignore[arg-type]
         self.user_input = user_input
         self._session = session
         self._enable_visual_review = enable_visual_review
+        self._ai_svg_mode = ai_svg_mode
+        self._review_rounds = review_rounds
+        self._model_name = model_name
 
     def run(self) -> None:
         """执行系统级设计流程（AI agent 驱动）。"""
@@ -71,6 +77,7 @@ class SchemaForgeWorker(QThread):
             from schemaforge.agent.orchestrator import Orchestrator
             from schemaforge.agent.design_tools_v3 import (
                 AGENT_SYSTEM_PROMPT,
+                AGENT_SYSTEM_PROMPT_AI_SVG,
                 build_atomic_design_tools,
             )
             from schemaforge.agent.tools import default_registry
@@ -88,13 +95,36 @@ class SchemaForgeWorker(QThread):
                 )
             self.session_ready.emit(session)
 
+            # 根据渲染模式选择 system prompt
+            if self._ai_svg_mode:
+                # 将审查轮次写入 prompt
+                review_hint = (
+                    f"\n\n## 视觉审查轮次限制\n"
+                    f"最多进行 {self._review_rounds} 轮视觉审查-修改迭代。"
+                )
+                if self._review_rounds == 0:
+                    review_hint += (
+                        "\n不要调用 review_schematic_visual，直接出图后 export_outputs。"
+                    )
+                system_prompt = AGENT_SYSTEM_PROMPT_AI_SVG + review_hint
+            else:
+                system_prompt = AGENT_SYSTEM_PROMPT
+
             # 构建 AI orchestrator + 原子工具集 (v3)
             design_tools = build_atomic_design_tools(session)
             merged = default_registry.merge(design_tools)
+
+            # 详细进度回调 — 把 Orchestrator 事件转发到 GUI 日志
+            def _on_orch_event(event: object) -> None:
+                msg = getattr(event, "message", "")
+                if msg:
+                    self.progress.emit(msg, 50)
+
             orch = Orchestrator(
                 tool_registry=merged,
-                system_prompt=AGENT_SYSTEM_PROMPT,
-                model="kimi-k2.5",
+                system_prompt=system_prompt,
+                model=self._model_name,
+                on_event=_on_orch_event,
             )
 
             self.progress.emit("AI 正在分析需求并调用工具…", 40)

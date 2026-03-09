@@ -11,6 +11,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from typing import Any, Callable
 
 from schemaforge.agent.protocol import (
@@ -29,6 +30,8 @@ from schemaforge.common.events import (
     WorkflowEvent,
 )
 from schemaforge.common.progress import ProgressTracker
+
+logger = logging.getLogger(__name__)
 
 
 class Orchestrator:
@@ -58,12 +61,14 @@ class Orchestrator:
         system_prompt: str,
         tracker: ProgressTracker | None = None,
         model: str = DEFAULT_MODEL,
+        max_tokens: int = 98304,
         on_event: Callable[[WorkflowEvent], None] | None = None,
     ) -> None:
         self.registry = tool_registry
         self.system_prompt = system_prompt
         self.tracker = tracker
         self.model = model
+        self.max_tokens = max_tokens
         self._on_event = on_event
         # 正式的 role-based 消息数组
         self.messages: list[dict[str, Any]] = [
@@ -108,16 +113,26 @@ class Orchestrator:
         openai_tools = tool_defs_to_openai_tools(
             self.registry.get_tool_descriptions()
         )
+        tool_names = [t["function"]["name"] for t in openai_tools]
+        logger.info("[Orchestrator] 注册工具: %s", tool_names)
 
         while True:
             self._log("正在调用 AI...")
+            msg_count = len(self.messages)
+            logger.info(
+                "[Orchestrator] 调用 AI (round=%d, messages=%d, model=%s)",
+                self._tool_round_count, msg_count, self.model,
+            )
             try:
                 response = call_llm_with_tools(
                     messages=self.messages,
                     tools=openai_tools if openai_tools else None,
                     model=self.model,
+                    max_tokens=self.max_tokens,
                 )
+                logger.info("[Orchestrator] AI 响应到达")
             except Exception as exc:
+                logger.exception("[Orchestrator] AI 调用异常")
                 self._log(f"AI 调用失败: {exc}", "error")
                 return AgentStep.fail(f"AI 调用失败: {exc}")
 
@@ -149,6 +164,11 @@ class Orchestrator:
             # --------------------------------------------------
             if assistant_msg.tool_calls:
                 self._tool_round_count += 1
+                tc_names = [tc.function.name for tc in assistant_msg.tool_calls]
+                logger.info(
+                    "[Orchestrator] AI 发起 tool_calls (round=%d): %s",
+                    self._tool_round_count, tc_names,
+                )
                 if self._tool_round_count > self.MAX_TOOL_ROUNDS:
                     self._log("工具调用轮次超限，强制终止", "warning")
                     return AgentStep.fail("工具调用轮次超过上限")
@@ -160,6 +180,7 @@ class Orchestrator:
                     except json.JSONDecodeError:
                         arguments = {}
 
+                    logger.info("[Orchestrator] 执行工具: %s(%s)", tool_name, list(arguments.keys()))
                     self._log(f"调用工具: {tool_name}")
                     self._emit(
                         LogEvent(
@@ -170,6 +191,12 @@ class Orchestrator:
                     )
 
                     result = self.registry.execute(tool_name, arguments)
+                    logger.info(
+                        "[Orchestrator] 工具结果: %s → %s (data_keys=%s)",
+                        tool_name,
+                        "成功" if result.success else "失败",
+                        list(result.data.keys()) if result.data else "N/A",
+                    )
 
                     self._emit(
                         LogEvent(
@@ -199,6 +226,7 @@ class Orchestrator:
             # Case 2: AI 纯文本回复（无 tool_calls）
             # --------------------------------------------------
             content = assistant_msg.content or ""
+            logger.info("[Orchestrator] AI 纯文本回复 (%d chars): %s", len(content), content[:200])
             self._log(f"AI 回复: {content[:100]}")
 
             # 尝试解析为结构化 AgentStep JSON
