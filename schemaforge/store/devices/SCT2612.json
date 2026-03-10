@@ -1,0 +1,136 @@
+{
+  "part_number": "SCT2612",
+  "aliases": [],
+  "manufacturer": "Silicon Content Technology Co., Ltd.",
+  "description": "4.2V-60V输入、1A输出、高效率异步降压DCDC转换器，支持可编程频率100KHz-1.2MHz",
+  "category": "buck",
+  "specs": {
+    "v_in_min": "4.2V",
+    "v_in_max": "60V",
+    "v_out_min": "0.8V",
+    "v_out_typ": "可调",
+    "i_out_max": "1A",
+    "f_sw_range": "100KHz-1.2MHz",
+    "r_ds_on": "220mΩ",
+    "i_q": "100uA",
+    "t_soft_start": "4ms",
+    "t_min_on": "100ns",
+    "v_ref": "0.8V±1%",
+    "t_junction_max": "150°C",
+    "t_thermal_shutdown": "172°C"
+  },
+  "symbol": {
+    "pins": [
+      {
+        "name": "BOOT",
+        "pin_number": "1",
+        "side": "left",
+        "pin_type": "power_in",
+        "slot": "1/4",
+        "inverted": false,
+        "anchor_name": "",
+        "description": "高侧MOSFET栅极驱动自举电容连接端，需连接0.1uF电容到SW引脚"
+      },
+      {
+        "name": "VIN",
+        "pin_number": "2",
+        "side": "left",
+        "pin_type": "power_in",
+        "slot": "2/4",
+        "inverted": false,
+        "anchor_name": "",
+        "description": "输入电源，4.2V-60V宽输入电压范围"
+      },
+      {
+        "name": "EN",
+        "pin_number": "3",
+        "side": "left",
+        "pin_type": "input",
+        "slot": "3/4",
+        "inverted": false,
+        "anchor_name": "",
+        "description": "使能输入，精密使能阈值可编程输入欠压锁定保护(UVLO)"
+      },
+      {
+        "name": "RT/CLK",
+        "pin_number": "4",
+        "side": "left",
+        "pin_type": "input",
+        "slot": "4/4",
+        "inverted": false,
+        "anchor_name": "",
+        "description": "频率设置/外部时钟同步，通过外部电阻设置100KHz-1.2MHz开关频率，或外部时钟同步"
+      },
+      {
+        "name": "FB",
+        "pin_number": "5",
+        "side": "right",
+        "pin_type": "input",
+        "slot": "2/4",
+        "inverted": false,
+        "anchor_name": "",
+        "description": "反馈输入，0.8V±1%参考电压，通过电阻分压设置输出电压"
+      },
+      {
+        "name": "PGOOD",
+        "pin_number": "6",
+        "side": "right",
+        "pin_type": "output",
+        "slot": "3/4",
+        "inverted": false,
+        "anchor_name": "",
+        "description": "电源良好指示，开漏输出，FB电压在95%-105%参考电压时释放"
+      },
+      {
+        "name": "GND",
+        "pin_number": "7",
+        "side": "right",
+        "pin_type": "ground",
+        "slot": "1/4",
+        "inverted": false,
+        "anchor_name": "",
+        "description": "地"
+      },
+      {
+        "name": "SW",
+        "pin_number": "8",
+        "side": "right",
+        "pin_type": "output",
+        "slot": "4/4",
+        "inverted": false,
+        "anchor_name": "",
+        "description": "开关节点，连接电感和续流二极管"
+      }
+    ],
+    "size": [
+      7.0,
+      5.0
+    ],
+    "edge_pad_w": 0.5,
+    "edge_pad_h": 0.5,
+    "pin_spacing": 1.0,
+    "lead_len": 0.5,
+    "label_position": "top"
+  },
+  "topology": null,
+  "design_recipe": null,
+  "spice_model": "",
+  "spice_model_ref": "",
+  "lcsc_part": "",
+  "datasheet_url": "",
+  "easyeda_id": "",
+  "package": "ESOP-8",
+  "source": "pdf_parsed",
+  "confidence": 0.95,
+  "notes": "从 PDF 提取: D:/DESKTOP/C5200341_DC-DC电源芯片_SCT2612STER_规格书_SCT2612+DATASHEET+REV+1.0.PDF",
+  "design_roles": [
+    "dc_dc_converter"
+  ],
+  "selection_hints": [],
+  "anti_patterns": [],
+  "required_companions": [],
+  "operating_constraints": {},
+  "layout_hints": [],
+  "failure_modes": [],
+  "review_rules": []
+}
