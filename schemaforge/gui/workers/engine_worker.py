@@ -87,11 +87,14 @@ class SchemaForgeWorker(QThread):
                 and self._session.visual_review_enabled == self._enable_visual_review
             ):
                 session = self._session
+                # 同步 ai_svg_mode（用户可能在两次对话间切换模式）
+                session.ai_svg_mode = self._ai_svg_mode
             else:
                 session = SystemDesignSession(
                     store_dir=Path("schemaforge/store"),
                     skip_ai_parse=False,
                     enable_visual_review=self._enable_visual_review,
+                    ai_svg_mode=self._ai_svg_mode,
                 )
             self.session_ready.emit(session)
 

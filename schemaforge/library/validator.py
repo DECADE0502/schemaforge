@@ -139,6 +139,10 @@ class DeviceDraft(BaseModel):
     datasheet_url: str = ""
     easyeda_id: str = ""
 
+    # --- Datasheet 文件 ---
+    datasheet_path: str = ""
+    """入库时保存的 PDF datasheet 相对路径"""
+
     # --- 来源 ---
     source: str = "manual"  # manual, easyeda, pdf_parsed, ...
     confidence: float = 1.0
@@ -572,6 +576,7 @@ def draft_to_device_model_dict(draft: DeviceDraft) -> dict[str, Any]:
         "datasheet_url": draft.datasheet_url,
         "easyeda_id": draft.easyeda_id,
         "package": draft.package.strip(),
+        "datasheet_path": draft.datasheet_path,
         "source": draft.source,
         "confidence": draft.confidence,
         "notes": draft.notes,

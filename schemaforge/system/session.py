@@ -251,10 +251,12 @@ class SystemDesignSession:
         store_dir: Path | str,
         skip_ai_parse: bool | None = None,
         enable_visual_review: bool = False,
+        ai_svg_mode: bool = False,
     ) -> None:
         self._store = ComponentStore(Path(store_dir))
         self._skip_ai_parse = skip_ai_parse
         self._enable_visual_review = enable_visual_review
+        self._ai_svg_mode = ai_svg_mode
         self._ir: SystemDesignIR | None = None
         self._bundle: SystemBundle | None = None
         self._layout_spec: SystemLayoutSpec | None = None
@@ -273,6 +275,14 @@ class SystemDesignSession:
     @property
     def visual_review_enabled(self) -> bool:
         return self._enable_visual_review
+
+    @property
+    def ai_svg_mode(self) -> bool:
+        return self._ai_svg_mode
+
+    @ai_svg_mode.setter
+    def ai_svg_mode(self, value: bool) -> None:
+        self._ai_svg_mode = value
 
     # ----------------------------------------------------------
     # T093: start — 全新设计
@@ -1078,6 +1088,7 @@ class SystemDesignSession:
         # 暂存草稿供 confirm_import 使用
         self._pending_draft = draft
         self._pending_app_circuit = result.application_circuit
+        self._pending_source_filepath = str(path)  # 保留源文件路径，用于 PDF 持久化
 
         return SystemDesignResult(
             status="needs_confirmation",
@@ -1164,6 +1175,18 @@ class SystemDesignSession:
         if symbol is not None:
             service.update_device_symbol(draft.part_number, symbol)
 
+        # 5.5 持久化 PDF datasheet（若源文件是 PDF）
+        pending_filepath = getattr(self, "_pending_source_filepath", "")
+        if pending_filepath and pending_filepath.lower().endswith(".pdf"):
+            ds_rel = self._store.save_datasheet(
+                draft.part_number, pending_filepath
+            )
+            if ds_rel:
+                device_obj = self._store.get_device(draft.part_number)
+                if device_obj is not None:
+                    device_obj.datasheet_path = ds_rel
+                    self._store.save_device(device_obj)
+
         # 6. 附加 datasheet 提取的应用电路 recipe
         pending_app = getattr(self, "_pending_app_circuit", {})
         if pending_app:
@@ -1181,6 +1204,7 @@ class SystemDesignSession:
         # 7. 清理待办状态
         self._pending_draft = None
         self._pending_app_circuit = {}
+        self._pending_source_filepath = ""
 
         # 8. 重建 ComponentStore 缓存并重跑管线（如果有 IR）
         self._store = ComponentStore(self._store.store_dir)
@@ -1461,12 +1485,20 @@ class SystemDesignSession:
         self._layout_spec = create_default_layout(self._ir)
         svg_path = ""
         render_metadata = None
-        try:
-            svg_path, render_metadata = render_system_svg_with_metadata(
-                self._ir, layout_spec=self._layout_spec,
-            )
-        except Exception as exc:  # noqa: BLE001
-            warnings.append(f"SVG 渲染失败: {exc}")
+
+        if self._ai_svg_mode:
+            # AI SVG 模式：使用本地确定性 SVG 渲染器
+            try:
+                svg_path = self._render_with_local_svg(self._ir)
+            except Exception as exc:  # noqa: BLE001
+                warnings.append(f"本地 SVG 渲染失败: {exc}")
+        else:
+            try:
+                svg_path, render_metadata = render_system_svg_with_metadata(
+                    self._ir, layout_spec=self._layout_spec,
+                )
+            except Exception as exc:  # noqa: BLE001
+                warnings.append(f"SVG 渲染失败: {exc}")
 
         # BOM
         bom_text = ""
@@ -1515,3 +1547,40 @@ class SystemDesignSession:
             missing_modules=missing,
             warnings=warnings,
         )
+
+    # ----------------------------------------------------------
+    # 本地确定性 SVG 渲染（AI SVG 模式）
+    # ----------------------------------------------------------
+
+    @staticmethod
+    def _render_with_local_svg(ir: SystemDesignIR) -> str:
+        """使用本地确定性 SVG 渲染器生成原理图。
+
+        延迟导入 design_tools_v3 中的渲染函数，避免循环引用。
+
+        Returns:
+            SVG 文件路径
+        """
+        import time
+
+        from schemaforge.agent.design_tools_v3 import (
+            _build_svg_template,
+            _render_svg_from_template,
+            _svg_to_png,
+        )
+        from schemaforge.render.base import output_path
+
+        template = _build_svg_template(ir)
+        svg_code = _render_svg_from_template(template)
+
+        ts = int(time.time() * 1000) % 100000
+        svg_filename = f"ai_schematic_{ts}.svg"
+        svg_path = output_path(svg_filename)
+        with open(svg_path, "w", encoding="utf-8") as f:
+            f.write(svg_code)
+
+        # 同时生成 PNG（供 visual review 和 GUI 预览）
+        png_path = svg_path.replace(".svg", ".png")
+        _svg_to_png(svg_path, png_path)
+
+        return svg_path

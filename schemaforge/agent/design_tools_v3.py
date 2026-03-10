@@ -65,6 +65,7 @@ AGENT_SYSTEM_PROMPT = """\
 - search_device_library：不确定器件库里有什么时可先搜索。
 - get_design_status：查看当前设计状态。
 - revise_module_param：修改某个模块的参数（如改输出电压），修改后需重新 render + export。
+- get_device_datasheet：获取器件的 PDF datasheet 文本内容。当你需要参考器件的典型应用电路、推荐外围元件值、电气参数极限值、设计注意事项等详细信息时调用。注意：不是所有器件都有 PDF，调用后检查 has_datasheet 字段。
 
 用中文回复用户。
 """
@@ -1186,6 +1187,94 @@ def build_atomic_design_tools(session: SystemDesignSession) -> ToolRegistry:
     # 本地渲染是确定性的，修改设计应通过 synthesize_parameters 等工具修改 IR，
     # 然后重新调用 render_schematic_ai 即可。
 
+    # ================================================================
+    # 工具 13: get_device_datasheet — 获取器件 PDF datasheet 文本
+    # ================================================================
+    def _handle_get_device_datasheet(part_number: str) -> ToolResult:
+        """获取已入库器件的 datasheet 文本内容。
+
+        如果该器件入库时上传了 PDF，则解析 PDF 并返回文本摘要，
+        供 AI 在设计决策时参考（典型应用电路、电气参数、设计注意事项等）。
+        """
+        try:
+            ds_path = session._store.get_datasheet_abspath(part_number)
+            if ds_path is None:
+                return ToolResult(
+                    success=True,
+                    data={
+                        "part_number": part_number,
+                        "has_datasheet": False,
+                        "message": f"器件 {part_number} 没有关联的 PDF datasheet。",
+                    },
+                )
+
+            # 解析 PDF 提取文本
+            from schemaforge.ingest.pdf_parser import parse_pdf
+
+            parse_result = parse_pdf(str(ds_path), page_limit=15)
+            if not parse_result.success or parse_result.data is None:
+                return ToolResult(
+                    success=True,
+                    data={
+                        "part_number": part_number,
+                        "has_datasheet": True,
+                        "text": "",
+                        "message": "PDF 文件存在但解析失败。",
+                    },
+                )
+
+            full_text = parse_result.data.full_text
+
+            # 截断至合理长度（保留前 6000 + 后 4000 字符）
+            if len(full_text) > 12000:
+                text = (
+                    full_text[:6000]
+                    + "\n\n...(中间省略)...\n\n"
+                    + full_text[-4000:]
+                )
+            else:
+                text = full_text
+
+            return ToolResult(
+                success=True,
+                data={
+                    "part_number": part_number,
+                    "has_datasheet": True,
+                    "page_count": parse_result.data.total_pages,
+                    "text_length": len(full_text),
+                    "text": text,
+                    "message": f"已提取 {part_number} 的 datasheet 文本（{len(full_text)} 字符，{parse_result.data.total_pages} 页）。",
+                },
+            )
+        except Exception as exc:
+            logger.exception("get_device_datasheet failed")
+            return ToolResult(
+                success=False,
+                error=ToolError(
+                    code=ErrorCode.ENGINE_FAILED,
+                    message=f"获取 datasheet 失败: {exc}",
+                    retriable=True,
+                ),
+            )
+
+    registry.register_fn(
+        name="get_device_datasheet",
+        description=(
+            "获取已入库器件的 PDF datasheet 文本内容。"
+            "当你需要参考器件的典型应用电路、推荐外围元件值、电气参数极限值、"
+            "设计注意事项等详细信息时调用此工具。"
+        ),
+        handler=_handle_get_device_datasheet,
+        parameters_schema={
+            "part_number": {
+                "type": "string",
+                "description": "器件型号（如 TPS54202）",
+            },
+        },
+        required_params=["part_number"],
+        category="library",
+    )
+
     return registry
 
 
@@ -2287,6 +2376,11 @@ AGENT_SYSTEM_PROMPT_AI_SVG = """\
 - signal_type：power_supply, gpio, spi, i2c, uart, analog, enable, feedback, other
 - connection_semantics：supply_chain, gpio_drive, bus_connect, enable_control, ground_tie
 - 不要在 resolve_modules 时指定电阻电容电感数值，让 synthesize_parameters 自动计算
+
+## 辅助工具
+
+- search_device_library：不确定器件库里有什么时可先搜索。
+- get_device_datasheet：获取器件的 PDF datasheet 文本内容。当你需要参考器件的典型应用电路、推荐外围元件值、电气参数极限值、设计注意事项等详细信息时调用。器件 resolve 成功后可调用此工具获取更详细的设计参考。
 
 用中文回复用户。
 """

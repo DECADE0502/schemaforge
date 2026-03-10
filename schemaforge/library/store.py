@@ -10,6 +10,7 @@
 from __future__ import annotations
 
 import re
+import shutil
 import sqlite3
 from pathlib import Path
 
@@ -22,8 +23,10 @@ class ComponentStore:
     def __init__(self, store_dir: Path) -> None:
         self.store_dir = Path(store_dir)
         self.devices_dir = self.store_dir / "devices"
+        self.datasheets_dir = self.store_dir / "datasheets"
         self.db_path = self.store_dir / "library.db"
         self.devices_dir.mkdir(parents=True, exist_ok=True)
+        self.datasheets_dir.mkdir(parents=True, exist_ok=True)
         self._init_db()
 
     # ----------------------------------------------------------
@@ -173,8 +176,51 @@ class ComponentStore:
             con.close()
         return [r[0] for r in rows]
 
+    def save_datasheet(self, part_number: str, source_path: str) -> str:
+        """将 PDF datasheet 复制到 store/datasheets/ 目录。
+
+        Args:
+            part_number: 器件型号（用于命名目标文件）
+            source_path: 源 PDF 文件路径
+
+        Returns:
+            相对于 store_dir 的路径（如 "datasheets/TPS54202.pdf"）
+        """
+        src = Path(source_path)
+        if not src.exists():
+            return ""
+
+        suffix = src.suffix.lower() or ".pdf"
+        filename = self._sanitize_filename(part_number) + suffix
+        dst = self.datasheets_dir / filename
+        shutil.copy2(str(src), str(dst))
+        return str(Path("datasheets") / filename)
+
+    def get_datasheet_abspath(self, part_number: str) -> Path | None:
+        """获取器件 datasheet 的绝对路径（若存在）。
+
+        先从 DeviceModel.datasheet_path 读取，若为空则尝试推断文件名。
+        """
+        device = self.get_device(part_number)
+        if device is None:
+            return None
+
+        if device.datasheet_path:
+            fp = self.store_dir / device.datasheet_path
+            if fp.exists():
+                return fp
+
+        # 回退: 按约定文件名查找
+        for suffix in (".pdf", ".PDF"):
+            candidate = self.datasheets_dir / (
+                self._sanitize_filename(part_number) + suffix
+            )
+            if candidate.exists():
+                return candidate
+        return None
+
     def delete_device(self, part_number: str) -> bool:
-        """从库中删除器件（JSON文件 + 索引）
+        """从库中删除器件（JSON文件 + 索引 + datasheet）
 
         Returns:
             True 表示删除成功，False 表示不存在
@@ -195,11 +241,21 @@ class ComponentStore:
         finally:
             con.close()
 
+        # 删除 JSON 文件
         filepath = Path(row[0])
         if not filepath.is_absolute():
             filepath = self.store_dir / filepath
         if filepath.exists():
             filepath.unlink()
+
+        # 删除关联的 datasheet 文件
+        for suffix in (".pdf", ".PDF"):
+            ds_path = self.datasheets_dir / (
+                self._sanitize_filename(part_number) + suffix
+            )
+            if ds_path.exists():
+                ds_path.unlink()
+
         return True
 
     def rebuild_index(self) -> None:

@@ -296,13 +296,19 @@ def _topo_sort_power(
 
     ordered: list[str] = []
     visited: set[str] = set()
+    in_progress: set[str] = set()  # 检测循环依赖
 
     def _visit(mid: str) -> None:
         if mid in visited or mid not in power_set:
             return
+        if mid in in_progress:
+            # 检测到循环依赖，跳过避免无限递归
+            return
+        in_progress.add(mid)
         upstream = fed_by.get(mid)
         if upstream and upstream not in visited:
             _visit(upstream)
+        in_progress.discard(mid)
         visited.add(mid)
         ordered.append(mid)
 

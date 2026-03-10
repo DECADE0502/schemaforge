@@ -190,6 +190,10 @@ class DeviceModel(BaseModel):
     easyeda_id: str = ""
     package: str = ""
 
+    # --- Datasheet 文件 ---
+    datasheet_path: str = ""
+    """入库时保存的 PDF datasheet 相对路径（如 datasheets/TPS54202.pdf）"""
+
     # --- 元数据 ---
     source: str = "manual"  # "manual", "pdf_parsed", "easyeda", "digikey", "migrated"
     confidence: float = 1.0

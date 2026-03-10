@@ -1458,6 +1458,15 @@ class PdfImportDialog(QDialog):
             if self._current_symbol:
                 self._service.update_device_symbol(pn, self._current_symbol)
 
+            # 持久化 PDF datasheet（若来源是 PDF）
+            if self._pdf_path and self._pdf_path.lower().endswith(".pdf"):
+                ds_rel = self._service.store.save_datasheet(pn, self._pdf_path)
+                if ds_rel:
+                    dev = self._service.get(pn)
+                    if dev is not None:
+                        dev.datasheet_path = ds_rel
+                        self._service.store.save_device(dev)
+
             self._result_status.setText(f"✅ 入库成功: {pn}")
             self._btn_confirm.setEnabled(False)
             self.device_imported.emit()
