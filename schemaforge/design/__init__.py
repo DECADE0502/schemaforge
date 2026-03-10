@@ -8,10 +8,7 @@ Phase 4: 库驱动设计 v1
 - topology_adapter: 拓扑适配（DeviceModel→可渲染格式）
 - rationality: 合理性检查（电压/电流/功率/兼容性）
 
-Phase 5: PatchEngine
-- patch_engine: PatchOp 执行器（set/add/remove/replace）
-
-Phase 6: 需求澄清
+Phase 5: 需求澄清
 - clarifier: 需求澄清器（约束检测/假设生成/问题产出）
 
 Phase 7: 候选方案求解
@@ -31,7 +28,6 @@ from schemaforge.design.candidate_solver import (
     SolverResult,
 )
 from schemaforge.design.clarifier import ClarificationResult, RequirementClarifier
-from schemaforge.design.patch_engine import PatchEngine, PatchResult
 from schemaforge.design.planner import DesignPlan, DesignPlanner, ModuleRequirement
 from schemaforge.design.rationality import (
     RationalityChecker,
@@ -70,8 +66,7 @@ __all__ = [
     "ModuleRequirement",
     "ModuleReviewInput",
     "NetDraft",
-    "PatchEngine",
-    "PatchResult",
+
     "RationalityChecker",
     "RationalityIssue",
     "RationalityReport",
