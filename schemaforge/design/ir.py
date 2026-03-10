@@ -3,7 +3,7 @@
 整个设计系统的**唯一中间真值层**。
 
 所有上游模块（planner, clarifier, retrieval, adapter, rationality, review）
-将结果写入 IR；所有下游模块（renderer, exporter, patch_engine, GUI）
+将结果写入 IR；所有下游模块（renderer, exporter, GUI）
 从 IR 读取。
 
 设计目标:

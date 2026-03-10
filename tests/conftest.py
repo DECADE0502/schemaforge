@@ -370,7 +370,6 @@ def _mock_ai_calls(monkeypatch):
     # Patch at all import sites where call_llm/call_llm_json are imported at module level
     _llm_import_sites = [
         "schemaforge.design.planner",
-        "schemaforge.core.engine",
         "schemaforge.agent.orchestrator",
         "schemaforge.design.topology_draft",
     ]

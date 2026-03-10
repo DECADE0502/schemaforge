@@ -29,7 +29,6 @@ python gui.py
 python main.py                                    # 交互模式（支持多轮修改）
 python main.py -i "用 TPS5430 搭 12V转3.3V DCDC"  # 单次模式
 python main.py --visual-review -i "20V 输入，用 TPS54202 降压到 5V"  # 系统主链 + visual review
-python main.py --orchestrated                      # 兼容 AI 编排模式（旧路径）
 
 # 质量门
 python -m pytest -q
@@ -61,10 +60,9 @@ python -m ruff check schemaforge gui.py tests main.py
 
 本仓库当前更接近“系统级原理图原型”而非“最终完成品”。
 
-本轮已重新验证：`python -m pytest -q` = `1550 passed`，`python -m ruff check schemaforge gui.py tests main.py` 全绿。
+本轮已重新验证：`python -m pytest -q` = `1332 passed`，`python -m ruff check schemaforge gui.py tests main.py` 全绿。
 
 - CLI 与 GUI 默认后端已收口到 `SystemDesignSession`
-- `main.py --orchestrated` 仍是旧路径兼容模式，不是推荐主链
 - 文本金路径 `Buck -> LDO -> MCU -> GPIO 驱动 LED` 已在本轮实测打通
 - 系统级文字 revise 已能真实处理一组高价值修改：替换 buck 料号、改 LED 颜色、改唯一 `v_out`
 - 系统级最小增删模块 revise 已能真实工作：新增电源 LED、删除唯一 LED、删除显式 `led2`
@@ -82,7 +80,7 @@ Buck, LDO, Boost, Flyback, SEPIC, Charge Pump, OpAmp, MCU, Sensor, Connector, MO
 
 ### 器件库
 
-当前仓库内可见 9 个器件文件：
+当前仓库内可见 10 个器件文件：
 
 | 型号 | 类型 | 来源 |
 |------|------|------|
@@ -95,6 +93,7 @@ Buck, LDO, Boost, Flyback, SEPIC, Charge Pump, OpAmp, MCU, Sensor, Connector, MO
 | VOLTAGE_DIVIDER | 分压器 | 预置 |
 | RC_LOWPASS | RC 滤波器 | 预置 |
 | W25Q32JV | Flash | 预置 |
+| SCT2612 | Buck | **PDF 导入** |
 
 > 器件库是动态的。任何型号都可以通过上传 PDF datasheet 自动导入。
 
@@ -120,9 +119,7 @@ schemaforge/
 ├── ingest/          # 数据导入 (PDF/图片→器件)
 ├── library/         # 器件库 (DeviceModel + 8 设计知识字段)
 ├── schematic/       # 渲染器 (TopologyRenderer + 通用布局)
-├── store/           # 器件数据 + 参考设计
-└── workflows/       # 工作流编排
-    └── schemaforge_session.py  # 旧单器件工作流（兼容层）
+└── store/           # 器件数据 + 参考设计
 
 schemaforge/system/          # 当前系统级主链
 ├── session.py              # SystemDesignSession（CLI/GUI 默认后端）
@@ -131,7 +128,7 @@ schemaforge/system/          # 当前系统级主链
 ├── synthesis.py            # 参数与外围综合
 └── rendering.py            # 系统级 SVG + render_metadata
 
-tests/                     # 43 个测试文件, 1186 个测试用例
+tests/                     # 39 个测试文件, 1332 个测试用例
 main.py                    # CLI 入口
 gui.py                     # GUI 入口
 ```
