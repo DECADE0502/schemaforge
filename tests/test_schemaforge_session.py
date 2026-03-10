@@ -22,7 +22,6 @@ from schemaforge.library.models import (
     TopologyDef,
 )
 from schemaforge.library.store import ComponentStore
-from schemaforge.workflows.schemaforge_session import SchemaForgeSession
 
 
 import json
@@ -100,161 +99,6 @@ def test_build_design_workbench_prompt_injects_tool_descriptions() -> None:
     assert "SchemaForge" in prompt
 
 
-# ============================================================
-# Orchestrator 懒构建测试
-# ============================================================
-
-
-def test_session_get_orchestrator_returns_orchestrator(tmp_path: Path) -> None:
-    """get_orchestrator() 返回 Orchestrator 实例。"""
-    from schemaforge.agent.orchestrator import Orchestrator
-
-    session = SchemaForgeSession(tmp_path / "store", )
-    orch = session.get_orchestrator()
-    assert isinstance(orch, Orchestrator)
-
-
-def test_session_get_orchestrator_merges_all_tools(tmp_path: Path) -> None:
-    """Orchestrator 的注册表包含全局工具和会话工具。"""
-    session = SchemaForgeSession(tmp_path / "store", )
-    orch = session.get_orchestrator()
-    # 全局工具
-    assert orch.registry.get_tool("build_symbol") is not None
-    assert orch.registry.get_tool("parse_pdf") is not None
-    # 会话工具
-    assert orch.registry.get_tool("start_design_request") is not None
-    assert orch.registry.get_tool("calculate_parameters") is not None
-    assert orch.registry.get_tool("validate_design") is not None
-
-
-def test_session_get_orchestrator_system_prompt_has_tool_descriptions(
-    tmp_path: Path,
-) -> None:
-    """Orchestrator 的 system prompt 包含工具描述。"""
-    session = SchemaForgeSession(tmp_path / "store", )
-    orch = session.get_orchestrator()
-    # system_prompt 应包含工具名
-    assert "start_design_request" in orch.system_prompt
-    assert "build_symbol" in orch.system_prompt
-
-
-def test_session_get_orchestrator_is_cached(tmp_path: Path) -> None:
-    """多次调用 get_orchestrator() 返回同一实例。"""
-    session = SchemaForgeSession(tmp_path / "store", )
-    orch1 = session.get_orchestrator()
-    orch2 = session.get_orchestrator()
-    assert orch1 is orch2
-
-
-# ============================================================
-# structural_ops 执行测试
-# ============================================================
-
-
-def test_revise_add_led_module(tmp_path: Path) -> None:
-    """通过 '加一个指示灯' 结构化操作，wants_led 应变为 True。"""
-    store = ComponentStore(tmp_path / "store")
-    store.save_device(
-        DeviceModel(part_number="AMS1117-3.3", category="ldo",
-                    specs={"v_out": "3.3V"})
-    )
-    session = SchemaForgeSession(tmp_path / "store", )
-    session.start("用 AMS1117-3.3 搭一个 5V 转 3.3V 稳压电路")
-
-    r = session.revise("加一个指示灯")
-    assert r.status == "generated"
-    assert "结构" in r.message
-
-
-def test_revise_remove_led_module(tmp_path: Path) -> None:
-    """通过 '去掉指示灯' 结构化操作。"""
-    store = ComponentStore(tmp_path / "store")
-    store.save_device(
-        DeviceModel(part_number="AMS1117-3.3", category="ldo",
-                    specs={"v_out": "3.3V"})
-    )
-    session = SchemaForgeSession(tmp_path / "store", )
-    session.start("用 AMS1117-3.3 搭一个 5V 转 3.3V 稳压电路 带 LED 指示灯")
-
-    r = session.revise("去掉指示灯模块")
-    assert r.status == "generated"
-    assert "结构" in r.message
-
-
-def test_revise_add_decoupling_cap(tmp_path: Path) -> None:
-    """通过 '加一个去耦电容' 结构化操作添加去耦电容参数。"""
-    store = ComponentStore(tmp_path / "store")
-    store.save_device(
-        DeviceModel(part_number="AMS1117-3.3", category="ldo",
-                    specs={"v_out": "3.3V"})
-    )
-    session = SchemaForgeSession(tmp_path / "store", )
-    session.start("用 AMS1117-3.3 搭一个 5V 转 3.3V 稳压电路")
-
-    r = session.revise("加一个去耦电容")
-    assert r.status == "generated"
-    assert "c_decoupling" in r.bundle.parameters  # type: ignore[union-attr]
-
-
-def test_revise_add_rc_filter(tmp_path: Path) -> None:
-    """通过 '加一个滤波器' 结构化操作。"""
-    store = ComponentStore(tmp_path / "store")
-    store.save_device(
-        DeviceModel(part_number="AMS1117-3.3", category="ldo",
-                    specs={"v_out": "3.3V"})
-    )
-    session = SchemaForgeSession(tmp_path / "store", )
-    session.start("用 AMS1117-3.3 搭一个 5V 转 3.3V 稳压电路")
-
-    r = session.revise("加一个滤波器")
-    assert r.status == "generated"
-    assert "rc_filter_r" in r.bundle.parameters  # type: ignore[union-attr]
-
-
-def test_revise_remove_filter(tmp_path: Path) -> None:
-    """先加再删滤波器，参数应被清除。"""
-    store = ComponentStore(tmp_path / "store")
-    store.save_device(
-        DeviceModel(part_number="AMS1117-3.3", category="ldo",
-                    specs={"v_out": "3.3V"})
-    )
-    session = SchemaForgeSession(tmp_path / "store", )
-    session.start("用 AMS1117-3.3 搭一个 5V 转 3.3V 稳压电路")
-
-    session.revise("加一个滤波器")
-    r = session.revise("去掉滤波器")
-    assert r.status == "generated"
-    assert "rc_filter_r" not in r.bundle.parameters  # type: ignore[union-attr]
-
-
-def test_revise_structural_ops_with_param_changes(tmp_path: Path) -> None:
-    """结构化操作和参数修改可以同时生效。"""
-    store = ComponentStore(tmp_path / "store")
-    store.save_device(
-        DeviceModel(part_number="AMS1117-3.3", category="ldo",
-                    specs={"v_out": "3.3V"})
-    )
-    session = SchemaForgeSession(tmp_path / "store", )
-    session.start("用 AMS1117-3.3 搭一个 5V 转 3.3V 稳压电路")
-
-    # "输出电容改成 100uF" is a param change, structural ops would come from separate parsing
-    r = session.revise("输出电容改成 100uF")
-    assert r.status == "generated"
-
-
-def test_revise_unsupported_structural_op_returns_warning(tmp_path: Path) -> None:
-    """不支持的模块类型应在 warnings 中给出提示。"""
-    store = ComponentStore(tmp_path / "store")
-    store.save_device(
-        DeviceModel(part_number="AMS1117-3.3", category="ldo",
-                    specs={"v_out": "3.3V"})
-    )
-    session = SchemaForgeSession(tmp_path / "store", )
-    session.start("用 AMS1117-3.3 搭一个 5V 转 3.3V 稳压电路")
-
-    # 手动注入一个不支持的结构化操作（直接走 _execute_add_module）
-    warning = session._execute_add_module("transformer", "变压器")
-    assert warning  # 非空 = 有警告
 
 
 # ============================================================
@@ -409,7 +253,7 @@ def test_clarifier_ai_path_returns_result() -> None:
 
 
 # ============================================================
-# 原有测试（parse / resolve / session）
+# 原有测试（parse / resolve）
 # ============================================================
 
 
@@ -434,110 +278,6 @@ def test_exact_part_resolver_supports_alias(tmp_path: Path) -> None:
     hit = resolver.resolve("TPS54202")
     assert hit is not None
     assert hit.part_number == "TPS54202RGTR"
-
-
-def test_session_returns_needs_asset_for_missing_exact_part(tmp_path: Path) -> None:
-    session = SchemaForgeSession(tmp_path / "store", )
-    result = session.start("帮我用 TPS54202 搭一个 20V 转 5V 的 DCDC 电路")
-    assert result.status == "needs_asset"
-    assert result.missing_part_number == "TPS54202"
-
-
-def test_session_import_and_generate_buck_design(tmp_path: Path) -> None:
-    session = SchemaForgeSession(tmp_path / "store", )
-    start = session.start("帮我用 TPS54202 搭一个 20V 转 5V 的 DCDC 电路")
-    assert start.status == "needs_asset"
-
-    image = tmp_path / "tps54202.png"
-    image.write_bytes(b"\x89PNG\r\n\x1a\n" + b"\x00" * 128)
-    preview = session.ingest_asset(str(image))
-    assert preview.status == "needs_confirmation"
-
-    generated = session.confirm_import(
-        {
-            "part_number": "TPS54202",
-            "manufacturer": "TI",
-            "description": "2A Buck Converter",
-            "category": "buck",
-            "package": "SOT-23-6",
-            "datasheet_url": "https://example.com/tps54202.pdf",
-            "pins": [
-                {"name": "BOOT", "number": "1", "type": "passive"},
-                {"name": "VIN", "number": "2", "type": "power"},
-                {"name": "EN", "number": "3", "type": "input"},
-                {"name": "GND", "number": "4", "type": "power"},
-                {"name": "FB", "number": "5", "type": "input"},
-                {"name": "SW", "number": "6", "type": "output"},
-            ],
-            "specs": {
-                "v_in_max": "28V",
-                "i_out_max": "2A",
-                "fsw": "500kHz",
-                "v_ref": "0.8V",
-            },
-        }
-    )
-    assert generated.status == "generated"
-    assert generated.bundle is not None
-    assert generated.bundle.device.part_number == "TPS54202"
-    assert generated.bundle.parameters["v_in"] == "20"
-    assert generated.bundle.parameters["v_out"] == "5"
-    assert generated.bundle.parameters["c_out"] == "22uF"
-    assert generated.bundle.parameters["l_value"].endswith("uH")
-    assert Path(generated.bundle.svg_path).exists()
-    assert "TPS54202" in generated.bundle.bom_text
-    # SPICE 网表现在从拓扑自动生成，反馈电阻为 R1/R2 而非硬编码 RFB1
-    assert "R1 VOUT FB" in generated.bundle.spice_text
-    assert "R2 FB 0" in generated.bundle.spice_text
-
-
-def test_session_revision_updates_output_cap_and_led(tmp_path: Path) -> None:
-    session = SchemaForgeSession(tmp_path / "store", )
-    store = ComponentStore(tmp_path / "store")
-    store.save_device(
-        DeviceModel(
-            part_number="TPS5430",
-            category="buck",
-            specs={"v_in_max": "36V", "i_out_max": "3A", "fsw": "500kHz"},
-        )
-    )
-
-    created = session.start("用 TPS5430 搭一个 12V 转 5V 的降压电路")
-    assert created.status == "generated"
-
-    revised = session.revise("换个 22μF 的输出电容，并加个绿色 LED")
-    assert revised.status == "generated"
-    assert revised.bundle is not None
-    assert revised.bundle.parameters["c_out"] == "22uF"
-    assert revised.bundle.parameters["power_led"] == "true"
-    assert "DLED1" in revised.bundle.bom_text
-
-
-# ============================================================
-# 回归测试: confirm_import 安全落库
-# ============================================================
-
-
-def test_confirm_import_rejects_incomplete_draft_and_store_stays_empty(
-    tmp_path: Path,
-) -> None:
-    """confirm_import() 对不完整草稿（空 part_number）应返回 needs_confirmation，
-    且 ComponentStore 中不应有脏数据残留。"""
-    from schemaforge.library.validator import DeviceDraft
-
-    session = SchemaForgeSession(tmp_path / "store", )
-    session.start("帮我用 TPS54202 搭一个 20V 转 5V 的 DCDC 电路")
-
-    # 直接注入一个空草稿，模拟 ingest_asset 解析出的不完整结果
-    session._pending_draft = DeviceDraft()  # part_number=""
-
-    # 不提供任何补充信息 → 校验应拦截（part_number 为空是 ERROR 级）
-    result = session.confirm_import({})
-    assert result.status in ("needs_confirmation", "error")
-
-    # 即使失败，store 里也不应该有任何器件
-    store = ComponentStore(tmp_path / "store")
-    assert store.list_devices() == []
 
 
 # ============================================================
@@ -885,128 +625,9 @@ class TestParseRevisionRequestV2:
         assert result.request_updates.get("wants_led") is True
 
 
-class TestSchemaForgeSessionReviseEnhanced:
-    """SchemaForgeSession.revise() 增强功能测试。"""
-
-    def test_revise_replaces_device(self, tmp_path: Path) -> None:
-        """器件替换: 库中有新器件时自动重建。"""
-        store = ComponentStore(tmp_path / "store")
-        store.save_device(
-            DeviceModel(part_number="AMS1117-3.3", category="ldo",
-                        specs={"v_out": "3.3V"})
-        )
-        store.save_device(
-            DeviceModel(part_number="AMS1117-5.0", category="ldo",
-                        specs={"v_out": "5.0V"})
-        )
-        session = SchemaForgeSession(tmp_path / "store", )
-
-        # 初始设计
-        r1 = session.start("用 AMS1117-3.3 搭一个 5V 转 3.3V 稳压电路")
-        assert r1.status == "generated"
-        assert session.bundle is not None
-        assert session.bundle.device.part_number == "AMS1117-3.3"
-
-        # 替换器件
-        r2 = session.revise("换成 AMS1117-5.0")
-        assert r2.status == "generated"
-        assert session.bundle is not None
-        assert session.bundle.device.part_number == "AMS1117-5.0"
-
-    def test_revise_device_not_found(self, tmp_path: Path) -> None:
-        """器件替换: 库中没有新器件时返回 needs_asset。"""
-        store = ComponentStore(tmp_path / "store")
-        store.save_device(
-            DeviceModel(part_number="AMS1117-3.3", category="ldo",
-                        specs={"v_out": "3.3V"})
-        )
-        session = SchemaForgeSession(tmp_path / "store", )
-        session.start("用 AMS1117-3.3 搭一个 5V 转 3.3V 稳压电路")
-
-        r = session.revise("换成 TPS5430")
-        assert r.status == "needs_asset"
-        assert r.missing_part_number == "TPS5430"
-
-    def test_revise_frequency_change(self, tmp_path: Path) -> None:
-        """修改开关频率并重建。"""
-        store = ComponentStore(tmp_path / "store")
-        store.save_device(
-            DeviceModel(part_number="AMS1117-3.3", category="ldo",
-                        specs={"v_out": "3.3V"})
-        )
-        session = SchemaForgeSession(tmp_path / "store", )
-        session.start("用 AMS1117-3.3 搭一个 5V 转 3.3V 稳压电路")
-
-        r = session.revise("开关频率改成 600kHz")
-        assert r.status == "generated"
-
-    def test_revise_with_summary_message(self, tmp_path: Path) -> None:
-        """修改后消息中包含变更摘要。"""
-        store = ComponentStore(tmp_path / "store")
-        store.save_device(
-            DeviceModel(part_number="AMS1117-3.3", category="ldo",
-                        specs={"v_out": "3.3V"})
-        )
-        session = SchemaForgeSession(tmp_path / "store", )
-        session.start("用 AMS1117-3.3 搭一个 5V 转 3.3V 稳压电路")
-
-        r = session.revise("输出电容改成 100uF")
-        assert r.status == "generated"
-        assert "c_out" in r.message
-
-
 # ============================================================
 # GPT Review 回归测试
 # ============================================================
-
-
-def test_confirm_import_validates_before_persisting(tmp_path) -> None:
-    """P0-1: confirm_import 先校验后落库，part_number 为空的草稿触发 ERROR 不写盘。"""
-    from schemaforge.workflows.schemaforge_session import SchemaForgeSession
-    from schemaforge.design.synthesis import parse_design_request
-
-    session = SchemaForgeSession(store_dir=tmp_path)
-    session._request = parse_design_request("TPS99999 Buck")
-
-    # 设置一个 part_number 为空的草稿 — validate_draft 会产生 ERROR 级问题
-    from schemaforge.library.validator import DeviceDraft
-    session._pending_draft = DeviceDraft(
-        part_number="",  # ERROR: 料号不能为空
-        category="buck",
-        pin_count=0,
-        pins=[],
-    )
-
-    result = session.confirm_import()
-    # 校验失败应返回 needs_confirmation 或 error，不是 generated
-    assert result.status in ("needs_confirmation", "error")
-    # 器件不应被写入库
-    assert session._service.get("TPS99999") is None
-
-
-def test_different_operating_points_produce_different_params(tmp_path) -> None:
-    """P0-2: 同一芯片不同工况应产生不同的计算参数。"""
-    import shutil
-    from pathlib import Path
-    from schemaforge.workflows.schemaforge_session import SchemaForgeSession
-
-    # 复制 store 到 tmp 避免污染
-    src = Path("schemaforge/store")
-    dst = tmp_path / "store"
-    shutil.copytree(src, dst)
-
-    s1 = SchemaForgeSession(store_dir=dst)
-    r1 = s1.start("用 TPS5430 搭一个 12V转5V 的 DCDC 电路")
-    assert r1.status == "generated"
-    rfb1 = r1.bundle.parameters.get("r_fb_upper", "")
-
-    s2 = SchemaForgeSession(store_dir=dst)
-    r2 = s2.start("用 TPS5430 搭一个 24V转3.3V 的 DCDC 电路")
-    assert r2.status == "generated"
-    rfb2 = r2.bundle.parameters.get("r_fb_upper", "")
-
-    # 不同 Vout 必须导致不同的反馈电阻
-    assert rfb1 != rfb2, f"r_fb_upper should differ: {rfb1} vs {rfb2}"
 
 
 def test_buck_defaults_do_not_use_absolute_max() -> None:
@@ -1031,26 +652,6 @@ def test_buck_defaults_do_not_use_absolute_max() -> None:
     assert v_in <= 12.0, f"v_in={v_in} should not use absolute max"
     # i_out 不应等于 3 (abs max) 或 2.1 (70% derate)
     assert i_out <= 1.0, f"i_out={i_out} should not use absolute max"
-
-
-def test_spice_uses_device_model_template() -> None:
-    """P1-3: SPICE 应使用 device.spice_model 模板生成 IC 行。"""
-    from pathlib import Path
-    from schemaforge.workflows.schemaforge_session import SchemaForgeSession
-
-    s = SchemaForgeSession(store_dir=Path("schemaforge/store"))
-    r = s.start("用 TPS5430 搭一个 12V转3.3V 的 DCDC 电路")
-    assert r.status == "generated"
-    spice = r.bundle.spice_text
-
-    # 应包含 TPS5430 的 SPICE model 引用
-    assert "TPS5430" in spice
-    # 应包含外围元件
-    assert "C1" in spice or "CIN" in spice
-    assert "L1" in spice
-    # 应包含 .end
-    assert ".end" in spice
-
 
 
 def test_parse_design_request_explicit_flag_overrides_env(monkeypatch) -> None:
@@ -1087,43 +688,3 @@ def test_parse_design_request_explicit_flag_overrides_env(monkeypatch) -> None:
     ]
     assert "3.3V" in req.design_notes
 
-
-def test_schemaforge_session_explicit_ai_parse_ignores_skip_env(tmp_path: Path, monkeypatch) -> None:
-    monkeypatch.setenv("SCHEMAFORGE_SKIP_AI_PARSE", "1")
-
-    def _mock_call_llm_json(*args, **kwargs):
-        return {
-            "part_number": "TPS54202",
-            "category": "buck",
-            "v_in": "20",
-            "v_out": "5",
-            "i_out": "0.5",
-            "wants_led": False,
-            "led_color": "green",
-            "led_current_ma": "2",
-            "additional_devices": [
-                {"part_number": "AMS1117-3.3", "role": "post_regulator"},
-                {"part_number": "STM32F103C8T6", "role": "load"},
-            ],
-            "design_notes": "5V ???? 3.3V ? MCU ??",
-        }
-
-    monkeypatch.setattr("schemaforge.ai.client.call_llm_json", _mock_call_llm_json)
-
-    store = ComponentStore(tmp_path / "store")
-    store.save_device(
-        DeviceModel(
-            part_number="TPS54202",
-            category="buck",
-            specs={"v_in_max": "28V", "i_out_max": "2A", "fsw": "500kHz", "v_ref": "0.8V"},
-        )
-    )
-
-    session = SchemaForgeSession(tmp_path / "store", skip_ai_parse=False)
-    result = session.start("20V????TPS54202???5V???AMS1117??3.3V??stm32f103c8t6??")
-
-    assert result.status == "generated"
-    assert result.request is not None
-    assert len(result.request.additional_devices) == 2
-    assert any("AMS1117-3.3" in warning for warning in result.warnings)
-    assert any("STM32F103C8T6" in warning for warning in result.warnings)

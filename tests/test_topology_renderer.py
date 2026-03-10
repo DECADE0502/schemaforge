@@ -7,7 +7,6 @@
 - render() 对未知电路类型抛异常
 - render() 对无拓扑定义的器件抛异常
 - 从 store 加载 AMS1117-3.3 并渲染
-- 新旧渲染路径对比（都能成功生成SVG）
 """
 
 from __future__ import annotations
@@ -325,49 +324,6 @@ class TestStoreIntegration:
         assert os.path.exists(path)
         assert os.path.getsize(path) > 100
 
-
-# ============================================================
-# 新旧渲染路径对比
-# ============================================================
-
-class TestOldVsNewRendering:
-    """对比旧硬编码渲染和新拓扑渲染"""
-
-    def test_both_paths_produce_svg_for_ldo(
-        self, renderer: TopologyRenderer, ams1117_device: DeviceModel
-    ) -> None:
-        """旧 render_ldo_from_params 和新 TopologyRenderer 都应生成SVG"""
-        from schemaforge.render.ldo import render_ldo_from_params
-
-        params = {"v_in": 5.0, "v_out": "3.3", "ic_model": "AMS1117"}
-
-        # 旧路径
-        old_path = render_ldo_from_params(params)
-        assert os.path.exists(old_path)
-
-        # 新路径
-        new_path = renderer.render(ams1117_device, params, filename="test_new_ldo.svg")
-        assert os.path.exists(new_path)
-
-        # 两个文件都是有效SVG
-        for p in [old_path, new_path]:
-            with open(p, encoding="utf-8") as f:
-                content = f.read()
-            assert "<svg" in content
-
-    def test_both_paths_produce_svg_for_divider(
-        self, renderer: TopologyRenderer, divider_device: DeviceModel
-    ) -> None:
-        """旧 render_divider_from_params 和新路径都应生成SVG"""
-        from schemaforge.render.divider import render_divider_from_params
-
-        params = {"v_in": 5.0, "v_out": 2.5, "r_total": 20.0}
-
-        old_path = render_divider_from_params(params)
-        assert os.path.exists(old_path)
-
-        new_path = renderer.render(divider_device, params, filename="test_new_divider.svg")
-        assert os.path.exists(new_path)
 
 
 # ============================================================

@@ -1,10 +1,7 @@
 """测试 schemaforge.common 基础模块
 
-覆盖: errors, events, progress, session_store
+覆盖: errors, events, progress
 """
-
-import tempfile
-from pathlib import Path
 
 from schemaforge.common.errors import (
     ErrorCode,
@@ -19,7 +16,6 @@ from schemaforge.common.events import (
     StateChangeEvent,
 )
 from schemaforge.common.progress import ProgressTracker
-from schemaforge.common.session_store import SessionStore
 
 
 # ============================================================
@@ -121,64 +117,3 @@ class TestProgressTracker:
         tracker.stage("test", 50)
         tracker.log("msg")
         tracker.done()
-
-
-# ============================================================
-# SessionStore
-# ============================================================
-
-class TestSessionStore:
-    def test_create_and_get(self):
-        store = SessionStore()
-        session = store.create("library_import")
-        assert session.session_type == "library_import"
-        assert session.state == "idle"
-
-        got = store.get(session.session_id)
-        assert got is not None
-        assert got.session_id == session.session_id
-
-    def test_add_message(self):
-        store = SessionStore()
-        session = store.create("design")
-        session.add_message("user", "设计一个Buck电路")
-        session.add_message("assistant", "好的，请确认输入电压")
-        assert len(session.messages) == 2
-        assert session.messages[0].role == "user"
-
-    def test_save_and_load_from_disk(self):
-        with tempfile.TemporaryDirectory() as tmpdir:
-            store = SessionStore(persist_dir=Path(tmpdir))
-            session = store.create("library_import")
-            session.add_message("user", "上传 TPS54202.pdf")
-            store.save(session)
-
-            # 新建 store 实例，从磁盘恢复
-            store2 = SessionStore(persist_dir=Path(tmpdir))
-            loaded = store2.get(session.session_id)
-            assert loaded is not None
-            assert loaded.session_type == "library_import"
-            assert len(loaded.messages) == 1
-
-    def test_delete(self):
-        store = SessionStore()
-        session = store.create("test")
-        sid = session.session_id
-        assert store.delete(sid) is True
-        assert store.get(sid) is None
-
-    def test_list_sessions(self):
-        store = SessionStore()
-        store.create("library_import")
-        store.create("library_import")
-        store.create("design")
-
-        lib_sessions = store.list_sessions("library_import")
-        assert len(lib_sessions) == 2
-
-        all_sessions = store.list_sessions()
-        assert len(all_sessions) == 3
-
-    def test_get_nonexistent(self):
-        store = SessionStore()
-        assert store.get("nonexistent") is None

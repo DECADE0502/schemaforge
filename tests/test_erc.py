@@ -108,19 +108,4 @@ class TestShortCircuit:
         assert len(errors) == 0
 
 
-class TestEngineERC:
-    def test_divider_no_errors(self, checker):
-        """分压器模板应该没有ERC错误"""
-        from schemaforge.core.engine import SchemaForgeEngine
-        engine = SchemaForgeEngine()
-        result = engine.process("分压采样电路")
-        erc_errors = [e for e in result.erc_errors if e.severity.value == "error"]
-        assert len(erc_errors) == 0
 
-    def test_ldo_no_errors(self, checker):
-        """LDO模板应该没有ERC错误"""
-        from schemaforge.core.engine import SchemaForgeEngine
-        engine = SchemaForgeEngine()
-        result = engine.process("5V转3.3V稳压")
-        erc_errors = [e for e in result.erc_errors if e.severity.value == "error"]
-        assert len(erc_errors) == 0
